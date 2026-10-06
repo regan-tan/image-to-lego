@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for future implementation
+Accepted; source-image upload path implemented
 
 ## Context
 
@@ -24,5 +24,15 @@ Blob Storage provides durable object semantics, scalable delivery, lifecycle con
 
 ## Trade-offs / consequences
 
-Database and blob writes are not a single transaction, so workflows need cleanup/reconciliation and idempotent naming. Authorization for upload/download must be designed carefully, and checksums should be verified at trust boundaries.
+Database and blob writes are not a single transaction, so workflows need cleanup/reconciliation and idempotent naming. Authorization for upload/download must be designed carefully, and stored bytes must be validated at the trust boundary before paid processing.
+
+## Implementation note
+
+The source-image slice uses a 10-minute HTTPS user-delegation SAS scoped to one server-generated
+blob name with create-only permission. The browser uploads the binary directly. FastAPI stores a
+pending artifact before issuing the SAS and marks it ready only after confirming Blob properties,
+including the client-declared SHA-256 metadata. This confirmation does not cryptographically verify
+the Blob bytes. Before paid fal submission, the future generation worker must validate actual stored
+bytes, including content type, resource bounds, and a recomputed SHA-256. Scheduled cleanup and
+generated-model download authorization remain future work.
 

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Profile } from "../components/Profile";
+import { ProjectWorkspace } from "../components/ProjectWorkspace";
 import { supabase } from "../lib/supabase";
 
 interface HomePageProps {
@@ -32,8 +33,11 @@ export function HomePage({ session, onSignedOut }: HomePageProps) {
 
   return (
     <main className="shell">
-      <Profile session={session} onSignOut={() => void handleSignOut()} />
-      {signOutError ? <p className="form-error" role="alert">{signOutError}</p> : null}
+      <div className="home-grid">
+        <Profile session={session} onSignOut={() => void handleSignOut()} />
+        <ProjectWorkspace accessToken={session.access_token} userId={session.user.id} />
+        {signOutError ? <p className="form-error" role="alert">{signOutError}</p> : null}
+      </div>
     </main>
   );
 }
