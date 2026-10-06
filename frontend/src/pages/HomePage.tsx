@@ -1,18 +1,39 @@
-import { BackendStatus } from "../components/BackendStatus";
+import type { Session } from "@supabase/supabase-js";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-export function HomePage() {
+import { Profile } from "../components/Profile";
+import { supabase } from "../lib/supabase";
+
+interface HomePageProps {
+  session: Session;
+  onSignedOut: () => void;
+}
+
+export function HomePage({ session, onSignedOut }: HomePageProps) {
+  const navigate = useNavigate();
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+
+  async function handleSignOut() {
+    const client = supabase;
+    if (!client) {
+      return;
+    }
+
+    setSignOutError(null);
+    const { error } = await client.auth.signOut();
+    if (error) {
+      setSignOutError("We could not sign you out. Please try again.");
+      return;
+    }
+    onSignedOut();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <main className="shell">
-      <section className="panel" aria-labelledby="project-title">
-        <p className="eyebrow">University capstone</p>
-        <h1 id="project-title">Image to LEGO</h1>
-        <p className="summary">
-          The project foundation is ready. Reconstruction and LEGO conversion workflows will be
-          added in later milestones.
-        </p>
-        <BackendStatus />
-      </section>
+      <Profile session={session} onSignOut={() => void handleSignOut()} />
+      {signOutError ? <p className="form-error" role="alert">{signOutError}</p> : null}
     </main>
   );
 }
-

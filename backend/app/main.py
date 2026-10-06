@@ -13,6 +13,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         description="REST API for the Image to LEGO capstone project.",
     )
+    application.state.settings = application_settings
     application.add_middleware(
         CORSMiddleware,
         allow_origins=application_settings.cors_origins,
@@ -26,4 +27,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

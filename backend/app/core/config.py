@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str | None = None
     supabase_url: str | None = None
-    supabase_jwt_audience: str | None = None
+    supabase_jwt_audience: str = "authenticated"
     azure_storage_account_url: str | None = None
     azure_storage_container: str | None = None
     azure_service_bus_namespace: str | None = None
@@ -28,4 +28,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

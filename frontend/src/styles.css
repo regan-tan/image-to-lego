@@ -27,13 +27,18 @@ body {
     #101820;
 }
 
-.panel {
+.panel,
+.auth-card {
   width: min(100%, 42rem);
   padding: clamp(2rem, 6vw, 4rem);
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 1.5rem;
   background: rgb(255 255 255 / 6%);
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 25%);
+}
+
+.auth-card {
+  width: min(100%, 30rem);
 }
 
 .eyebrow {
@@ -57,6 +62,99 @@ h1 {
   margin: 1.5rem 0 2rem;
   color: #c9d2da;
   line-height: 1.65;
+}
+
+.auth-form,
+.oauth-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.auth-form label {
+  margin-top: 0.5rem;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  padding: 0.8rem;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 0.5rem;
+  color: inherit;
+  background: rgb(0 0 0 / 20%);
+}
+
+.button,
+.oauth-button,
+.text-button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.button,
+.oauth-button {
+  padding: 0.8rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  font-weight: 700;
+}
+
+.button {
+  color: #101820;
+  background: #ffcd00;
+}
+
+.button--secondary,
+.oauth-button {
+  border: 1px solid rgb(255 255 255 / 25%);
+  color: inherit;
+  background: transparent;
+}
+
+.text-button {
+  padding: 0;
+  border: 0;
+  color: #ffcd00;
+  background: transparent;
+  text-decoration: underline;
+}
+
+.auth-switch {
+  margin: 1.25rem 0;
+  color: #c9d2da;
+}
+
+.form-error,
+.profile-error {
+  color: #ff9b9b;
+}
+
+.profile-details {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.profile-details div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.profile-details dt {
+  color: #c9d2da;
+  font-size: 0.85rem;
+}
+
+.profile-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.avatar {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 .status {
