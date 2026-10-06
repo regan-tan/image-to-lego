@@ -9,12 +9,13 @@ This repository currently contains the production-oriented project foundation on
 - a FastAPI application with root and versioned health endpoints;
 - explicit service, repository, and reconstruction-provider boundaries;
 - a deterministic fake reconstruction provider for tests;
-- a minimal React/Vite status page and typed health client;
+- Supabase Auth sign-up/sign-in for email/password, Google, and GitHub plus sign-out;
+- a verified `GET /api/v1/profile` profile endpoint; and
 - an initial Supabase PostgreSQL migration with row-level security enabled;
 - backend and frontend unit tests, linting, type checking, Docker, and CI configuration; and
 - architecture decisions and deployment planning documentation.
 
-Authentication, project workflows, database repository implementations, Azure integrations, fal.ai/TRELLIS integration, mesh-to-LEGO conversion, browser 3D inspection, and production deployment are **not implemented yet**. No Supabase Storage is planned; Azure Blob Storage is the artifact store.
+Project workflows, database repository implementations, Azure integrations, fal.ai/TRELLIS integration, mesh-to-LEGO conversion, browser 3D inspection, and production deployment are **not implemented yet**. No Supabase Storage is planned; Azure Blob Storage is the artifact store.
 
 ## Intended architecture
 
@@ -80,6 +81,16 @@ npm run dev
 ```
 
 The Vite development server listens at `http://localhost:5173` and calls the URL configured by `VITE_API_BASE_URL`.
+
+### Supabase authentication setup
+
+Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` for the frontend. Keep the publishable key in the frontend only; never expose a Supabase service-role key.
+
+The frontend provides `/login` and `/signup` public routes plus a protected `/` route that shows the authenticated profile. Supabase restores the browser session after refresh; unauthenticated requests for `/` redirect to `/login`.
+
+In Supabase Auth, enable Email and the Google and GitHub providers. Register `https://<project-ref>.supabase.co/auth/v1/callback` as the OAuth callback in the Google and GitHub provider consoles. Configure the frontend URL in Supabase Auth's Site URL and allowed Redirect URLs (for local development, `http://localhost:5173`); add production frontend URLs explicitly when deployed. Email confirmation behavior is controlled by Supabase: when it is enabled, the application asks the user to confirm their address before signing in.
+
+The API independently verifies each browser access token with the project's JWKS, expected issuer, audience, and expiry before serving `GET /api/v1/profile`. This requires Supabase asymmetric signing keys; ES256 is preferred and RS256 is also accepted. The default audience is `authenticated`; set `SUPABASE_JWT_AUDIENCE` if your project uses a different configured audience.
 
 ## Testing and quality commands
 

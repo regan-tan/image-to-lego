@@ -1,11 +1,12 @@
 # Intended architecture
 
-Status: **Foundation implemented; production integrations are not implemented.**
+Status: **Foundation plus the first authenticated profile slice implemented; production integrations are not implemented.**
 
 ```mermaid
 flowchart LR
-    Web["React / Vite SPA<br/>foundation implemented"] -->|"REST /api/v1"| API["FastAPI API<br/>health endpoints implemented"]
-    API -->|"metadata + auth<br/>not implemented"| Supabase["Supabase PostgreSQL + Auth<br/>migration only"]
+    Web["React / Vite SPA<br/>Supabase Auth implemented"] -->|"Bearer access token<br/>REST /api/v1"| API["FastAPI API<br/>health + profile implemented"]
+    API -->|"JWKS signature verification<br/>implemented"| Supabase["Supabase Auth<br/>identity source"]
+    API -->|"metadata<br/>not implemented"| SupabaseDb["Supabase PostgreSQL<br/>migration only"]
     API -->|"artifacts<br/>not implemented"| Blob["Azure Blob Storage<br/>not implemented"]
     API -->|"provider adapter<br/>not implemented"| Fal["fal.ai / TRELLIS<br/>not implemented"]
     API -->|"durable jobs<br/>not implemented"| Bus["Azure Service Bus<br/>not implemented"]
@@ -34,5 +35,5 @@ Azure Service Bus is the intended durable transport. Delivery will be at least o
 
 ## Trust boundaries
 
-Supabase Auth will issue user identities, while FastAPI is initially the application data-access boundary. All application tables have RLS enabled and intentionally have no permissive browser policies. Production credentials will be supplied at runtime through managed configuration/Key Vault; they must never be embedded in images or frontend bundles.
+Supabase Auth issues browser identities. The SPA uses the Supabase client for email/password and OAuth flows, including browser session persistence and token refresh. FastAPI independently verifies the access token's JWKS signature, issuer, audience, and expiry, and treats the verified `sub` as the current user ID for `GET /api/v1/profile`. Authentication does not differ by sign-in provider. This verification requires Supabase asymmetric signing keys; ES256 is preferred and RS256 is also accepted. All application tables have RLS enabled and intentionally have no permissive browser policies. Production credentials will be supplied at runtime through managed configuration/Key Vault; they must never be embedded in images or frontend bundles.
 
