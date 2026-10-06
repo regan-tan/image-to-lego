@@ -1,0 +1,44 @@
+[project]
+name = "image-to-lego-backend"
+version = "0.1.0"
+description = "FastAPI backend and conversion worker for Image to LEGO"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "asyncpg>=0.30.0,<1",
+    "azure-identity>=1.25.0,<2",
+    "azure-servicebus>=7.14.0,<8",
+    "azure-storage-blob>=12.27.0,<13",
+    "fastapi>=0.118.0,<1",
+    "httpx>=0.28.0,<1",
+    "pydantic>=2.11.0,<3",
+    "pydantic-settings>=2.11.0,<3",
+    "python-multipart>=0.0.20,<1",
+    "sqlalchemy>=2.0.40,<3",
+    "uvicorn[standard]>=0.37.0,<1",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0,<2",
+    "pytest>=8.4.0,<10",
+    "pytest-asyncio>=1.2.0,<2",
+    "ruff>=0.14.0,<1",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "E", "F", "I", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
