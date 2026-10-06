@@ -1,0 +1,2 @@
+"""Infrastructure-independent domain types."""
+
