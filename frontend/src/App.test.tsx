@@ -59,17 +59,21 @@ function mockSignedOutSession() {
 }
 
 function mockProfileResponse() {
-  vi.mocked(fetch).mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        id: "user-123",
-        email: "builder@example.com",
-        displayName: null,
-        avatarUrl: null,
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    ),
-  );
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    const url = String(input);
+    const body = url.endsWith("/api/v1/projects")
+      ? []
+      : {
+          id: "user-123",
+          email: "builder@example.com",
+          displayName: null,
+          avatarUrl: null,
+        };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
 }
 
 describe("App", () => {

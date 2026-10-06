@@ -1,13 +1,15 @@
 # Intended architecture
 
-Status: **Foundation plus the first authenticated profile slice implemented; production integrations are not implemented.**
+Status: **Authenticated profile, project metadata, and direct source-image upload are implemented.
+Generation, conversion, and production deployment are not implemented.**
 
 ```mermaid
 flowchart LR
-    Web["React / Vite SPA<br/>Supabase Auth implemented"] -->|"Bearer access token<br/>REST /api/v1"| API["FastAPI API<br/>health + profile implemented"]
+    Web["React / Vite SPA<br/>Auth + project/upload UI"] -->|"Bearer access token<br/>metadata REST /api/v1"| API["FastAPI API<br/>profile + projects + uploads"]
     API -->|"JWKS signature verification<br/>implemented"| Supabase["Supabase Auth<br/>identity source"]
-    API -->|"metadata<br/>not implemented"| SupabaseDb["Supabase PostgreSQL<br/>migration only"]
-    API -->|"artifacts<br/>not implemented"| Blob["Azure Blob Storage<br/>not implemented"]
+    API -->|"owner-scoped metadata<br/>implemented"| SupabaseDb["Supabase PostgreSQL<br/>projects + artifact lifecycle"]
+    API -->|"single-blob create-only SAS + declared-metadata confirmation<br/>implemented"| Blob["Azure Blob Storage<br/>private source images"]
+    Web -->|"direct HTTPS PUT<br/>binary never enters API"| Blob
     API -->|"provider adapter<br/>not implemented"| Fal["fal.ai / TRELLIS<br/>not implemented"]
     API -->|"durable jobs<br/>not implemented"| Bus["Azure Service Bus<br/>not implemented"]
     Bus -->|"at-least-once delivery"| Worker["Python conversion worker<br/>entry point only"]
@@ -36,4 +38,36 @@ Azure Service Bus is the intended durable transport. Delivery will be at least o
 ## Trust boundaries
 
 Supabase Auth issues browser identities. The SPA uses the Supabase client for email/password and OAuth flows, including browser session persistence and token refresh. FastAPI independently verifies the access token's JWKS signature, issuer, audience, and expiry, and treats the verified `sub` as the current user ID for `GET /api/v1/profile`. Authentication does not differ by sign-in provider. This verification requires Supabase asymmetric signing keys; ES256 is preferred and RS256 is also accepted. All application tables have RLS enabled and intentionally have no permissive browser policies. Production credentials will be supplied at runtime through managed configuration/Key Vault; they must never be embedded in images or frontend bundles.
+
+Project and artifact transactions derive ownership only from the verified JWT `sub`. The API sets
+that UUID in the transaction-local `app.current_user_id` PostgreSQL setting, and RLS policies on
+`projects` and `artifacts` enforce the same ownership boundary. The API database role must not own
+the tables or have `BYPASSRLS`.
+
+## Source-image lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API
+    participant DB as PostgreSQL
+    participant Blob as Azure Blob Storage
+
+    Browser->>API: Upload metadata, size, MIME type, SHA-256, project ID
+    API->>DB: Validate owner + rolling quota; insert pending artifact
+    API-->>Browser: Single-blob create-only SAS (10 minutes)
+    Browser->>Blob: PUT bytes directly with MIME and SHA-256 metadata
+    Browser->>API: Complete upload
+    API->>Blob: Confirm existence and expected declared properties
+    API->>DB: pending -> ready
+```
+
+Pending uploads expire after 24 hours by default. This slice represents that expiry in metadata but
+does not implement scheduled cleanup. SAS URLs are ephemeral and are not stored in PostgreSQL.
+`ready` means the direct upload is present with the expected client-declared metadata and can enter
+downstream server-side validation. It does not mean the API has cryptographically verified the Blob
+bytes. Before a paid fal submission, the future generation worker must validate the stored source
+bytes, including content type, resource bounds, and a recomputed SHA-256. Blob SAS access requires
+HTTPS; production browser origins must use HTTPS, while local development may use
+`http://localhost:5173` in the Blob CORS allowlist.
 

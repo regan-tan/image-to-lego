@@ -37,6 +37,19 @@ body {
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 25%);
 }
 
+.home-grid {
+  display: grid;
+  width: min(100%, 62rem);
+  gap: 1.5rem;
+  grid-template-columns: minmax(18rem, 0.8fr) minmax(20rem, 1.2fr);
+  align-items: start;
+}
+
+.home-grid .auth-card,
+.home-grid .panel {
+  width: 100%;
+}
+
 .auth-card {
   width: min(100%, 30rem);
 }
@@ -82,6 +95,39 @@ h1 {
   border-radius: 0.5rem;
   color: inherit;
   background: rgb(0 0 0 / 20%);
+}
+
+.stacked-form {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.stacked-form label {
+  font-weight: 700;
+}
+
+.stacked-form input,
+.stacked-form select {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 0.5rem;
+  color: inherit;
+  background: #101820;
+  font: inherit;
+}
+
+.inline-form {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr auto;
+}
+
+.field-help {
+  margin: 0;
+  color: #c9d2da;
+  font-size: 0.85rem;
 }
 
 .button,
@@ -183,5 +229,15 @@ h1 {
 
 .status--error {
   color: #ff7878;
+}
+
+@media (max-width: 760px) {
+  .home-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
 }
 
