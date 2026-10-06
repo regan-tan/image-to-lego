@@ -1,383 +1,378 @@
-LEGO Builder: Agent Coding Standards
+Image to LEGO: Agent Coding Standards
 
-LEGO Builder turns image-derived 3D geometry into a structured LEGO model with a 3D view, exact parts list, LDraw export, and draft instructions. This file defines project-wide rules for every coding agent working in this repository, including Codex, Claude Code, Cursor, Copilot, and similar tools.
 
-This is a university capstone project. The code will be graded. Optimize for correctness, clarity, maintainability, testability, and explainability to a professor.
-
+Image to LEGO is a university capstone that turns a user image into a generated 3D model and then into an inspectable, downloadable LEGO model. The intended system combines Supabase Auth/PostgreSQL, FastAPI, Azure Blob Storage, Azure Service Bus, fal.ai/TRELLIS, asynchronous workers, a Python mesh-to-LEGO converter, and a React/TypeScript frontend.
+This file applies to every coding agent working in the repository, including Codex, Claude Code, Cursor, Copilot, and similar tools.
+The code will be graded by a professor. Optimize for correctness, simplicity, readability, maintainability, testability, security, and explainability - not cleverness or unnecessary architectural sophistication.
 AGENTS.md is human-owned. Do not modify it unless the human explicitly asks you to.
+
 
 CRITICAL INSTRUCTIONS
 These override convenience, speed, and reasonable-seeming shortcuts.
+- Keep it simple. Use the simplest design that correctly satisfies the current requirement.
+- Prefer conventional, explicit code over clever, compressed, highly abstract, or framework-heavy code.
+- If two approaches are correct, choose the one that is easier to explain, test, debug, review, and maintain.
+- The project is already technically complex because it combines auth, cloud storage, queues, paid AI generation, 3D geometry, LEGO conversion, and a web client. Do not manufacture extra software complexity to make the project look advanced.
+- Follow KISS and YAGNI. Apply DRY and SOLID proportionally; they do not justify speculative abstractions.
+- Every new dependency, helper, class, interface, layer, service, table, queue, cache, retry mechanism, or top-level file must have a concrete current need.
+- Reuse the standard library, browser/platform APIs, and existing project dependencies before proposing a new package.
+- Keep important control flow, state transitions, units, limits, and side effects understandable to a reviewer who did not write the code.
+- Keep probabilistic image-to-3D work separate from deterministic validation, persistence, and LEGO conversion.
+- Long-running, CPU-intensive, or paid work must not execute inside FastAPI request handlers or BackgroundTasks.
+- Preserve idempotency around paid generation, queue delivery, conversion work, and durable state changes. Duplicate requests/messages must not create duplicate paid work or corrupt state.
+- Never bypass authentication, ownership checks, RLS/security boundaries, quotas, validation, or resource limits to make development easier.
+- Never commit or expose secrets, API keys, connection strings, JWTs, SAS tokens/URLs, credentials, private uploads, generated private artifacts, or .env contents.
+- Do not claim a planned integration is implemented. Verify executable code and tests.
+- If requirements, ADRs, architecture docs, code, tests, or deployment docs materially conflict, surface the conflict instead of silently choosing one.
 
-- Keep the implementation as simple as the requirements allow. Prefer conventional, explicit code over clever, compressed, highly abstract, or framework-heavy code.
-- If two approaches satisfy the same requirement, choose the one that is easier to read, explain, test, debug, and maintain.
-- The project is already technically complex because of image reconstruction, 3D geometry, LEGO fitting, validation, rendering, and artifact consistency. Do not manufacture extra software complexity to make the project appear more advanced.
-- Do not add a dependency, framework, service, abstraction layer, design pattern, database table, cache, queue, worker, retry system, or new architectural boundary unless the current requirement genuinely needs it.
-- Reuse the standard library, platform APIs, and existing project dependencies before proposing anything new.
-- Do not build speculative infrastructure for hypothetical future requirements.
-- Preserve the separation between probabilistic image/3D reconstruction and deterministic LEGO conversion, catalog validation, inventory, export, and artifact-consistency checks.
-- Model, parts list, LDraw export, and instructions for a result must refer to the same immutable model revision.
-- A rendered/exported result is a digital candidate unless appropriate buildability evidence exists. Never present visual plausibility, connectivity checks, or successful export as proof of physical buildability.
-- Never substitute sample data, a committed example, or mocked success for a real user conversion. Fixtures and demos must be labelled explicitly.
-- Never bypass authentication, owner checks, integrity checks, file/resource limits, or validation to make development easier.
-- Never commit secrets, provider keys, access tokens, credentials, private uploads, or .env contents.
-- Inspect the current code and relevant source-of-truth documents before changing behavior. A document describing a proposed feature is not evidence that the feature exists.
-- If accepted requirements, architecture, code, tests, or deployment documentation materially conflict, surface the conflict instead of silently choosing one.
 
-GRADING-AWARE ENGINEERING PRIORITIES  
-The capstone rubric rewards code cleanliness, architecture, database design, API design, frontend quality, scalability, cloud deployment, innovation, documentation, testing, and teamwork. Treat these as quality dimensions, not reasons to add unnecessary machinery.
+GRADING-AWARE ENGINEERING PRIORITIES
+The grading rubric evaluates database design, scalability, project complexity, code cleanliness, backend API design, frontend code, cloud deployment, innovation, documentation, testing, and teamwork. Treat these as quality dimensions, not reasons to add unnecessary machinery.
+- Code cleanliness: readable names, coherent responsibilities, conventional structure, useful comments, no dead code, and adherence to normal language/framework practices.
+- Complexity / innovation: demonstrate sophistication through the image -> 3D -> LEGO problem and its real integration/geometry challenges, not gratuitous patterns or microservices.
+- Database: clear relational design, constraints, indexes, efficient queries, and secure ownership boundaries.
+- API: resource-oriented REST, explicit validation, authorization, idempotency, safe errors, and conventional HTTP semantics.
+- Frontend: clear user journeys, responsive/accessibility-conscious UI, and reliable backend integration.
+- Scalability: bounded work, queue-backed expensive jobs, independently scalable workers, and measured optimization.
+- Cloud: containerized workloads, managed Azure services, secure configuration, cost awareness, and reviewed CI/CD.
+- Testing: meaningful automated tests for critical behavior, failures, contracts, and regressions.
+- Documentation: another developer or professor should be able to set up, run, test, and explain the system without reverse-engineering it.
 
-- Code cleanliness: readable names, coherent responsibilities, conventional structure, useful comments, and no unnecessary indirection or dead code.
-- Architecture: a small number of clear boundaries and understandable data flows.
-- Complexity / innovation: show sophistication through the actual image-to-3D-to-LEGO problem, not gratuitous design patterns or services.
-- Database: schema, constraints, and indexes should follow real entities and query patterns.
-- API: predictable REST-style behavior, validation, authorization, safe failures, and appropriate status codes.
-- Frontend: clear user flow, responsive/accessibility-conscious UI, and truthful backend state.
-- Scalability: bounded work, idempotency, resource limits, and sensible deployment boundaries before more infrastructure.
-- Testing: meaningful automated tests for critical behavior and regressions.
-- Documentation: another developer or professor should be able to set up, run, test, and understand the system without reverse-engineering it.
+
 DO NOT RULES
 - Do not overengineer.
-- Do not add a library when built-ins, platform APIs, or an existing dependency provide a clear solution.
-- Do not add a dependency without explicit human approval. Name it, explain why it is needed, why existing options are insufficient, and what maintenance/security cost it adds.
-- Do not upgrade dependencies, frameworks, runtimes, or lockfiles incidentally during unrelated work.
-- Do not introduce another ORM, HTTP framework, state-management library, geometry library, validation framework, logging framework, or UI system without an approved need.
-- Do not create an interface, base class, factory, strategy registry, plugin system, repository layer, or generic wrapper solely because it might be useful later.
-- Do not create one-line forwarding helpers that add no meaningful naming, validation, reuse, test seam, or domain concept.
-- Do not fragment simple code into many tiny functions/files merely to reduce line count.
-- Do not allow a function, component, class, or module to accumulate unrelated responsibilities. Split only at a real responsibility boundary.
-- Do not create generic dumping grounds such as helpers, manager, common, or utils when a specific domain name exists.
-- Do not use unnecessary inheritance, metaprogramming, reflection, decorators, or hidden control flow.
-- Do not use nested ternaries or dense one-liners for non-trivial logic.
-- Do not duplicate business rules across routes, UI, converter code, and tests. Put each rule in the layer that owns it.
-- Do not prematurely DRY a few obvious lines into a generic abstraction. Small duplication can be clearer than a bad abstraction.
-- Do not add caching, concurrency, batching, background work, polling, or retries without a demonstrated requirement or measured problem.
-- Do not automatically retry paid or uncertain provider work unless the contract explicitly makes it safe.
-- Do not swallow exceptions, use empty catches, or convert unknown failures into successful/default output.
-- Do not log uploads, private model contents, provider payloads containing private data, tokens, signed URLs, or secrets.
-- Do not use TypeScript any merely to bypass a type problem.
-- Do not use Python wildcard imports.
-- Do not add dead code, commented-out implementations, unused imports, stale feature flags, or speculative TODO code.
-- Do not perform broad cleanup/refactoring during a focused feature unless it is necessary to implement the feature safely.
-- Do not refactor reconstruction-site/ into site/ merely to remove duplication; their separation is intentional unless a migration task changes it.
-- Do not modify generated/vendor UI primitives just for stylistic preference. Prefer composing them from project-owned code.
-- Do not hand-edit persistent production data to make a feature appear to work.
-- Do not commit directly to main, force-push, rewrite shared history, or discard another contributor's work.
-- Do not commit, push, merge, rebase, reset, delete branches, publish, or deploy unless the human explicitly asks for that action.
-Rule and source files - read before touching code
-Read the files relevant to the task and inspect the actual execution path before editing it.
+- Do not add a dependency when built-ins, platform APIs, or an existing dependency provide a clear solution.
+- Do not add a dependency without explicit human approval. Name it, explain why it is needed, why existing options are insufficient, and its maintenance/security cost.
+- Do not upgrade unrelated dependencies, runtimes, frameworks, or lockfiles during a focused feature.
+- Do not use pip install for project dependencies; backend dependencies use uv.
+- Do not use pnpm or yarn; the frontend uses npm and the committed package-lock.json.
+- Do not add another ORM, HTTP framework, state manager, form library, validation library, UI system, queue system, or logging framework without an approved need.
+- Do not create generic repository/service base classes, factories, plugin registries, dependency-injection frameworks, or wrappers "for future flexibility."
+- Do not create utils, helpers, manager, or common dumping grounds when a domain-specific name exists.
+- Do not create one-line forwarding helpers that add no useful naming, validation, reuse, test seam, or domain concept.
+- Do not fragment straightforward logic into many tiny functions/files merely to reduce line count.
+- Do not let a route, service, component, class, or module accumulate unrelated responsibilities. Split at real responsibility boundaries.
+- Do not prematurely DRY similar syntax into a generic abstraction. Small duplication can be clearer than the wrong abstraction; duplicated business rules should be centralized.
+- Do not use unnecessary inheritance, metaprogramming, reflection, hidden global state, nested ternaries, or dense one-liners for non-trivial logic.
+- Do not hide database/network/storage/queue/paid-provider side effects inside innocently named helpers.
+- Do not swallow exceptions, use empty catches, or convert unknown failures into successful/default responses.
+- Do not use TypeScript any merely to silence a type problem.
+- Do not use Python wildcard imports or mutable default arguments.
+- Do not hard-code unexplained quotas, timeouts, retry counts, polling intervals, worker counts, file-size limits, geometry tolerances, or model names. Use named configuration/constants.
+- Do not leave dead code, commented-out implementations, unused imports, stale flags, speculative TODO scaffolding, or accidental generated files.
+- Do not add caching, extra concurrency, WebSockets/SSE, a transactional outbox, another queue, or another deployable service without a current reviewed need.
+- Do not sleep inside workers while waiting for an external AI job. Schedule a later status check and release the worker.
+- Do not automatically retry a paid fal submission unless duplicate billing/work is prevented by a verified idempotency contract.
+- Do not call real fal.ai, production Supabase, or production Azure services from the normal automated test suite.
+- Do not use Supabase Storage for application artifacts; Azure Blob Storage is the accepted artifact store.
+- Do not proxy large upload/download bytes through FastAPI when the approved direct-to-Blob pattern applies.
+- Do not manually edit a shared/production database schema; use committed migrations.
+- Do not expose service-role/database/Azure credentials to the browser.
+- Do not use a privileged/BYPASSRLS database identity for ordinary user-scoped reads/writes merely for convenience.
+- Do not use HTTP 304 Not Modified as a generic "no change" response. Use it only for a real conditional request with validators such as ETag/If-None-Match.
+- Do not commit directly to main, force-push, rewrite shared history, merge, publish, or deploy unless the human explicitly asks for that action.
+Sources of truth - read before touching code
 Source	Owns / answers
-AGENTS.md	Project-wide coding, quality, safety, and collaboration rules
-README.md	Repository overview and local setup/usage
-site/README.md	Canonical workshop behavior and web checks
-docs/SUBMISSION.md	Current deployment/submission procedure and hosted boundaries
-agents/*.md	Optional Product/Architect/Developer/QA role briefs
-pyproject.toml	Python runtime and dependencies
-site/package.json + lockfile	Canonical web scripts and dependencies
-site/db/schema.ts + site/drizzle/	Database schema and migrations
-Tests + executable code	What is actually implemented and verifiable
+AGENTS.md	Agent behavior, code-quality/security rules, current target workflow guardrails
+README.md	Repository overview, implementation status, setup, common commands
+docs/architecture/README.md	Architecture boundaries and dependency direction
+docs/decisions/ADR-*.md	Accepted architecture decisions and rationale
+docs/deployment/azure-cicd-plan.md	Intended Azure deployment/release model
+docs/testing/README.md	Test isolation and strategy
+backend/pyproject.toml + backend/uv.lock	Backend runtime, dependencies, tooling, locked versions
+frontend/package.json + frontend/package-lock.json	Frontend scripts, dependencies, package manager, locked versions
+supabase/migrations/	Executable relational schema and schema changes
+.github/workflows/ci.yml	Checks actually enforced by CI
+Executable code + tests	What is actually implemented and verifiable now
 
-For exact package versions and executable commands, trust manifests, lockfiles, and current scripts over prose documentation.
+For exact versions and executable commands, trust manifests, lockfiles, and current scripts over prose documentation.
+Accepted ADRs are historical records. Do not silently rewrite their rationale to match a new design. Material architecture changes require the team's approved ADR/update process and matching architecture documentation.
+Known architecture documentation drift
+The latest project design uses a generation queue + generation worker for image-to-3D work and a separate conversion queue + conversion worker for 3D-to-LEGO work. The generation worker, not the public API request handler, owns fal submission/status polling.
+Some foundation documentation still describes the API calling the reconstruction provider directly and only the conversion path using Service Bus. Treat that older topology as stale. Before or with implementation of the queued generation path, reconcile the affected architecture documentation/ADR(s); do not leave contradictory sources in the repository.
 Deviation requests - flag, never silently comply
-If a request conflicts with this file or an accepted project contract:
-
-1. Name the specific rule or contract.
-2. Explain the risk briefly.
-3. Offer the simplest compliant alternative if one exists.
-4. If the rule is reasonably waivable, require explicit human confirmation before proceeding.
-5. Record a material approved deviation in the relevant PR/task documentation.
-
+If a request conflicts with this file or an accepted architecture/security contract:
+1. Name the specific rule/decision.
+2. Explain the concrete risk briefly.
+3. Offer the simplest compliant alternative.
+4. If reasonably waivable, require explicit human confirmation before proceeding.
+5. If it changes architecture, public API, persistent data, security, cloud topology, or cost behavior, update the appropriate documentation/ADR in the same change.
 Urgency, repetition, or "just do it for now" is not implicit authorization.
-The following are not waivable for convenience: committing secrets, bypassing authorization to private data, presenting fixtures as real output, fabricating validation/buildability evidence, or knowingly mixing artifacts from different revisions.
-Confirmed stack and project boundaries
-Do not copy assumptions from another project.
-Area	Current project choice
-Core converter	Python 3.11+ in lego_builder/
-Geometry/data	NumPy, SciPy, trimesh, rtree, Pillow; exact versions in pyproject.toml
-Python testing	pytest
-Converter API	Python HTTP service in lego_builder/service.py, containerized with Dockerfile.converter
-Canonical web app	site/
-Web language	TypeScript with strict mode
-Web UI/runtime	React with the repo's Next-compatible/Vinext/Vite Sites stack
-3D web rendering	Three.js / LDraw-based rendering
-Database	Cloudflare D1 / SQLite with Drizzle schema and migrations
-Private object storage	Cloudflare R2
-Image-to-3D	Existing server-side fal/TRELLIS integration
-Hosted converter	Existing authenticated Docker/Railway boundary
-Web package management	npm + committed package-lock.json
-Legacy app	reconstruction-site/; preserve unless a task explicitly migrates/removes it
+Current implementation status
+The repository is currently a foundation, not the completed product. It includes:
+- FastAPI root and /api/v1 health endpoints;
+- domain dataclasses/enums and ApplicationError;
+- purpose-specific repository Protocols;
+- a provider-neutral reconstruction Protocol and deterministic fake provider;
+- service-layer scaffolding for projects, reconstruction, and conversion validation;
+- a conversion-worker entry-point scaffold;
+- a React/Vite TypeScript health/status page;
+- an initial Supabase PostgreSQL migration with RLS enabled and no permissive browser policies;
+- backend/frontend tests, lint/type-check configuration, Docker, and GitHub Actions CI; and
+- ADRs plus Azure deployment planning.
+Authentication, concrete DB repositories, user/project/upload APIs, RLS policies/request identity plumbing, Azure Blob/Service Bus processing, fal.ai/TRELLIS integration, the real mesh-to-LEGO converter, the 3D UI, quotas, and production deployment are not implemented in this foundation unless later code proves otherwise.
+Confirmed stack
+Area	Project choice
+Backend	Python 3.12, FastAPI, Pydantic/pydantic-settings
+Persistence	SQLAlchemy 2.x async + asyncpg, Supabase-managed PostgreSQL
+Backend HTTP	HTTPX
+Backend tooling	uv, Ruff, mypy, pytest, pytest-asyncio
+Frontend	React + TypeScript strict mode + Vite
+Frontend package manager	npm
+Frontend server state	TanStack Query
+Frontend validation/forms	Zod; React Hook Form when justified
+Browser 3D	Three.js / React Three Fiber / Drei when needed
+Identity	Supabase Auth
+DB schema workflow	Committed SQL migrations under supabase/migrations/
+Binary artifacts	Azure Blob Storage
+Durable messaging	Azure Service Bus
+Image -> 3D	fal.ai / TRELLIS behind a provider boundary
+Cloud target	Azure Container Apps, ACR, Blob, Service Bus, Key Vault, Static Web Apps
+CI/CD	GitHub Actions; future Azure auth via OIDC/federated identity
+API	JSON REST under /api/v1; unversioned /health probe
+Architecture	Pragmatic modular monolith; API and workers run as separate processes from the backend codebase/image
 
-Exact changing versions belong in manifests and lockfiles rather than being duplicated in documentation.
-Repository layout
-repo-root/
-  AGENTS.md
-  Product.md
-  Architecture.md
-  Roadmap.md
-  README.md
-  pyproject.toml
-  Dockerfile.converter
 
-  lego_builder/          # deterministic Python converter + HTTP adapter
-  tests/                 # Python tests
-  benchmarks/            # converter benchmarks
-  site/                  # canonical workshop web application
-    app/                  # pages and API routes
-    components/           # UI components
-    core/                 # reconstruction / GLB / OBJ processing
-    db/                   # Drizzle schema
-    drizzle/              # versioned SQL migrations
-    lib/                  # web/domain/integration logic
-    test/, tests/         # web tests
-  reconstruction-site/   # retained legacy/pilot app
-  docs/                  # submission and QA evidence
-  examples/              # explicitly labelled examples/fixtures
-  references/            # source assets and provenance
-  agents/                # optional specialized agent briefs
-Do not create a new top-level folder unless it represents a real project boundary.
+Existing dependencies are not an instruction to import them everywhere. Use a package only where it improves the current solution.
+Target workflow and architecture invariants
+Authentication
+- Browser authentication uses Supabase Auth.
+- Browser sends the Supabase access JWT as Authorization: Bearer ... to FastAPI.
+- The API verifies signature, issuer, audience, expiry, and required claims before trusting sub as the user ID. Do not merely decode a JWT.
+- Refresh-token handling remains between browser and Supabase Auth; do not create a second password/token system in FastAPI.
+- Do not hand-roll JWT cryptography; use a vetted mechanism when implemented.
+Upload
+- Validate upload metadata/type/size and authoritative quota/ownership rules before paid/expensive work.
+- The API creates pending metadata and a short-lived, least-privilege Azure Blob upload URL scoped to the intended object.
+- The browser uploads bytes directly to Blob Storage; the API should not become the file proxy.
+- Track checksum/provenance when used by the workflow.
+- Abandoned uploads need a bounded cleanup lifecycle when implemented.
+Image -> 3D generation
+- Validate ownership, upload readiness, quota/active-job rules, and idempotency before enqueueing.
+- Persist/reuse the durable job first, then enqueue an identifier-only generation message.
+- Return an asynchronous job resource; do not wait for fal.ai in the HTTP request.
+- The generation worker owns fal submission and status checks.
+- Provider-specific request/response/status schemas stop at the provider adapter boundary.
+- Persist provider task ID/state safely.
+- Schedule later status-check messages with bounded backoff; never hold a worker sleeping.
+- Duplicate queue messages/status checks are normal and must be harmless.
+3D -> LEGO conversion
+- Validate source readiness, ownership, settings, quota, and idempotency before enqueueing.
+- Persist/reuse the durable conversion/job and enqueue an identifier-only message.
+- A conversion worker atomically claims eligible work, downloads the authoritative 3D artifact, runs conversion, uploads result artifacts, and persists result metadata/state.
+- Failure becomes a safe terminal state/reason when retries are no longer appropriate.
+- Reprocessing a duplicate message must not create inconsistent duplicate artifacts.
+Browser progress
+Polling is the current simple choice.
+- Poll only while work is non-terminal; use a modest bounded interval/backoff and pause/deprioritize when the page is hidden where practical.
+- Status polling must never retrigger paid work.
+- Return 304 only when implementing proper conditional GET; otherwise return a normal 200 representation.
+- Do not add SSE/WebSockets until a real scale/UX requirement justifies them.
+Dependency direction
+HTTP route -> application service -> purpose-specific repository/provider boundary -> infrastructure adapter
+Workers use the same domain/application boundaries with worker-specific orchestration.
+- Routes translate HTTP/auth input/output and stay free of raw SQL, Azure SDK calls, Service Bus code, fal-specific parsing, and geometry loops.
+- Services own business rules/orchestration spanning boundaries.
+- Domain code must not import FastAPI, SQLAlchemy, Azure, Supabase, or fal-specific infrastructure types.
+- Repositories remain purpose-specific; do not create a generic CRUD repository base class.
+- Interfaces/Protocols belong at real persistence/external boundaries, not around every internal class.
+- Prefer the modular monolith over new microservices.
+Code quality and readability
+Simple, standard code
+- Write for a reviewer who did not author the feature.
+- Prefer a few explicit statements over a clever expression.
+- Use descriptive domain names instead of vague names such as data, item, thing, process, or manager.
+- Make I/O and side effects obvious.
+- Use guard clauses when they reduce nesting and keep the happy path clear.
+- Use named constants/configuration for non-obvious limits, timeouts, units, tolerances, and thresholds.
+- A refactor must make code easier to understand, safer to change, easier to test, or meaningfully less duplicated.
+Functions and abstractions
+Create a helper when it names a domain operation, is reused meaningfully, isolates a side-effect/validation boundary, materially improves clarity, or creates a useful test seam. Do not extract a helper merely because a block is a few lines long.
+Review/simplify code when you see:
+- a function with multiple unrelated jobs;
+- many unrelated parameters or boolean behavior flags;
+- deep nesting;
+- a God service/component/module;
+- duplicated business rules;
+- hidden I/O or mutable global state;
+- magic values;
+- catch-and-ignore error handling;
+- N+1 database access;
+- broad "utils" modules;
+- an abstraction with only a hypothetical future use.
+Fewer clear pieces are better than many tiny layers.
+Comments
+- Explain why, invariants, units, or non-obvious trade-offs; do not narrate obvious syntax.
+- Do not add verbose AI-style comments/docstrings to every function.
+- Update/remove stale comments when behavior changes.
 Naming conventions
 Thing	Convention
 Python variables/functions/modules	snake_case
-Python classes	PascalCase
+Python classes/enums	PascalCase
 Python constants	UPPER_SNAKE_CASE
 TypeScript variables/functions	camelCase
 React components / TypeScript types	PascalCase
-TypeScript filenames	Follow existing convention; prefer descriptive kebab-case
-API JSON fields	camelCase unless an external contract requires otherwise
-SQL tables/columns	snake_case
-Drizzle application properties	camelCase mapping to SQL names
 Environment variables	UPPER_SNAKE_CASE
+JSON fields	camelCase unless an external contract requires otherwise
+SQL tables/columns	snake_case
 
-Prefer precise domain names: sourceObjSha256 over hash2, validatePlacement over processData, conversionRequest over item.
-Code quality and readability
-Simplicity first
 
-- Write for a reviewer who did not author the code.
-- Prefer explicit intermediate variables when they clarify geometry, validation, security, or state transitions.
-- Prefer a few clear statements over a clever expression.
-- Keep side effects obvious. Keep I/O, network, persistence, and provider calls near clear boundaries.
-- Preserve existing conventions unless they cause a concrete problem.
-- A refactor must make code easier to understand, safer to change, easier to test, or meaningfully less duplicated.
-Functions and abstractions
-A function should represent one coherent operation.
-Create a helper when it is reused, names a meaningful domain operation, isolates a side effect/validation boundary, makes complex logic clearer, or creates a useful test seam. Do not extract a helper merely because a block is a few lines long.
-Prefer a small number of cohesive parameters. Many unrelated parameters or boolean flags are a design smell; reconsider the responsibility before adding more.
-Use a class when it owns coherent state/lifecycle/behavior. Prefer plain functions and data structures when a class adds no value.
-Avoid abstractions before concrete need. A second real implementation/use case is stronger justification than a hypothetical future one.
-Control flow and errors
-- Use guard clauses when they reduce nesting and keep the happy path clear.
-- Make important workflow states explicit rather than scattering boolean flags.
-- Use named constants for limits, tolerances, units, timeouts, and non-obvious thresholds.
-- Make coordinate systems/units clear where confusion is possible: studs, plates, LDraw units, pixels, source axes, transformed axes.
-- Validate at boundaries and fail with a specific actionable error.
-- Catch only errors the current layer can translate, recover from, or clean up after.
-- Never expose stack traces, credentials, provider response bodies, private URLs, or internal file paths to users.
-Comments
-Comments explain why, invariants, or non-obvious tradeoffs - not obvious syntax.
-Do not add verbose AI-style comments/docstrings to every function. Remove stale comments when behavior changes.
-Python rules
-- Follow normal PEP 8 conventions and the existing project style.
-- Add type hints to public interfaces and non-trivial new logic when they improve understanding; do not add a new typing framework.
-- Prefer pathlib.Path for new filesystem logic unless an API requires strings.
-- Never use mutable default arguments or wildcard imports.
-- Avoid unnecessary global mutable state.
-- Keep deterministic converter logic deterministic. Any necessary randomness must be controlled and reproducible.
-- Prefer readable NumPy/SciPy code over extremely dense vectorized expressions.
-- Optimize only after identifying a real bottleneck; do not replace clear code with a numerical trick solely for elegance.
-- Bound file sizes, arrays/grids, fitting attempts, iterations, and expensive work before allocation/processing where practical.
-- Use existing pyproject.toml dependencies; do not add a package to replace a small amount of clear standard-library code.
-TypeScript and React rules
-- Preserve TypeScript strict mode. Fix type problems rather than bypassing them.
-- Use explicit domain types at API/storage boundaries.
-- Avoid any; isolate unavoidable untyped external data and validate it.
-- Separate rendering from substantial fetching, job orchestration, 3D lifecycle management, or transformation logic when those concerns become non-trivial.
-- Do not create a hook/component for every tiny expression. Extract around real state, interaction, or rendering responsibilities.
-- Reuse existing UI primitives rather than adding another component library.
-- Do not add global state management while local/server state is sufficient.
-- Keep loading, empty, failure, unauthorized, stale-result, retry, and success states explicit.
-- Preserve keyboard accessibility, focus behavior, touch usability, and responsive layouts when changing UI flows.
-- Clean up Three.js resources, timers, subscriptions, object URLs, and abortable work when their owning view is replaced/unmounted.
-- Never expose server-only credentials in client code or client-visible environment variables.
-Architecture rules
-- site/ is the canonical workshop for current web work unless the task explicitly targets the legacy pilot.
-- reconstruction-site/ is retained legacy/pilot code; do not casually synchronize, merge, or delete it.
-- lego_builder/ owns deterministic mesh-to-LEGO conversion and the authenticated converter boundary.
-- Keep probabilistic reconstruction separate from deterministic validation/conversion.
-- Keep one canonical structured model revision as the source for rendered model, parts quantities, LDraw, and instruction membership.
-- Do not create parallel representations of the same result without an explicit conversion boundary and consistency check.
-- Prefer existing boundaries over a new microservice. A new service requires a clear operational/security reason and explicit approval.
-- Reuse existing provider/integration boundaries; do not build a plugin framework for hypothetical providers.
-- Treat external provider output, uploads, LDraw, OBJ/GLB files, and metadata as untrusted input.
-- Keep resource limits and failure states explicit around expensive operations.
-Image, 3D, and LEGO invariants
-- A source image cannot guarantee unseen geometry. Do not claim exact reconstruction of hidden surfaces.
-- Probabilistic reconstruction may be uncertain; catalog, integrity, artifact-consistency, and bounded resource checks should be deterministic wherever possible.
-- The general OBJ converter must use geometry, not filenames, object names, semantic group names, or a hidden subject-specific template.
-- Subject-specific optimization is allowed only when its prerequisites and scope are explicit; never silently route arbitrary objects through it.
-- Do not add artificial parts merely to reach a requested piece count.
-- Do not add an external stand/support unless the accepted requirement asks for one.
-- Emit only supported part IDs, transforms, colors, and validated part/color combinations.
-- Do not invent a part/color combination because it looks plausible.
-- Preserve provenance needed to prove artifacts belong together, including relevant source/settings hashes and revision identifiers.
-- Viewer, LDraw, bill of materials, and instructions must reconcile to the same placements.
-- Missing instruction boundaries remain missing; the UI must not fabricate assembly steps to create a complete-looking result.
-- Collision, connectivity, insertion feasibility, stability, and physical-build success are different claims. Do not treat one as proof of another.
-- New fitting heuristics must state their geometric assumption and include deterministic regression tests.
-- New tolerances/repair thresholds must be named, bounded, and justified - never unexplained magic numbers.
-- Meaningful converter performance changes should be benchmarked on representative inputs.
 Backend and API rules
-- Keep route/HTTP handlers focused on request parsing, authentication/authorization, boundary validation, calling the owning domain operation, and shaping the response.
-- Do not bury geometry or workflow business logic inside route handlers.
-- Reuse existing HTTP/error conventions where they fit.
-- Use appropriate status codes and stable, safe error responses.
-- Validate content type, payload shape, identifiers, hashes, and size/resource limits before expensive or paid work.
-- Preserve idempotency for operations that can create paid work or durable state.
-- Authorize owner-private resources at the server/data-access boundary, not only in the UI.
-- Use explicit outbound timeouts and bounded response reads.
-- Preserve allowlists/fixed-origin rules for remote asset retrieval. Never fetch arbitrary user-supplied URLs from a privileged server context.
-- Health endpoints must stay lightweight.
-Database and persistence rules
-- D1/SQLite schema changes go through Drizzle schema definitions and committed migrations.
-- Do not manually mutate shared/production schema or reset a persistent database to make migration easier.
-- Design tables from actual entities, ownership, state transitions, integrity requirements, and query patterns.
-- Add indexes for real access patterns, uniqueness, ownership, idempotency, or state coordination - not to make the schema look sophisticated.
-- Preserve owner scoping on private records.
-- Prefer database constraints for invariants the database can enforce reliably.
-- Avoid opaque JSON/text for data that current behavior needs to query relationally; conversely, do not normalize stable opaque manifests merely for theoretical purity.
-- Avoid N+1 query patterns in new flows.
-- Preserve existing data unless an explicitly approved migration plan says otherwise.
-Security and data handling
-- Never commit secrets, .env contents, tokens, signed private URLs, or user artifacts.
-- Keep provider/converter credentials server-side only.
-- Validate uploads/provider files for type, size, structure, and resource bounds before deeper processing.
-- Prevent path traversal and unsafe archive/file extraction. Do not follow arbitrary OBJ material/texture paths.
-- Do not log private payloads or secrets.
-- Preserve same-origin/Origin checks where they protect state-changing operations.
-- Enforce ownership at every private database/storage access path.
-- Do not trust client-provided owner IDs, hashes, file metadata, or completion state without server verification.
-- Preserve integrity links between source image, GLB/OBJ, settings, and LDraw result.
-- Keep public sample/Admin-local flows separate from private paid-generation flows.
-- Automated tests must not call paid providers by default.
-Performance and scalability
-- Bound input sizes, part counts, geometry work, downloads, request sizes, timeouts, and concurrency.
-- Reject clearly invalid/oversized work before expensive allocation.
-- Prefer bounded deterministic algorithms over unbounded searches.
-- Do not add caching until repeated cost and invalidation rules are understood.
-- Do not add concurrency merely to look performant; consider determinism, memory, races, provider limits, and runtime limits first.
-- Do not create a queue/worker system when the current synchronous/job model meets the requirement.
-- Measure before optimizing and keep reproducible benchmarks for meaningful converter performance changes.
-- Keep the converter independently containerizable and do not store durable user state in its ephemeral runtime.
-- Avoid duplicate paid reconstruction work; preserve completed stages for recovery/retry.
-Testing
+- Python runtime is 3.12; keep manifest, lockfile, CI, Docker, and typing assumptions aligned.
+- Manage dependencies with uv; do not hand-edit uv.lock.
+- Follow PEP 8 plus current Ruff/mypy configuration. mypy strict mode is intentional.
+- Prefer dataclasses/enums/plain functions where sufficient; do not create a class solely to hold one stateless function.
+- Avoid global mutable state.
+- Keep async request paths non-blocking; CPU-heavy conversion belongs in workers.
+- Public REST API lives under /api/v1; /health stays a lightweight unversioned operational probe.
+- Long operations return asynchronous job resources rather than holding requests open.
+- Request/response schemas belong at the HTTP boundary; domain objects should not depend on transport concerns solely for convenience.
+- Business validation depending on DB/external state belongs in services, not only Pydantic validators.
+- Use safe, stable errors; never expose stack traces, raw provider payloads, SQL details, private URLs/tokens, or internal paths.
+- Preserve conventional HTTP semantics. Use 401 for unauthenticated, 403 for authenticated-but-forbidden, 409 for state conflicts where appropriate, 413 for oversized input, 422 for semantic validation, and 429 for quotas/rate limits with Retry-After when meaningful.
+- Preserve idempotency for endpoints that create paid or durable asynchronous work.
+- CORS is configuration; do not use wildcard production CORS with credentials.
+- Outbound HTTP calls need explicit timeouts and bounded response handling.
+Database, auth, and security rules
+- Supabase Auth is the identity provider; do not create a parallel auth system.
+- Never trust client-supplied user IDs for authorization when identity comes from verified JWT sub.
+- Every user-owned read/write is scoped to the authenticated user at the API/database boundary.
+- RLS is enabled. Do not disable it or add broad browser policies merely to unblock development.
+- When API transactions are wired to PostgreSQL RLS, propagate only verified request identity/claims with an approved transaction-scoped mechanism and ensure pooled connections do not leak request context.
+- Use least-privilege DB identities; migration, API, and worker responsibilities should not all receive unrestricted privileges.
+- Schema changes use committed SQL migrations under supabase/migrations/; never hand-edit shared schema.
+- Prefer normalized relational entities and real constraints/foreign keys/uniqueness. Use JSONB for bounded settings payloads, not as a substitute for queryable relational data.
+- Add indexes for real ownership/state/idempotency/query patterns, not for appearance.
+- Quota/active-job checks that can race must be transactionally safe.
+- Worker job claims/state transitions must be atomic under duplicate/parallel delivery.
+- Preserve data unless a reviewed destructive migration explains compatibility and recovery.
+- User uploads/models are private application data. Do not put real user files/content in tests, fixtures, docs, logs, or commits.
+Blob, queue, worker, and provider rules
+- Azure Blob Storage stores binary artifacts; PostgreSQL stores metadata/provenance/blob identifiers.
+- Use short-lived, narrowly scoped signed access for browser upload/download; never expose account keys or broad container permissions.
+- Treat uploads and provider-generated model files as untrusted. Validate size/type/structure/resource bounds before deep processing.
+- Database and Blob writes are not one transaction; represent incomplete/failure states honestly and clean them up/reconcile deliberately.
+- Queue messages stay small: identifiers plus a message/schema version if needed. PostgreSQL remains the durable source of truth.
+- Assume Azure Service Bus at-least-once delivery; workers must tolerate duplicates.
+- Atomically claim work before expensive processing and complete a message only after required durable state/artifacts are safe.
+- Retry only failures that may succeed later. Retries are bounded; permanent failures become terminal and repeated failures go to dead-letter handling rather than infinite loops.
+- Exact retry/delivery/worker-count values belong in configuration/approved design, not scattered magic numbers.
+- The generation worker owns the paid fal workflow. Domain/services must not depend on fal-specific JSON shapes.
+- Never log FAL_KEY, JWTs, SAS URLs, private source URLs, or full private provider payloads.
+- Use deterministic fake providers in normal automated tests; real provider smoke tests are deliberate/manual.
+LEGO conversion and 3D rules
+The detailed converter is not implemented in the current foundation. Do not invent a complex converter architecture in advance.
+When implementing it:
+- Keep CPU-intensive conversion out of API request handlers.
+- Make coordinate systems/units explicit.
+- Name geometry tolerances/algorithm thresholds; do not scatter magic numbers.
+- Keep conversion deterministic for identical input/settings/version unless randomness is explicitly required and controlled.
+- Bound mesh size, memory, search/fit iterations, target piece counts, and other potentially explosive work.
+- Prefer clear algorithms over dense numerical tricks unless profiling proves a bottleneck.
+- Do not fabricate pieces merely to hit a requested piece count.
+- Keep model, BOM/parts, instructions, previews, and downloadable artifacts traceable to the same conversion/source/settings.
+- Collision, connectivity, stability, insertion feasibility, and physical buildability are different claims. Do not claim one proves another.
+- New fitting/repair heuristics need a stated assumption and deterministic regression tests.
+- Benchmark before claiming a performance optimization.
+Frontend rules
+- Preserve TypeScript strict, noUnusedLocals, and noUnusedParameters; fix types instead of bypassing them.
+- Use npm; do not switch package managers.
+- TanStack Query owns server/async state. Do not add global state management while local state + query state are sufficient.
+- Use Zod for untrusted API/external data, not every internal object.
+- Use React Hook Form only when a form is complex enough to benefit from it.
+- Import Three.js/R3F/Drei only where the 3D experience needs them; do not load heavy 3D code into unrelated views.
+- Separate substantial fetching/polling/3D lifecycle logic from rendering when it becomes non-trivial; do not create a hook/component for every tiny expression.
+- Keep relevant loading, auth, quota, queued, processing, error, retry, empty, and success states explicit.
+- Preserve semantic HTML, keyboard/focus behavior, touch usability, and responsive layouts.
+- Clean up timers, subscriptions, object URLs, AbortControllers, and Three.js resources.
+- Paid work must be triggered by explicit user intent, never by component remounts, render cycles, tab changes, or automatic query retries.
+- Do not silently add Prettier or another formatter; use current ESLint/TypeScript conventions unless the team explicitly adopts one.
+Rate limits, pagination, and scalability
+- Enforce authoritative quotas server-side; frontend limits are UX only.
+- Values shown in rough design diagrams are examples until explicitly accepted. Keep limits named/configurable.
+- Paid generation should have bounded per-user rate/concurrency protection when implemented.
+- Return 429 with useful retry information for time-window quotas.
+- Do not implement correctness-critical quotas with in-process counters.
+- For small bounded per-user history, offset/page pagination is an intentionally simple choice. Validate bounds and index the ownership/sort query.
+- Use cursor/keyset pagination only when the listing's scale/mutation behavior actually requires it.
+- Reject invalid/oversized work before provider/storage/CPU expense.
+- Scale through stateless API + durable queues + independently scalable workers + Blob + PostgreSQL before adding more services.
+- Measure before optimizing. Do not sacrifice readability for speculative micro-optimizations.
+- Do not add a cache until repeated cost and invalidation rules are understood.
+- Worker min/max concurrency belongs in deployment configuration backed by provider limits, CPU/memory, cost, and measured load.
+Testing and required checks
 Whoever changes behavior owns the relevant tests.
-- Test behavior and contracts, not private implementation details.
-- A reproducible bug fix should include a regression test.
-- A new domain rule should have a focused test at the layer that owns it.
-- Do not add meaningless tests that only assert constants, library behavior, or trivial markup.
-- Keep normal automated tests deterministic and offline.
-- Mock/stub external paid providers and network services.
-- Real provider/hosted smoke tests are deliberate manual evidence, not the default suite.
-- Avoid fixed sleeps; use deterministic time/state control where practical.
-- Fixtures must be labelled and must never be reported as proof of a live generation.
-Python / converter
-Run relevant tests; for normal repository-wide converter verification:
-python -m pytest -q
-Test geometry invariants, catalog validity, artifact consistency, provenance/hashes, resource bounds, failures, and regressions relevant to the change.
-Canonical web app
-From site/, run the relevant checks:
-npm test
-npm run typecheck
+- Test behavior/contracts, not private implementation details.
+- A reproducible bug fix should include a regression test unless technically impossible; explain why if omitted.
+- New business/security/state-transition rules require focused tests at the owning layer.
+- Cover meaningful failure paths, authorization, idempotency/duplicate delivery, and edge cases relevant to the feature.
+- Keep normal tests deterministic, isolated, and offline.
+- Mock provider/Azure/network behavior; never call paid/production services by default.
+- Do not write meaningless tests that merely restate constants or library behavior.
+- Avoid fixed sleeps in tests where state/time can be controlled explicitly.
+- Playwright may be added when stable high-value end-to-end user journeys exist; do not create a placeholder E2E suite prematurely.
+- Aim for strong coverage of critical behavior, but do not game coverage with low-value assertions or add coverage tooling during an unrelated task without approval.
+- Never claim a check passed if it was not actually run.
+Backend, from backend/:
+uv run ruff check .
+uv run mypy app
+uv run pytest -q
+Use uv run ruff format --check . when checking Python formatting.
+Frontend, from frontend/:
 npm run lint
+npm run test -- --run
 npm run build
-Do not claim a check passed if it was not run. If the environment prevents a check, say what could not be run and what was verified instead.
-If the task explicitly changes reconstruction-site/, use that package's own scripts; passing site/ does not validate the legacy app.
-Frontend quality
-- Preserve a clear journey from image input through reconstruction/conversion to Model, Parts, and Instructions.
-- Never show success earlier than backend/domain state justifies.
-- Keep revision and validation state understandable where relevant.
-- Use actionable failure/recovery states.
-- Preserve responsive layout and keyboard/touch usability for changed flows.
-- Avoid decorative complexity that obscures state or makes the workflow harder to understand.
-- Do not rerun paid work merely because a user changes tabs/views.
-Documentation
-- Keep setup instructions executable and current.
-- Product.md owns user-facing acceptance criteria.
-- Architecture.md owns durable technical contracts/rationale.
-- Roadmap.md owns scope, phase gates, and open direction.
-- docs/SUBMISSION.md owns current deployment/submission procedure and evidence boundaries.
-- Link rather than duplicate changing facts across documents.
-- Distinguish proposed, implemented, locally verified, hosted verified, and physically verified.
-- Do not describe future work as implemented or local evidence as hosted evidence.
-- Update docs in the same change when public behavior, setup, architecture, API contracts, deployment steps, or durable assumptions change.
-- Avoid documentation churn for internal refactors with no contract impact.
-Git and collaboration
-- Treat main as the stable shared integration branch.
-- Work on short-lived feature/personal branches. Codex-created branches may use the existing codex/ prefix; otherwise follow the team's existing convention.
-- Inspect git status and the current diff before editing. Preserve unrelated/uncommitted work.
-- Never force-push, rewrite shared history, reset/clean away work, or discard another contributor's changes.
-- Do not perform Git publication actions unless explicitly requested by the human.
-- Keep commits/PRs focused on one coherent unit of work.
-- A PR should explain changed behavior, important technical decisions, checks run, and known limitations/risks.
-- Do not hide a broad refactor inside a feature PR.
-Optional specialized agents
-Role briefs under agents/ may be used for substantial work, but delegation must reduce risk or improve independent review rather than create ceremony.
-Role	Use when
-Product	User behavior, scope, acceptance criteria, UX ambiguity
-Architect	Major boundaries, schema/API/provider/deployment/security/geometry decisions
-Developer	Approved multi-file implementation
-QA	Independent verification of substantial or high-risk behavior
-
-For a small localized fix, one agent may implement and verify directly. Role-specific instructions never override this file.
+For backend/container changes, validate docker build -t image-to-lego-api:local backend when the environment permits. If a check cannot run, say so explicitly.
+Cloud, documentation, and Git
+- Azure is the accepted cloud target. Do not introduce AWS/GCP equivalents without a new architecture decision.
+- Intended services are Container Apps, ACR, Service Bus, Blob Storage, Key Vault, and Static Web Apps.
+- API and workers may share one backend image with different startup commands, but scale/resources independently.
+- Deployment uses immutable/versioned images and GitHub OIDC/federated identity; do not store long-lived Azure client secrets in GitHub.
+- infra/ is currently a reserved boundary. Do not add Terraform/Bicep/Pulumi until an explicit infrastructure task selects the approach.
+- Keep cloud cost in mind, especially fal calls, idle workers, storage, and unnecessary retries, without building a premature optimization platform.
+- Keep README.md setup/status truthful.
+- Update architecture docs/ADRs in the same change when public APIs, persistent data, security boundaries, queue topology, deployment, or durable architecture changes.
+- Distinguish planned, implemented, locally verified, and deployed/hosted verified behavior.
+- Use Mermaid for Markdown sequence/flow diagrams unless the team approves another format.
+- Inspect current branch/status/diff before editing and preserve unrelated work.
+- Keep PRs focused and follow .github/PULL_REQUEST_TEMPLATE.md.
+- Never force-push or rewrite shared history.
+- Do not commit/push/merge/rebase/reset/clean/delete branches/deploy unless explicitly requested by the human.
 Definition of Done - agent-checkable
 Before presenting a change as ready for human review, confirm all applicable items:
-
 - Requested behavior is implemented without unrelated scope expansion.
-- Product/Architecture contracts are followed, or an approved deviation is documented.
-- The implementation uses the simplest reasonable design.
-- No unnecessary dependency, abstraction, helper, class, file, service, table, cache, queue, retry loop, or framework was introduced.
-- No dead/commented-out code, unused imports, stale flags, or speculative scaffolding remains.
-- Names communicate domain meaning and non-trivial logic is readable.
-- Errors/edge cases are handled at the correct boundary.
-- Secrets, private data, authorization, integrity, and resource limits remain protected.
-- Database changes have a versioned migration and preserve existing data expectations.
-- API changes have validation, authorization, appropriate status codes, and tests.
-- Frontend changes include relevant loading/error/empty/accessibility states.
-- Geometry/converter changes preserve deterministic invariants and have focused regression tests.
-- Model, parts, export, and instruction artifacts still use the same revision where applicable.
-- Relevant tests, typecheck, lint, and build checks pass.
-- Automated tests do not accidentally invoke a real paid provider.
-- Durable behavior/contract documentation is updated where necessary.
-- The final diff has been reviewed for accidental complexity and unrelated edits.
-- Any check not run is disclosed explicitly.
+- Architecture/security contracts are followed or an approved deviation is documented.
+- The solution is the simplest reasonable design for the current requirement.
+- No unnecessary dependency, abstraction, helper, class, interface, file, service, table, cache, queue, retry loop, or framework was introduced.
+- No dead/commented-out code, unused imports, stale flags, speculative scaffolding, or accidental generated files remain.
+- Names and structure make non-trivial logic readable.
+- Business rules live at the correct layer and are not duplicated across UI/routes/workers/database code.
+- Errors/edge cases are handled without hiding failures.
+- Identity/ownership/RLS, secrets, quotas, resource limits, and private artifacts remain protected.
+- Paid-provider work and queue processing are idempotent where retries/duplicates can occur.
+- DB changes use committed migrations and justified constraints/indexes.
+- API changes use conventional HTTP semantics, authorization, validation, safe errors, and tests.
+- Frontend changes cover relevant user states and remain accessible/responsive.
+- Worker changes handle duplicate delivery and terminal failures safely.
+- Conversion/geometry changes are bounded/deterministic where intended and have regression tests.
+- Relevant lint, type checks, tests, builds, and Docker checks pass, or unrun checks are disclosed.
+- Automated tests did not contact real paid/production services.
+- Documentation/ADRs were updated where contracts changed.
+- The final diff was reviewed for accidental complexity and unrelated edits.
 Professor-readability pass
-Before finishing, read the diff as if you had to explain it orally to the professor:
-
-1. Can every new file, class, major function, and dependency be justified in one sentence?
+Before finishing a non-trivial change, read the diff as if you had to explain it orally to the professor:
+1. Can every new file, class, interface, major function, table, service, and dependency be justified in one sentence?
 2. Is any abstraction present before there is a concrete need for it?
-3. Could the same behavior be implemented more clearly with fewer layers or dependencies?
-4. Are important algorithms and constraints understandable from names, structure, tests, and a few useful comments?
-5. Do the tests prove important behavior rather than merely exercise code?
-6. Does the repository tell a coherent story from architecture to implementation to testing to deployment?
-
+3. Could the same correct behavior use fewer layers/dependencies or clearer control flow?
+4. Are important state transitions, security decisions, units, limits, retries, and side effects explicit?
+5. Would another competent developer understand the code without asking what an AI-generated abstraction is for?
+6. Do comments explain the non-obvious reasons instead of narrating syntax?
+7. Do tests prove meaningful behavior/failure/authorization/idempotency rather than merely execute lines?
+8. Do the code, architecture, and documentation tell the same story?
 If not, simplify or clarify before presenting the change.
-Information routing
-Topic	Source of truth
-Agent behavior / coding standards	AGENTS.md
-User-facing behavior	Product.md
-Technical invariants / boundaries	Architecture.md
-Scope / gates / open direction	Roadmap.md
-Dependencies / executable commands	Manifests, lockfiles, scripts
-Database schema	site/db/schema.ts + committed migrations
-Implemented behavior	Code + tests
-Deployment/submission	docs/SUBMISSION.md + current deployment config
-Verification claims	Tests and specifically labelled QA/hosted/physical evidence
-
 When you are unsure
-Do not invent a material requirement or new architecture to fill a gap.
-
-- Inspect the owning source of truth and current implementation first.
-- For a local, reversible ambiguity, use the simplest option consistent with existing patterns and state the assumption.
-- If ambiguity affects product scope, public API, persistent data, provider cost, security/privacy, deployment, canonical artifact meaning, or buildability claims, surface it before making the decision.
-- If authoritative sources conflict, state exactly what conflicts and which source owner should resolve it. Do not silently pick one.
-- When choosing between a sophisticated solution and a conventional simple one, prefer the conventional simple one.
-
+- Inspect the relevant source of truth and current implementation first.
+- For a small, local, reversible detail, choose the simplest option consistent with existing patterns and state the assumption.
+- If ambiguity affects public API, authentication/authorization, persistent data, queue semantics, paid-provider cost, cloud topology, privacy, artifact integrity, or converter meaning, surface it before deciding.
+- If authoritative sources conflict, state exactly what conflicts and require them to be reconciled. Do not silently pick a convenient default.
+- When a sophisticated solution and a conventional simple solution both meet the requirement, choose the conventional simple solution.
