@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
+
+from app.domain.artifacts import Artifact
 
 
 class JobType(StrEnum):
@@ -23,3 +26,22 @@ class Job:
     type: JobType
     status: JobStatus
     idempotency_key: str
+    provider_job_id: str | None
+    error_code: str | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructionJob:
+    job: Job
+    source_artifact_id: UUID
+    output_artifact_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerReconstructionJob:
+    reconstruction: ReconstructionJob
+    owner_id: UUID
+    source_artifact: Artifact

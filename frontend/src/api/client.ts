@@ -6,6 +6,12 @@ import {
   type UploadCompletion,
   type UploadInitiation,
 } from "../schemas/uploads";
+import {
+  jobSchema,
+  reconstructionSchema,
+  type Reconstruction,
+  type ReconstructionJob,
+} from "../schemas/reconstructions";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
   /\/$/,
@@ -87,6 +93,35 @@ export async function completeUpload(
     { method: "POST" },
   );
   return uploadCompletionSchema.parse(await response.json());
+}
+
+export async function startReconstruction(
+  accessToken: string,
+  request: { projectId: string; sourceArtifactId: string },
+  idempotencyKey: string,
+): Promise<Reconstruction> {
+  const response = await authenticatedRequest("/api/v1/reconstructions", accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(request),
+  });
+  return reconstructionSchema.parse(await response.json());
+}
+
+export async function getJob(
+  accessToken: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<ReconstructionJob> {
+  const response = await authenticatedRequest(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}`,
+    accessToken,
+    { signal },
+  );
+  return jobSchema.parse(await response.json());
 }
 
 async function authenticatedRequest(

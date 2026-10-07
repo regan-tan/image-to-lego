@@ -21,10 +21,16 @@ authenticated application slices:
 - backend and frontend unit tests, linting, type checking, Docker, and CI configuration; and
 - architecture decisions and deployment planning documentation.
 
-Reconstruction jobs, generation/conversion queues and workers, fal.ai/TRELLIS integration,
-mesh-to-LEGO conversion, browser 3D inspection, stale-upload cleanup, and production deployment
-are **not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the artifact
-store.
+The reconstruction slice is implemented: an owner can start an idempotent image-to-3D job after a
+source image is ready; the API records the job and reconstruction run, publishes an identifier-only
+generation message, and the generation worker submits/polls `fal-ai/trellis`. The worker validates
+the actual source Blob bytes before paid submission, copies the completed GLB into canonical private
+Azure Blob Storage, and records a ready `reconstructed_model` artifact. The browser polls the job
+while it is queued or running.
+
+LEGO conversion, the conversion worker, browser 3D inspection, stale-upload cleanup, and production
+deployment are **not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
+artifact store.
 
 ## Intended architecture
 
@@ -34,9 +40,9 @@ The future request flow is:
 
 1. React authenticates a user with Supabase Auth and calls the REST API.
 2. FastAPI stores relational metadata in Supabase PostgreSQL and binary artifacts in Azure Blob Storage.
-3. A reconstruction provider adapter submits image-to-3D work to fal.ai/TRELLIS without leaking provider response schemas into business logic.
-4. Azure Service Bus durably delivers conversion jobs to an idempotent Python worker.
-5. The worker writes LDraw, BOM, and viewable model artifacts to Blob Storage while the API exposes progress metadata.
+3. The API creates an idempotent reconstruction job/run and publishes only its job and owner IDs to the generation queue.
+4. A generation worker validates the private source Blob, submits/polls fal.ai/TRELLIS, and copies the returned GLB to canonical Azure Blob Storage.
+5. The API exposes owner-scoped job status for browser polling. Future conversion remains a separate queue/worker concern.
 
 See [Architecture](docs/architecture/README.md) for the component diagram and boundary details.
 
@@ -66,9 +72,27 @@ PostgreSQL stores ownership, lifecycle, MIME type, byte size, client-declared SH
 canonical Blob name. Azure Blob Storage stores the private binary image. SAS URLs are returned to
 the browser when needed and are never persisted. `ready` means the direct upload is present with
 the expected declared metadata and is ready for downstream server-side validation; it does not mean
-FastAPI has cryptographically verified the stored bytes. Before any paid fal submission, the future
-generation worker must validate the actual stored source bytes, including content type, resource
-bounds, and a recomputed SHA-256.
+FastAPI has cryptographically verified the stored bytes. Before any paid fal submission, the
+generation worker validates the actual stored source bytes, including content type, resource bounds,
+and a recomputed SHA-256.
+
+## Implemented reconstruction flow
+
+`POST /api/v1/reconstructions` requires an `Idempotency-Key`, a project ID, and a ready source-image
+artifact ID. It returns a queued reconstruction job; exact replays return the existing job without
+publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is safe for status polling.
+
+The generation worker uses Azure Service Bus's at-least-once delivery semantics. It never resubmits a
+job once `jobs.provider_job_id` is persisted. Before submission it downloads the private source Blob
+within the configured byte limit, recomputes SHA-256, and checks the JPEG/PNG/WebP signature against
+the artifact MIME type. On success, the worker bounds the provider result download and stores the
+canonical GLB at `projects/{projectId}/reconstructions/{jobId}/model.glb`; fal-hosted URLs are never
+stored as canonical artifacts.
+
+There is deliberately no transactional outbox in this slice. If the initial Service Bus publish fails,
+the just-created job is marked failed and the API returns 503. A crash between a paid fal submission and
+persistence of its request ID is treated conservatively: the worker waits while the submission claim is
+fresh, then fails it as unconfirmed rather than risking a duplicate paid request.
 
 ## Repository layout
 
@@ -143,6 +167,16 @@ is not the table owner, and does not have `BYPASSRLS`. Each repository transacti
 verified JWT subject in the transaction-local `app.current_user_id` setting; the migration's RLS
 policies use that value and pooled connections cannot retain it after the transaction.
 
+After applying the reconstruction migration, provision the hosted API role outside the portable
+migrations if it does not already have the required table privileges:
+
+```sql
+grant select, insert, update on public.jobs, public.artifacts, public.reconstruction_runs
+to image_to_lego_api;
+```
+
+The migration never assumes this environment-specific role exists. RLS still applies to these grants.
+
 ### Azure Blob upload setup
 
 Create a private Blob container and set `AZURE_STORAGE_ACCOUNT_URL` and
@@ -193,10 +227,11 @@ docker run --rm -p 8000:8000 image-to-lego-api:local
 The same image can invoke the future worker entry point:
 
 ```powershell
-docker run --rm image-to-lego-api:local python -m app.workers.conversion_worker
+docker run --rm image-to-lego-api:local python -m app.workers.generation_worker
 ```
 
-The worker currently exits with a clear informational message because Azure Service Bus and conversion logic are not implemented.
+The generation worker requires configured PostgreSQL, Blob Storage, Service Bus, and `FAL_KEY` values.
+The separate conversion worker remains an unimplemented scaffold.
 
 ## Environment variables
 
@@ -217,7 +252,13 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 | `UPLOAD_SAS_LIFETIME_MINUTES` | API | Single-blob upload SAS lifetime |
 | `AZURE_SERVICE_BUS_NAMESPACE` | API/worker | Service Bus fully qualified namespace |
 | `AZURE_SERVICE_BUS_QUEUE` | API/worker | Durable conversion queue name |
-| `FAL_KEY` | API/worker | fal.ai credential for a future provider adapter |
+| `AZURE_SERVICE_BUS_GENERATION_QUEUE` | API/worker | Durable image-to-3D generation queue name |
+| `FAL_KEY` | Worker | fal.ai credential for TRELLIS |
+| `RECONSTRUCTION_POLL_INTERVAL_SECONDS` | Worker | Delay before the next provider status check |
+| `RECONSTRUCTION_MAX_RUNTIME_MINUTES` | Worker | Maximum allowed reconstruction runtime |
+| `RECONSTRUCTION_MAX_MODEL_SIZE_BYTES` | Worker | Maximum accepted generated model size |
+| `RECONSTRUCTION_SOURCE_SAS_LIFETIME_MINUTES` | Worker | Read-only source Blob SAS lifetime; configured for maximum runtime plus a five-minute pickup buffer |
+| `RECONSTRUCTION_HTTP_TIMEOUT_SECONDS` | Worker | fal API and result-download timeout |
 | `CORS_ORIGINS` | API | JSON array of allowed browser origins |
 | `VITE_API_BASE_URL` | Web | FastAPI base URL |
 | `VITE_SUPABASE_URL` | Web | Supabase URL for browser authentication |
