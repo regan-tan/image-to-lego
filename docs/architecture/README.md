@@ -1,7 +1,7 @@
 # Intended architecture
 
-Status: **Authenticated profile, project metadata, and direct source-image upload are implemented.
-Generation, conversion, and production deployment are not implemented.**
+Status: **Authenticated profile, project metadata, direct source-image upload, and queued image-to-3D
+reconstruction are implemented. Conversion, browser 3D inspection, and production deployment are not.**
 
 ```mermaid
 flowchart LR
@@ -10,10 +10,10 @@ flowchart LR
     API -->|"owner-scoped metadata<br/>implemented"| SupabaseDb["Supabase PostgreSQL<br/>projects + artifact lifecycle"]
     API -->|"single-blob create-only SAS + declared-metadata confirmation<br/>implemented"| Blob["Azure Blob Storage<br/>private source images"]
     Web -->|"direct HTTPS PUT<br/>binary never enters API"| Blob
-    API -->|"provider adapter<br/>not implemented"| Fal["fal.ai / TRELLIS<br/>not implemented"]
-    API -->|"durable jobs<br/>not implemented"| Bus["Azure Service Bus<br/>not implemented"]
-    Bus -->|"at-least-once delivery"| Worker["Python conversion worker<br/>entry point only"]
-    Worker -->|"LDraw, BOM, GLB/OBJ<br/>not implemented"| Blob
+    API -->|"job/run + identifier-only message"| Bus["Azure Service Bus<br/>generation queue"]
+    Bus -->|"at-least-once delivery"| Worker["Python generation worker"]
+    Worker -->|"submit/status/result"| Fal["fal.ai / TRELLIS"]
+    Worker -->|"validated source + canonical GLB"| Blob
 ```
 
 ## Dependency boundaries
@@ -27,13 +27,23 @@ API route -> application service -> repository/provider protocol -> infrastructu
 - Route handlers translate HTTP input/output and remain free of SQL and provider-specific code.
 - Services own validation, business rules, and orchestration.
 - Purpose-specific repositories isolate PostgreSQL persistence. There is no generic repository base class.
-- The reconstruction protocol owns provider-neutral request/status models. A future fal.ai adapter must translate TRELLIS responses at this boundary.
+- The reconstruction protocol owns provider-neutral request/status models. The fal.ai adapter translates TRELLIS queue responses at this boundary.
 - Binary content belongs in Azure Blob Storage; PostgreSQL stores artifact metadata and blob names only.
 - CPU-intensive mesh conversion runs in an independently deployed worker image, never in a request handler or FastAPI `BackgroundTasks`.
 
 ## Job delivery and idempotency
 
-Azure Service Bus is the intended durable transport. Delivery will be at least once, so a worker must treat duplicate messages as normal. The database uniqueness constraint on `(project_id, type, idempotency_key)` establishes the first idempotency boundary. A production implementation must also make artifact publication and job-state transitions retry-safe before messages are completed.
+Azure Service Bus is the durable generation transport. Delivery is at least once, so the generation
+worker treats duplicate messages as normal. The database uniqueness constraint on `(project_id, type,
+idempotency_key)` establishes the API idempotency boundary. Once persisted, `provider_job_id` prevents
+normal duplicate delivery from submitting another paid fal request. A unique partial index makes output
+artifact publication idempotent for each reconstruction job.
+
+The API creates the durable job/run before publishing. This slice intentionally does not add a
+transactional outbox: a failed initial publish marks the new job failed and returns 503. If a worker
+crashes after claiming a provider submission but before persisting its ID, later delivery treats the
+running, ID-less job as ambiguous: it waits while the claim is fresh and then fails it unconfirmed rather
+than risking duplicate paid work. The design does not claim distributed exactly-once delivery.
 
 ## Trust boundaries
 
@@ -66,8 +76,13 @@ Pending uploads expire after 24 hours by default. This slice represents that exp
 does not implement scheduled cleanup. SAS URLs are ephemeral and are not stored in PostgreSQL.
 `ready` means the direct upload is present with the expected client-declared metadata and can enter
 downstream server-side validation. It does not mean the API has cryptographically verified the Blob
-bytes. Before a paid fal submission, the future generation worker must validate the stored source
-bytes, including content type, resource bounds, and a recomputed SHA-256. Blob SAS access requires
+bytes. Before a paid fal submission, the generation worker downloads a bounded copy, recomputes
+SHA-256, and verifies the JPEG/PNG/WebP signature against the artifact MIME type. It gives fal only a
+short-lived, read-only, blob-scoped SAS. Its configured lifetime must cover the maximum reconstruction
+runtime plus a five-minute pickup buffer so queued provider work does not normally lose source access.
+On success the worker bounds the provider model download and
+copies the verified GLB to the application's private canonical Blob path; fal URLs are never canonical
+state. Blob SAS access requires
 HTTPS; production browser origins must use HTTPS, while local development may use
 `http://localhost:5173` in the Blob CORS allowlist.
 

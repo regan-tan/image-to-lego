@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { reconstructionPollInterval } from "../reconstructionPolling";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 
 const ACCESS_TOKEN = "test-access-token";
@@ -61,6 +62,7 @@ describe("ProjectWorkspace", () => {
       subtle: {
         digest: vi.fn().mockResolvedValue(new Uint8Array(32).fill(0xab).buffer),
       },
+      randomUUID: vi.fn().mockReturnValue("f8e8397b-2ed7-4b28-a9e1-8124c136347a"),
     });
     vi.stubGlobal(
       "createImageBitmap",
@@ -214,6 +216,166 @@ describe("ProjectWorkspace", () => {
       `Bearer ${ACCESS_TOKEN}`,
     );
     expect(calls[blobIndex]?.[1]).toEqual(expect.objectContaining({ method: "PUT" }));
+  });
+
+  it("stops polling after succeeded or failed jobs", () => {
+    expect(reconstructionPollInterval("queued")).toBe(5_000);
+    expect(reconstructionPollInterval("running")).toBe(5_000);
+    expect(reconstructionPollInterval("succeeded")).toBe(false);
+    expect(reconstructionPollInterval("failed")).toBe(false);
+  });
+
+  it("starts a reconstruction with an idempotency key after upload completion", async () => {
+    const jobId = "f8e8397b-2ed7-4b28-a9e1-8124c136347a";
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/projects")) {
+        return jsonResponse([project]);
+      }
+      if (url.endsWith("/api/v1/uploads")) {
+        return jsonResponse({
+          uploadId: UPLOAD_ID,
+          projectId: PROJECT_ID,
+          status: "pending",
+          uploadUrl: UPLOAD_URL,
+          uploadUrlExpiresAt: "2026-10-06T01:10:00Z",
+          requiredHeaders: {},
+        }, 201);
+      }
+      if (url === UPLOAD_URL) {
+        return new Response(null, { status: 201 });
+      }
+      if (url.endsWith(`/api/v1/uploads/${UPLOAD_ID}/complete`)) {
+        return jsonResponse({ uploadId: UPLOAD_ID, projectId: PROJECT_ID, status: "ready" });
+      }
+      if (url.endsWith("/api/v1/reconstructions") && init?.method === "POST") {
+        return jsonResponse({ jobId, projectId: PROJECT_ID, type: "reconstruction", status: "queued" }, 201);
+      }
+      if (url.endsWith(`/api/v1/jobs/${jobId}`)) {
+        return jsonResponse({
+          jobId,
+          projectId: PROJECT_ID,
+          type: "reconstruction",
+          status: "queued",
+          outputArtifactId: null,
+          errorCode: null,
+          errorMessage: null,
+          createdAt: "2026-10-06T01:00:00Z",
+          updatedAt: "2026-10-06T01:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+
+    expect(screen.queryByRole("button", { name: "Generate 3D model" })).not.toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Image"), { target: { files: [makeImage()] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload image" }));
+    const generateButton = await screen.findByRole("button", { name: "Generate 3D model" });
+    fireEvent.click(generateButton);
+
+    await screen.findByText("Queued");
+    expect(generateButton).toBeDisabled();
+    fireEvent.click(generateButton);
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(
+        ([input, request]) => String(input).endsWith("/api/v1/reconstructions")
+          && request?.method === "POST",
+      );
+      expect(requestHeaders(call?.[1]).get("Idempotency-Key")).toBe(jobId);
+    });
+    expect(
+      vi.mocked(fetch).mock.calls.filter(
+        ([input, request]) => String(input).endsWith("/api/v1/reconstructions")
+          && request?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not install an initiation response after the source image changes", async () => {
+    const jobId = "f8e8397b-2ed7-4b28-a9e1-8124c136347a";
+    let resolveInitiation: ((response: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/projects")) {
+        return jsonResponse([project]);
+      }
+      if (url.endsWith("/api/v1/uploads")) {
+        return jsonResponse({
+          uploadId: UPLOAD_ID,
+          projectId: PROJECT_ID,
+          status: "pending",
+          uploadUrl: UPLOAD_URL,
+          uploadUrlExpiresAt: "2026-10-06T01:10:00Z",
+          requiredHeaders: {},
+        }, 201);
+      }
+      if (url === UPLOAD_URL) {
+        return new Response(null, { status: 201 });
+      }
+      if (url.endsWith(`/api/v1/uploads/${UPLOAD_ID}/complete`)) {
+        return jsonResponse({ uploadId: UPLOAD_ID, projectId: PROJECT_ID, status: "ready" });
+      }
+      if (url.endsWith("/api/v1/reconstructions") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          resolveInitiation = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+
+    fireEvent.change(await screen.findByLabelText("Image"), { target: { files: [makeImage()] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload image" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate 3D model" }));
+    await waitFor(() => expect(resolveInitiation).toBeDefined());
+
+    fireEvent.change(screen.getByLabelText("Image"), { target: { files: [makeImage()] } });
+    resolveInitiation?.(
+      jsonResponse({ jobId, projectId: PROJECT_ID, type: "reconstruction", status: "queued" }, 201),
+    );
+
+    await waitFor(() => expect(screen.queryByText("Queued")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Generate 3D model" })).not.toBeInTheDocument();
+  });
+
+  it("prevents project switching while reconstruction initiation is pending", async () => {
+    let resolveInitiation: ((response: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/projects")) {
+        return jsonResponse([project, { ...project, id: SECOND_PROJECT_ID, name: "Spaceship" }]);
+      }
+      if (url.endsWith("/api/v1/uploads")) {
+        return jsonResponse({
+          uploadId: UPLOAD_ID,
+          projectId: PROJECT_ID,
+          status: "pending",
+          uploadUrl: UPLOAD_URL,
+          uploadUrlExpiresAt: "2026-10-06T01:10:00Z",
+          requiredHeaders: {},
+        }, 201);
+      }
+      if (url === UPLOAD_URL) {
+        return new Response(null, { status: 201 });
+      }
+      if (url.endsWith(`/api/v1/uploads/${UPLOAD_ID}/complete`)) {
+        return jsonResponse({ uploadId: UPLOAD_ID, projectId: PROJECT_ID, status: "ready" });
+      }
+      if (url.endsWith("/api/v1/reconstructions") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          resolveInitiation = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderWorkspace();
+
+    fireEvent.change(await screen.findByLabelText("Image"), { target: { files: [makeImage()] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload image" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate 3D model" }));
+    await waitFor(() => expect(resolveInitiation).toBeDefined());
+    expect(screen.getByLabelText("Project")).toBeDisabled();
   });
 
   it("surfaces a Blob upload failure and does not call completion", async () => {

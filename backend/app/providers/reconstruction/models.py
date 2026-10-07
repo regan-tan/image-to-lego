@@ -17,6 +17,7 @@ class ReconstructionState(StrEnum):
 class ReconstructionRequest:
     input_artifact_id: UUID
     model: str
+    source_url: str = ""
     settings: dict[str, JsonValue] = field(default_factory=dict)
 
 
@@ -33,3 +34,13 @@ class ReconstructionStatus:
     output_urls: tuple[str, ...] = ()
     error_code: str | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructionOutput:
+    """A model file URL returned by a completed provider request."""
+
+    url: str
+    mime_type: str | None = None
+    file_name: str | None = None
+    size_bytes: int | None = None
