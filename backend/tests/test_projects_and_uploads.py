@@ -10,7 +10,7 @@ from app.api.v1.uploads import get_blob_storage, get_upload_repository
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
 from app.domain.artifacts import Artifact, ArtifactStatus
-from app.domain.projects import Project
+from app.domain.projects import Project, ProjectOverview
 from app.main import create_app
 from app.providers.blob_storage import StoredBlobProperties
 from app.repositories.uploads import PendingUploadRejection, PendingUploadResult
@@ -40,8 +40,21 @@ class FakeProjectRepository:
         project = self.projects.get(project_id)
         return project if project is not None and project.owner_id == owner_id else None
 
-    async def list_for_owner(self, *, owner_id: UUID) -> list[Project]:
-        return [project for project in self.projects.values() if project.owner_id == owner_id]
+    async def get_overview_for_owner(
+        self,
+        *,
+        project_id: UUID,
+        owner_id: UUID,
+    ) -> ProjectOverview | None:
+        project = await self.get_for_owner(project_id=project_id, owner_id=owner_id)
+        return ProjectOverview(project, None, None) if project is not None else None
+
+    async def list_overviews_for_owner(self, *, owner_id: UUID) -> list[ProjectOverview]:
+        return [
+            ProjectOverview(project, None, None)
+            for project in self.projects.values()
+            if project.owner_id == owner_id
+        ]
 
 
 class FakeUploadRepository:
@@ -196,6 +209,7 @@ async def test_authenticated_project_creation_and_listing_are_owner_scoped(
 
     assert response.status_code == 201
     assert response.json()["name"] == "Castle"
+    assert response.json()["status"] == "needs_photo"
     assert [project["name"] for project in listing.json()] == ["Castle"]
 
 
