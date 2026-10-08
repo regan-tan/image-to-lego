@@ -32,7 +32,13 @@ class BlobStorage(Protocol):
 
     async def get_properties(self, *, blob_name: str) -> StoredBlobProperties | None: ...
 
-    async def create_read_url(self, *, blob_name: str, expires_at: datetime) -> str: ...
+    async def create_read_url(
+        self,
+        *,
+        blob_name: str,
+        expires_at: datetime,
+        download_file_name: str | None = None,
+    ) -> str: ...
 
     async def download_bounded(self, *, blob_name: str, max_bytes: int) -> bytes: ...
 
@@ -115,8 +121,18 @@ class AzureBlobStorage:
             sha256=metadata.get("sha256"),
         )
 
-    async def create_read_url(self, *, blob_name: str, expires_at: datetime) -> str:
+    async def create_read_url(
+        self,
+        *,
+        blob_name: str,
+        expires_at: datetime,
+        download_file_name: str | None = None,
+    ) -> str:
+        """Read-only SAS for one blob; a download file name makes browsers save instead of open."""
         start = datetime.now(expires_at.tzinfo) - SAS_CLOCK_SKEW
+        content_disposition = (
+            f'attachment; filename="{download_file_name}"' if download_file_name else None
+        )
         try:
             delegation_key = await self._service_client.get_user_delegation_key(
                 key_start_time=start,
@@ -131,9 +147,10 @@ class AzureBlobStorage:
                 start=start,
                 expiry=expires_at,
                 protocol="https",
+                content_disposition=content_disposition,
             )
         except AzureError as error:
-            raise BlobStorageError("Could not create a source-image URL.") from error
+            raise BlobStorageError("Could not create a read URL.") from error
 
         container = quote(self._container_name, safe="")
         encoded_blob_name = quote(blob_name, safe="/")

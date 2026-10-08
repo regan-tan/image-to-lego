@@ -87,6 +87,35 @@ async def test_reconstruction_source_sas_is_https_and_read_only(
     permission = cast(BlobSasPermissions, captured["permission"])
     assert captured["blob_name"] == "projects/project-id/uploads/upload-id/image.png"
     assert captured["protocol"] == "https"
+    assert captured["content_disposition"] is None
     assert permission.read is True
     assert permission.create is False
     assert permission.write is False
+
+
+@pytest.mark.asyncio
+async def test_download_read_sas_sets_an_attachment_file_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_generate_blob_sas(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "sp=r&spr=https&sig=secret"
+
+    monkeypatch.setattr("app.providers.blob_storage.generate_blob_sas", fake_generate_blob_sas)
+    storage = AzureBlobStorage(
+        account_url="https://legostorage.blob.core.windows.net",
+        container_name="artifacts",
+        service_client=cast(BlobServiceClient, FakeBlobServiceClient()),
+    )
+
+    await storage.create_read_url(
+        blob_name="projects/project-id/reconstructions/job-id/model.glb",
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        download_file_name="model.glb",
+    )
+    await storage.close()
+
+    assert captured["content_disposition"] == 'attachment; filename="model.glb"'
+    assert cast(BlobSasPermissions, captured["permission"]).read is True

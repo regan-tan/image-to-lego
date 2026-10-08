@@ -1,3 +1,4 @@
+import { artifactReadUrlSchema, type ArtifactReadUrl } from "../schemas/artifacts";
 import { profileResponseSchema, type ProfileResponse } from "../schemas/profile";
 import {
   projectDetailSchema,
@@ -134,6 +135,22 @@ export async function startReconstruction(
     body: JSON.stringify(request),
   });
   return reconstructionSchema.parse(await response.json());
+}
+
+/** A short-lived, read-only link to one of the user's files in Azure Blob Storage. */
+export async function getArtifactReadUrl(
+  accessToken: string,
+  artifactId: string,
+  { download = false }: { download?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<ArtifactReadUrl> {
+  const query = download ? "?download=true" : "";
+  const response = await authenticatedRequest(
+    `/api/v1/artifacts/${encodeURIComponent(artifactId)}/read-url${query}`,
+    accessToken,
+    { signal },
+  );
+  return artifactReadUrlSchema.parse(await response.json());
 }
 
 async function authenticatedRequest(

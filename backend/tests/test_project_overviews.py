@@ -122,9 +122,10 @@ def test_project_with_a_ready_photo_and_no_job_is_ready_to_generate() -> None:
 
 @pytest.mark.asyncio
 async def test_project_list_includes_each_projects_status_and_is_owner_scoped() -> None:
+    sneaker_photo = make_source_image()
     generating = ProjectOverview(
         make_project(name="Sneaker"),
-        make_source_image(),
+        sneaker_photo,
         make_reconstruction(JobStatus.RUNNING),
     )
     empty = ProjectOverview(make_project(name="Desk lamp"), None, None)
@@ -138,6 +139,8 @@ async def test_project_list_includes_each_projects_status_and_is_owner_scoped() 
         ("Sneaker", "generating"),
         ("Desk lamp", "needs_photo"),
     ]
+    assert response.json()[0]["sourceImageArtifactId"] == str(sneaker_photo.artifact_id)
+    assert response.json()[1]["sourceImageArtifactId"] is None
 
 
 @pytest.mark.asyncio
@@ -158,6 +161,7 @@ async def test_project_detail_returns_latest_photo_and_reconstruction() -> None:
         "id": str(overview.project.id),
         "name": "Toy robot",
         "status": "model_ready",
+        "sourceImageArtifactId": str(source_image.artifact_id),
         "createdAt": "2026-10-08T09:00:00Z",
         "updatedAt": "2026-10-08T09:00:00Z",
         "sourceImage": {

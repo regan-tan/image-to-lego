@@ -1,7 +1,8 @@
 # Intended architecture
 
-Status: **Authenticated profile, project metadata, direct source-image upload, and queued image-to-3D
-reconstruction are implemented. Conversion, browser 3D inspection, and production deployment are not.**
+Status: **Authenticated profile, project metadata, direct source-image upload, queued image-to-3D
+reconstruction, and browser photo/3D-model viewing through short-lived read-only SAS links are
+implemented. Conversion and production deployment are not.**
 
 ```mermaid
 flowchart LR

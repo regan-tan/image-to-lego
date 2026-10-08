@@ -71,24 +71,13 @@ body {
   background: var(--color-background);
 }
 
-.panel,
 .auth-card {
-  width: min(100%, 42rem);
+  width: min(100%, 30rem);
   padding: clamp(1.75rem, 5vw, 3rem);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-extra-large);
   background: var(--color-surface);
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 25%);
-}
-
-.panel__title {
-  margin: 0;
-  font-size: 1.5rem;
-  letter-spacing: -0.01em;
-}
-
-.auth-card {
-  width: min(100%, 30rem);
 }
 
 .eyebrow {
@@ -140,38 +129,6 @@ h1 {
   color: inherit;
   background: var(--color-background);
   font: inherit;
-}
-
-.stacked-form {
-  display: grid;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-}
-
-.stacked-form label {
-  font-weight: 600;
-}
-
-.stacked-form input,
-.stacked-form select {
-  min-width: 0;
-  min-height: var(--control-height);
-  padding: 0 0.875rem;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-medium);
-  color: inherit;
-  background: var(--color-background);
-  font: inherit;
-}
-
-.stacked-form input[type="file"] {
-  padding: 0.6rem 0.875rem;
-}
-
-.inline-form {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: 1fr auto;
 }
 
 .field-help {
@@ -302,16 +259,6 @@ h1 {
 .status--pending {
   color: var(--color-on-brand);
   background: var(--lego-light-bluish-gray);
-}
-
-.status--success {
-  color: #ffffff;
-  background: var(--lego-green);
-}
-
-.status--error {
-  color: #ffffff;
-  background: var(--lego-red);
 }
 
 .badge {
@@ -633,6 +580,12 @@ h1 {
   border-bottom: 1px solid var(--color-border);
 }
 
+.project-card__photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .project-card__thumbnail-icon {
   display: flex;
   width: 56px;
@@ -800,10 +753,107 @@ h1 {
   background: var(--color-background);
 }
 
-.project-preview__icon--model {
-  width: 128px;
-  height: 128px;
-  color: var(--lego-light-bluish-gray);
+.project-preview__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.project-preview__photo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.segmented-control {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 2;
+  display: flex;
+  padding: 4px;
+  gap: 4px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  background: rgb(14 21 28 / 92%);
+}
+
+.segmented-control button {
+  min-height: 36px;
+  padding: 0 0.875rem;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.segmented-control button[aria-pressed="true"] {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  font-weight: 600;
+}
+
+.model-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-baseplate);
+}
+
+.model-viewer {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.model-viewer__loading {
+  padding: 0.375rem 0.75rem;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgb(14 21 28 / 90%);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.model-stage__toolbar {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+.model-stage__hint {
+  padding: 0.375rem 0.625rem;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgb(14 21 28 / 92%);
+  font-size: 0.8125rem;
+}
+
+.model-stage__actions {
+  display: flex;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.icon-button--overlay {
+  border: 1px solid var(--color-border-strong);
+  background: rgb(14 21 28 / 92%);
 }
 
 .project-preview__caption {
@@ -1337,12 +1387,6 @@ h1 {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 800;
-}
-
-@media (max-width: 760px) {
-  .inline-form {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {

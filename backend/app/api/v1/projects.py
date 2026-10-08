@@ -27,6 +27,7 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     status: ProjectStatus
+    source_image_artifact_id: UUID | None = Field(serialization_alias="sourceImageArtifactId")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
@@ -76,7 +77,7 @@ async def create_project(
             detail=error.message,
         ) from error
     # A project that was just created cannot have a source image yet.
-    return _project_response(project, ProjectStatus.NEEDS_PHOTO)
+    return _project_response(project, ProjectStatus.NEEDS_PHOTO, source_image_artifact_id=None)
 
 
 @router.get("", response_model=list[ProjectResponse])
@@ -85,7 +86,16 @@ async def list_projects(
     repository: ProjectRepositoryDependency,
 ) -> list[ProjectResponse]:
     overviews = await ProjectService(repository).list_overviews_for_owner(owner_id=owner_id)
-    return [_project_response(overview.project, overview.status) for overview in overviews]
+    return [
+        _project_response(
+            overview.project,
+            overview.status,
+            source_image_artifact_id=(
+                overview.source_image.artifact_id if overview.source_image is not None else None
+            ),
+        )
+        for overview in overviews
+    ]
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
@@ -107,11 +117,17 @@ async def get_project(
     return _project_detail_response(overview)
 
 
-def _project_response(project: Project, project_status: ProjectStatus) -> ProjectResponse:
+def _project_response(
+    project: Project,
+    project_status: ProjectStatus,
+    *,
+    source_image_artifact_id: UUID | None,
+) -> ProjectResponse:
     return ProjectResponse(
         id=project.id,
         name=project.name,
         status=project_status,
+        source_image_artifact_id=source_image_artifact_id,
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
@@ -125,6 +141,7 @@ def _project_detail_response(overview: ProjectOverview) -> ProjectDetailResponse
         id=project.id,
         name=project.name,
         status=overview.status,
+        source_image_artifact_id=source_image.artifact_id if source_image is not None else None,
         created_at=project.created_at,
         updated_at=project.updated_at,
         source_image=(

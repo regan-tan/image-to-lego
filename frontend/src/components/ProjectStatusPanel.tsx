@@ -2,7 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { startReconstruction } from "../api/client";
+import { getArtifactReadUrl, startReconstruction } from "../api/client";
+import { startBrowserDownload } from "../browserDownload";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
 import type { ProjectDetail } from "../schemas/projects";
 import {
@@ -12,7 +13,16 @@ import {
   uploadStageMessage,
   validateSourceImage,
 } from "../sourceImageUpload";
-import { AlertIcon, BrickIcon, CheckIcon, CubeIcon, InfoIcon, RetryIcon, SpinnerIcon } from "./Icons";
+import {
+  AlertIcon,
+  BrickIcon,
+  CheckIcon,
+  CubeIcon,
+  DownloadIcon,
+  InfoIcon,
+  RetryIcon,
+  SpinnerIcon,
+} from "./Icons";
 import { PhotoPicker } from "./PhotoPicker";
 
 interface ProjectStatusPanelProps {
@@ -46,6 +56,12 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
       idempotencyKey,
     ),
     onSuccess: refreshProject,
+  });
+
+  // Fetched at click time: download links are short-lived, so they are never kept around.
+  const modelDownload = useMutation({
+    mutationFn: (artifactId: string) => getArtifactReadUrl(accessToken, artifactId, { download: true }),
+    onSuccess: (readUrl) => startBrowserDownload(readUrl.url),
   });
 
   function handleGenerate() {
@@ -90,6 +106,7 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
     );
   }
 
+  const modelArtifactId = project.latestReconstruction?.outputArtifactId ?? null;
   const generationStartError = generation.isError ? (
     <p className="form-error" role="alert">We could not start generating. Please try again.</p>
   ) : null;
@@ -164,11 +181,27 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
             title="Your 3D model is ready"
             text="Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."
           />
-          <button type="button" className="button button--coming-soon" disabled>
-            <BrickIcon />
-            Convert to LEGO
-            <span className="badge badge--neutral">Coming soon</span>
-          </button>
+          <div className="side-panel__actions">
+            <button type="button" className="button button--coming-soon" disabled>
+              <BrickIcon />
+              Convert to LEGO
+              <span className="badge badge--neutral">Coming soon</span>
+            </button>
+            {modelArtifactId ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => modelDownload.mutate(modelArtifactId)}
+                disabled={modelDownload.isPending}
+              >
+                <DownloadIcon />
+                {modelDownload.isPending ? "Preparing download…" : "Download 3D model (.glb)"}
+              </button>
+            ) : null}
+            {modelDownload.isError ? (
+              <p className="form-error" role="alert">The download could not be started. Please try again.</p>
+            ) : null}
+          </div>
         </>
       ) : null}
 

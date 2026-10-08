@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     upload_quota_window_hours: int = Field(default=24, gt=0)
     upload_pending_lifetime_hours: int = Field(default=24, gt=0)
     upload_sas_lifetime_minutes: int = Field(default=10, gt=0)
+    artifact_read_url_lifetime_minutes: int = Field(default=10, gt=0)
     azure_service_bus_namespace: str | None = None
     azure_service_bus_queue: str | None = None
     azure_service_bus_generation_queue: str | None = None

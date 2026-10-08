@@ -18,6 +18,14 @@ vi.mock("./lib/supabase", () => ({
   supabase: { auth: authMock },
 }));
 
+// jsdom has no WebGL, so the lazily loaded Three.js viewer is replaced by a stand-in.
+vi.mock("./components/ModelViewer", () => ({
+  default: ({ url }: { url: string }) => <div data-testid="model-viewer" data-url={url} />,
+}));
+
+const downloadMock = vi.hoisted(() => ({ startBrowserDownload: vi.fn() }));
+vi.mock("./browserDownload", () => downloadMock);
+
 const session = {
   access_token: "test-access-token",
   user: { id: "user-123", email: "builder@example.com" },
@@ -36,17 +44,25 @@ const READY_SOURCE_IMAGE = {
   createdAt: "2026-10-08T09:01:00Z",
 };
 
+const MODEL_ARTIFACT_ID = "9a1c0e1e-3a7a-4d6b-9a37-5f0c2f2b7b11";
+
 function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
-  return {
+  const detail: ProjectDetail = {
     id: PROJECT_ID,
     name: "Castle",
     status: "needs_photo",
+    sourceImageArtifactId: null,
     createdAt: "2026-10-08T09:00:00Z",
     updatedAt: "2026-10-08T09:00:00Z",
     sourceImage: null,
     latestReconstruction: null,
     ...overrides,
   };
+  return { ...detail, sourceImageArtifactId: detail.sourceImage?.artifactId ?? null };
+}
+
+function readUrlFor(artifactId: string, download = false) {
+  return `https://storage.example.test/${artifactId}?sp=r${download ? "&rscd=attachment" : ""}&sig=read`;
 }
 
 function reconstruction(
@@ -56,7 +72,7 @@ function reconstruction(
   return {
     jobId: JOB_ID,
     status,
-    outputArtifactId: status === "succeeded" ? "9a1c0e1e-3a7a-4d6b-9a37-5f0c2f2b7b11" : null,
+    outputArtifactId: status === "succeeded" ? MODEL_ARTIFACT_ID : null,
     errorCode: errorMessage ? "provider_timeout" : null,
     errorMessage,
     createdAt: "2026-10-08T09:02:00Z",
@@ -106,9 +122,16 @@ function installFakeApi({ project = null, blobUploadFailures = 0, generationStar
       id: detail.id,
       name: detail.name,
       status: detail.status,
+      sourceImageArtifactId: detail.sourceImageArtifactId,
       createdAt: detail.createdAt,
       updatedAt: detail.updatedAt,
     });
+
+    const readUrlMatch = /^\/api\/v1\/artifacts\/([^/]+)\/read-url$/.exec(path);
+    if (readUrlMatch?.[1]) {
+      const download = new URL(url).searchParams.get("download") === "true";
+      return jsonResponse({ url: readUrlFor(readUrlMatch[1], download), expiresAt: "2099-01-01T00:00:00Z" });
+    }
 
     if (path === "/api/v1/projects" && method === "POST") {
       current = projectDetail({ name: JSON.parse(String(init?.body)).name as string });
@@ -131,7 +154,13 @@ function installFakeApi({ project = null, blobUploadFailures = 0, generationStar
       }, 201);
     }
     if (path === `/api/v1/uploads/${ARTIFACT_ID}/complete` && current) {
-      current = { ...current, status: "photo_ready", sourceImage: READY_SOURCE_IMAGE, latestReconstruction: null };
+      current = {
+        ...current,
+        status: "photo_ready",
+        sourceImageArtifactId: ARTIFACT_ID,
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: null,
+      };
       return jsonResponse({ uploadId: ARTIFACT_ID, projectId: PROJECT_ID, status: "ready" });
     }
     if (path === "/api/v1/reconstructions" && current) {
@@ -316,6 +345,61 @@ describe("project flows", () => {
     expect(screen.getByText("3D model ready", { selector: ".badge" })).toBeInTheDocument();
   });
 
+  it("shows the uploaded photo through a short-lived read link", async () => {
+    installFakeApi({ project: projectDetail({ status: "photo_ready", sourceImage: READY_SOURCE_IMAGE }) });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    const photo = await screen.findByRole("img", { name: "Photo of Castle" });
+    expect(photo).toHaveAttribute("src", readUrlFor(ARTIFACT_ID));
+  });
+
+  it("falls back to a message when the photo cannot be loaded", async () => {
+    installFakeApi({ project: projectDetail({ status: "photo_ready", sourceImage: READY_SOURCE_IMAGE }) });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.error(await screen.findByRole("img", { name: "Photo of Castle" }));
+
+    expect(screen.getByText("The photo could not be loaded.")).toBeInTheDocument();
+  });
+
+  it("shows the 3D model in the viewer and can switch back to the photo", async () => {
+    installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    expect(await screen.findByTestId("model-viewer")).toHaveAttribute("data-url", readUrlFor(MODEL_ARTIFACT_ID));
+    expect(screen.getByRole("button", { name: "3D model" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Photo" }));
+
+    expect(await screen.findByRole("img", { name: "Photo of Castle" })).toBeInTheDocument();
+    expect(screen.queryByTestId("model-viewer")).not.toBeInTheDocument();
+  });
+
+  it("downloads the 3D model through a fresh download link", async () => {
+    installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Download 3D model (.glb)" }));
+
+    await waitFor(() => expect(downloadMock.startBrowserDownload).toHaveBeenCalledWith(
+      readUrlFor(MODEL_ARTIFACT_ID, true),
+    ));
+    const downloadRequest = vi.mocked(fetch).mock.calls.find(([input]) => String(input).includes("download=true"));
+    expect(new Headers(downloadRequest?.[1]?.headers).get("Authorization")).toBe("Bearer test-access-token");
+  });
+
   it("lets a project without a photo upload one from its page", async () => {
     installFakeApi({ project: projectDetail() });
     renderApp(`/projects/${PROJECT_ID}`);
@@ -335,12 +419,13 @@ describe("project flows", () => {
     expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/");
   });
 
-  it("shows each project's status as a brick badge on its card", async () => {
-    installFakeApi({ project: projectDetail({ status: "generating" }) });
+  it("shows each project's status badge and photo thumbnail on its card", async () => {
+    installFakeApi({ project: projectDetail({ status: "generating", sourceImage: READY_SOURCE_IMAGE }) });
     renderApp("/");
 
     const card = await screen.findByRole("link", { name: /Castle/ });
     expect(within(card).getByText("Generating 3D")).toBeInTheDocument();
+    await waitFor(() => expect(card.querySelector("img")).toHaveAttribute("src", readUrlFor(ARTIFACT_ID)));
   });
 });
 

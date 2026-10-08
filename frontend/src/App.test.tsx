@@ -62,6 +62,7 @@ const castleProject = {
   id: "eb4d4208-4c79-4bb4-a636-329a37ee5c24",
   name: "Castle",
   status: "model_ready",
+  sourceImageArtifactId: null,
   createdAt: "2026-10-06T01:00:00Z",
   updatedAt: "2026-10-06T01:00:00Z",
 };

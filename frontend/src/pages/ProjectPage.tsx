@@ -2,11 +2,11 @@ import { Link, useParams } from "react-router-dom";
 
 import { useAppLayout } from "../components/appLayoutContext";
 import { BrickProgress } from "../components/BrickProgress";
-import { ArrowLeftIcon, CubeIcon, ImageIcon, SpinnerIcon } from "../components/Icons";
+import { ArrowLeftIcon } from "../components/Icons";
+import { ProjectPreview } from "../components/ProjectPreview";
 import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { isNotFound, useProject } from "../hooks/useProjects";
-import type { ProjectDetail } from "../schemas/projects";
 
 export function ProjectPage() {
   const { projectId = "" } = useParams();
@@ -50,7 +50,12 @@ export function ProjectPage() {
           </div>
           <BrickProgress status={project.data.status} />
           <div className="project-layout">
-            <ProjectPreview project={project.data} />
+            <ProjectPreview
+              key={project.data.id}
+              project={project.data}
+              accessToken={session.access_token}
+              userId={session.user.id}
+            />
             {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
             <ProjectStatusPanel
               key={project.data.id}
@@ -60,34 +65,6 @@ export function ProjectPage() {
             />
           </div>
         </>
-      ) : null}
-    </div>
-  );
-}
-
-function ProjectPreview({ project }: { project: ProjectDetail }) {
-  if (project.status === "model_ready") {
-    return (
-      <div className="project-preview baseplate">
-        <span className="project-preview__icon project-preview__icon--model">
-          <CubeIcon size={56} />
-        </span>
-        <span className="project-preview__caption">3D model ready</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="project-preview baseplate">
-      <span className="project-preview__icon">
-        <ImageIcon size={44} />
-      </span>
-      <span className="project-preview__caption">{project.sourceImage ? "Photo uploaded" : "No photo yet"}</span>
-      {project.status === "generating" ? (
-        <span className="project-preview__overlay">
-          <SpinnerIcon size={16} />
-          Generating 3D model from this photo
-        </span>
       ) : null}
     </div>
   );
