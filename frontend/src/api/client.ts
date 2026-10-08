@@ -1,22 +1,34 @@
 import { profileResponseSchema, type ProfileResponse } from "../schemas/profile";
-import { projectSchema, projectsSchema, type Project } from "../schemas/projects";
+import {
+  projectDetailSchema,
+  projectSchema,
+  projectsSchema,
+  type Project,
+  type ProjectDetail,
+} from "../schemas/projects";
 import {
   uploadCompletionSchema,
   uploadInitiationSchema,
   type UploadCompletion,
   type UploadInitiation,
 } from "../schemas/uploads";
-import {
-  jobSchema,
-  reconstructionSchema,
-  type Reconstruction,
-  type ReconstructionJob,
-} from "../schemas/reconstructions";
+import { reconstructionSchema, type Reconstruction } from "../schemas/reconstructions";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
   /\/$/,
   "",
 );
+
+/** A non-2xx API response; callers can branch on `status` (for example 404 Not Found). */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`API request failed with status ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 export async function getProfile(accessToken: string, signal?: AbortSignal): Promise<ProfileResponse> {
   const response = await fetch(`${apiBaseUrl}/api/v1/profile`, {
@@ -37,6 +49,19 @@ export async function getProfile(accessToken: string, signal?: AbortSignal): Pro
 export async function getProjects(accessToken: string, signal?: AbortSignal): Promise<Project[]> {
   const response = await authenticatedRequest("/api/v1/projects", accessToken, { signal });
   return projectsSchema.parse(await response.json());
+}
+
+export async function getProject(
+  accessToken: string,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectDetail> {
+  const response = await authenticatedRequest(
+    `/api/v1/projects/${encodeURIComponent(projectId)}`,
+    accessToken,
+    { signal },
+  );
+  return projectDetailSchema.parse(await response.json());
 }
 
 export async function createProject(accessToken: string, name: string): Promise<Project> {
@@ -111,19 +136,6 @@ export async function startReconstruction(
   return reconstructionSchema.parse(await response.json());
 }
 
-export async function getJob(
-  accessToken: string,
-  jobId: string,
-  signal?: AbortSignal,
-): Promise<ReconstructionJob> {
-  const response = await authenticatedRequest(
-    `/api/v1/jobs/${encodeURIComponent(jobId)}`,
-    accessToken,
-    { signal },
-  );
-  return jobSchema.parse(await response.json());
-}
-
 async function authenticatedRequest(
   path: string,
   accessToken: string,
@@ -134,7 +146,7 @@ async function authenticatedRequest(
   headers.set("Authorization", `Bearer ${accessToken}`);
   const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new ApiError(response.status);
   }
   return response;
 }

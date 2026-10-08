@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 
 import { useAppLayout } from "../components/appLayoutContext";
-import { ImageIcon, PlusIcon } from "../components/Icons";
+import { CubeIcon, ImageIcon, PlusIcon } from "../components/Icons";
+import { StatusBadge } from "../components/StatusBadge";
 import { useProjects } from "../hooks/useProjects";
 import type { Project } from "../schemas/projects";
 
@@ -68,12 +69,15 @@ function ProjectCard({ project }: { project: Project }) {
     <Link to={`/projects/${project.id}`} className="project-card">
       <div className="project-card__thumbnail baseplate">
         <span className="project-card__thumbnail-icon">
-          <ImageIcon size={26} />
+          {project.status === "model_ready" ? <CubeIcon size={28} /> : <ImageIcon size={26} />}
         </span>
       </div>
       <div className="project-card__body">
         <h2 className="project-card__name">{project.name}</h2>
-        <p className="project-card__meta">Updated {projectDateFormat.format(new Date(project.updatedAt))}</p>
+        <div className="project-card__footer">
+          <StatusBadge status={project.status} />
+          <p className="project-card__meta">Updated {projectDateFormat.format(new Date(project.updatedAt))}</p>
+        </div>
       </div>
     </Link>
   );

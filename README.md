@@ -172,15 +172,20 @@ Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABAS
 The frontend provides `/login` and `/signup` public routes. Signed-in users get three protected
 routes that share one header (an on-demand "How it works" dialog and an account menu):
 
-- `/` lists the user's projects, or shows an empty state on first visit, and creates new projects;
-- `/projects/:projectId` is a project page for uploading the source image and starting generation;
+- `/` lists the user's projects with a status badge each, or shows an empty state on first visit;
+- `/projects/:projectId` shows one project's progress (Photo → 3D model → LEGO build) and its next action;
 - `/profile` shows the verified profile returned by `GET /api/v1/profile`.
 
 Supabase restores the browser session after refresh; unauthenticated requests for protected routes
 redirect to `/login`.
 
-On a project page the user can upload a supported JPEG, PNG, or WebP image. The browser hashes the
-image with Web Crypto, uploads directly to Azure, and asks the API to verify completion.
+A new project starts from a photo: the user picks a supported JPEG, PNG, or WebP image (the project
+name defaults to the file name), the browser validates and hashes it with Web Crypto, the API creates
+the project, the browser uploads the image directly to Azure, and the API verifies completion. If the
+upload fails, retrying reuses the already-created project. The project page reads
+`GET /api/v1/projects/{projectId}`, starts paid generation only when the user clicks
+**Generate 3D model** (with one idempotency key per attempt), and polls only while a job is queued or
+running.
 
 In Supabase Auth, enable Email and the Google and GitHub providers. Register `https://<project-ref>.supabase.co/auth/v1/callback` as the OAuth callback in the Google and GitHub provider consoles. Configure the frontend URL in Supabase Auth's Site URL and allowed Redirect URLs (for local development, `http://localhost:5173`); add production frontend URLs explicitly when deployed. Email confirmation behavior is controlled by Supabase: when it is enabled, the application asks the user to confirm their address before signing in.
 
