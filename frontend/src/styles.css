@@ -1,8 +1,44 @@
 :root {
-  color: #f6f4ef;
-  background: #101820;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --color-background: #0e151c;
+  --color-surface: #16202a;
+  --color-surface-raised: #1f2b36;
+  --color-border: #24313d;
+  --color-border-strong: #34424f;
+  --color-text: #f4f2ed;
+  --color-text-secondary: #c9d2da;
+  --color-text-muted: #9aa7b2;
+  --color-error-text: #ff7a6b;
+
+  --color-brand: #ffcd00;
+  --color-brand-hover: #ffd633;
+  --color-brand-edge: #d9a900;
+  --color-on-brand: #101820;
+
+  /* Official LEGO colour values from the LDraw colour table (LDConfig.ldr). */
+  --lego-blue: #0055bf;
+  --lego-green: #237841;
+  --lego-red: #c91a09;
+  --lego-light-bluish-gray: #a0a5a9;
+
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     sans-serif;
+  --font-body: Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+
+  --radius-small: 6px;
+  --radius-medium: 10px;
+  --radius-large: 16px;
+  --radius-extra-large: 20px;
+
+  /* Darker bottom edge that makes buttons and badges read as moulded bricks. */
+  --brick-edge-brand: inset 0 -3px 0 var(--color-brand-edge);
+  --brick-edge-dark: inset 0 -2px 0 rgb(0 0 0 / 30%);
+
+  --control-height: 46px;
+
+  color: var(--color-text);
+  background: var(--color-background);
+  font-family: var(--font-body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -17,23 +53,26 @@ body {
   min-height: 100vh;
 }
 
+:focus-visible {
+  outline: 3px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
 .shell {
   display: grid;
   min-height: 100vh;
   place-items: center;
   padding: 2rem;
-  background:
-    radial-gradient(circle at top left, rgb(255 205 0 / 18%), transparent 34rem),
-    #101820;
+  background: var(--color-background);
 }
 
 .panel,
 .auth-card {
   width: min(100%, 42rem);
-  padding: clamp(2rem, 6vw, 4rem);
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 1.5rem;
-  background: rgb(255 255 255 / 6%);
+  padding: clamp(1.75rem, 5vw, 3rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-extra-large);
+  background: var(--color-surface);
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 25%);
 }
 
@@ -56,25 +95,31 @@ body {
 
 .eyebrow {
   margin: 0 0 0.75rem;
-  color: #ffcd00;
+  color: var(--color-brand);
   font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+h1,
+h2 {
+  font-family: var(--font-display);
+  font-weight: 800;
+}
+
 h1 {
   margin: 0;
-  font-size: clamp(2.5rem, 9vw, 5.5rem);
-  letter-spacing: -0.06em;
-  line-height: 0.95;
+  font-size: clamp(2.25rem, 6vw, 3.5rem);
+  letter-spacing: -0.025em;
+  line-height: 1.05;
 }
 
 .summary {
   max-width: 34rem;
-  margin: 1.5rem 0 2rem;
-  color: #c9d2da;
-  line-height: 1.65;
+  margin: 1.25rem 0 2rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
 }
 
 .auth-form,
@@ -85,16 +130,18 @@ h1 {
 
 .auth-form label {
   margin-top: 0.5rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .auth-form input {
   width: 100%;
-  padding: 0.8rem;
-  border: 1px solid rgb(255 255 255 / 25%);
-  border-radius: 0.5rem;
+  min-height: var(--control-height);
+  padding: 0 0.875rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
   color: inherit;
-  background: rgb(0 0 0 / 20%);
+  background: var(--color-background);
+  font: inherit;
 }
 
 .stacked-form {
@@ -104,18 +151,23 @@ h1 {
 }
 
 .stacked-form label {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .stacked-form input,
 .stacked-form select {
   min-width: 0;
-  padding: 0.8rem;
-  border: 1px solid rgb(255 255 255 / 25%);
-  border-radius: 0.5rem;
+  min-height: var(--control-height);
+  padding: 0 0.875rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
   color: inherit;
-  background: #101820;
+  background: var(--color-background);
   font: inherit;
+}
+
+.stacked-form input[type="file"] {
+  padding: 0.6rem 0.875rem;
 }
 
 .inline-form {
@@ -126,8 +178,8 @@ h1 {
 
 .field-help {
   margin: 0;
-  color: #c9d2da;
-  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
 }
 
 .button,
@@ -139,40 +191,70 @@ h1 {
 
 .button,
 .oauth-button {
-  padding: 0.8rem 1rem;
+  display: inline-flex;
+  min-height: 44px;
+  padding: 0 1.125rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-medium);
   font-weight: 700;
 }
 
 .button {
-  color: #101820;
-  background: #ffcd00;
+  color: var(--color-on-brand);
+  background: var(--color-brand);
+  box-shadow: var(--brick-edge-brand);
+}
+
+.button:hover {
+  background: var(--color-brand-hover);
+}
+
+.button:active {
+  box-shadow: inset 0 -1px 0 var(--color-brand-edge);
+  transform: translateY(1px);
 }
 
 .button--secondary,
 .oauth-button {
-  border: 1px solid rgb(255 255 255 / 25%);
+  border: 1px solid var(--color-border-strong);
   color: inherit;
   background: transparent;
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.button--secondary:hover,
+.oauth-button:hover {
+  background: var(--color-surface-raised);
+}
+
+.button:disabled,
+.oauth-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
 .text-button {
   padding: 0;
   border: 0;
-  color: #ffcd00;
+  color: var(--color-brand);
   background: transparent;
   text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .auth-switch {
   margin: 1.25rem 0;
-  color: #c9d2da;
+  color: var(--color-text-secondary);
 }
 
 .form-error,
 .profile-error {
-  color: #ff9b9b;
+  color: var(--color-error-text);
 }
 
 .profile-details {
@@ -187,8 +269,8 @@ h1 {
 }
 
 .profile-details dt {
-  color: #c9d2da;
-  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
 }
 
 .profile-details dd {
@@ -203,32 +285,34 @@ h1 {
   object-fit: cover;
 }
 
+/* Status messages render as small solid "brick" badges. */
 .status {
   display: inline-flex;
+  width: fit-content;
   margin: 0;
+  padding: 0.3rem 0.7rem;
   align-items: center;
-  gap: 0.6rem;
-  font-weight: 700;
-}
-
-.status::before {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 50%;
-  background: currentcolor;
-  content: "";
+  gap: 0.5rem;
+  border-radius: var(--radius-small);
+  box-shadow: var(--brick-edge-dark);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .status--pending {
-  color: #aeb9c2;
+  color: var(--color-on-brand);
+  background: var(--lego-light-bluish-gray);
 }
 
 .status--success {
-  color: #64d98b;
+  color: #ffffff;
+  background: var(--lego-green);
 }
 
 .status--error {
-  color: #ff7878;
+  color: #ffffff;
+  background: var(--lego-red);
 }
 
 @media (max-width: 760px) {
@@ -240,4 +324,3 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
-
