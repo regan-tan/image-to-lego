@@ -3,9 +3,7 @@ import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
 
 import {
   completeUpload,
-  createProject,
   getJob,
-  getProjects,
   initiateUpload,
   startReconstruction,
   uploadFileToBlob,
@@ -27,23 +25,22 @@ const MAX_IMAGE_PIXEL_COUNT = Number.isSafeInteger(configuredMaxImagePixels)
 
 type UploadStage = "idle" | "validating" | "hashing" | "initiating" | "uploading" | "completing" | "success";
 
-interface ProjectWorkspaceProps {
+interface SourceImagePanelProps {
   accessToken: string;
   userId: string;
+  projectId: string;
 }
 
 interface ReconstructionInitiationVariables {
-  projectId: string;
   sourceArtifactId: string;
   idempotencyKey: string;
   stateVersion: number;
 }
 
-export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps) {
+/** Uploads a project's source photo and starts the paid image-to-3D generation on request. */
+export function SourceImagePanel({ accessToken, userId, projectId }: SourceImagePanelProps) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -52,30 +49,9 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
   const reconstructionAttemptKey = useRef<string | null>(null);
   const reconstructionStateVersion = useRef(0);
 
-  const projects = useQuery({
-    queryKey: ["projects", userId],
-    queryFn: ({ signal }) => getProjects(accessToken, signal),
-  });
-  const createProjectMutation = useMutation({
-    mutationFn: (name: string) => createProject(accessToken, name),
-    onSuccess: (project) => {
-      queryClient.setQueryData(["projects", userId], (current: typeof projects.data) => [
-        project,
-        ...(current ?? []),
-      ]);
-      setSelectedProjectId(project.id);
-      setNewProjectName("");
-      resetReconstructionState();
-    },
-  });
-
-  const availableProjects = projects.data ?? [];
-  const activeProjectId = availableProjects.some((project) => project.id === selectedProjectId)
-    ? selectedProjectId
-    : (availableProjects[0]?.id ?? "");
   const isUploadBusy = !["idle", "success"].includes(uploadStage);
   const reconstruction = useQuery({
-    queryKey: ["reconstruction-job", userId, activeProjectId, reconstructionJobId],
+    queryKey: ["reconstruction-job", userId, projectId, reconstructionJobId],
     queryFn: ({ signal }) => getJob(accessToken, reconstructionJobId ?? "", signal),
     enabled: reconstructionJobId !== null,
     refetchInterval: (query) => reconstructionPollInterval(query.state.data?.status),
@@ -83,7 +59,7 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
   const startReconstructionMutation = useMutation({
     mutationFn: (variables: ReconstructionInitiationVariables) => startReconstruction(
       accessToken,
-      { projectId: variables.projectId, sourceArtifactId: variables.sourceArtifactId },
+      { projectId, sourceArtifactId: variables.sourceArtifactId },
       variables.idempotencyKey,
     ),
     onSuccess: (job, variables) => {
@@ -91,10 +67,7 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
         return;
       }
       setReconstructionJobId(job.jobId);
-      queryClient.setQueryData(
-        ["reconstruction-job", userId, variables.projectId, job.jobId],
-        job,
-      );
+      queryClient.setQueryData(["reconstruction-job", userId, projectId, job.jobId], job);
     },
   });
   const reconstructionStatus = reconstruction.data?.status;
@@ -108,14 +81,6 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
     reconstructionAttemptKey.current = null;
     reconstructionStateVersion.current += 1;
     startReconstructionMutation.reset();
-  }
-
-  function handleCreateProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const normalizedName = newProjectName.trim();
-    if (normalizedName) {
-      createProjectMutation.mutate(normalizedName);
-    }
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -142,7 +107,7 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedFile || !activeProjectId || isUploadBusy) {
+    if (!selectedFile || isUploadBusy) {
       return;
     }
 
@@ -160,7 +125,7 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
       const sha256 = await computeSha256(selectedFile);
       setUploadStage("initiating");
       const initiation = await initiateUpload(accessToken, {
-        projectId: activeProjectId,
+        projectId,
         fileName: selectedFile.name,
         mimeType: selectedFile.type,
         sizeBytes: selectedFile.size,
@@ -183,7 +148,7 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
   }
 
   function handleStartReconstruction() {
-    if (!readySourceArtifactId || !activeProjectId || isGenerationActive) {
+    if (!readySourceArtifactId || isGenerationActive) {
       return;
     }
     if (["succeeded", "failed", "canceled"].includes(reconstructionStatus ?? "")) {
@@ -193,7 +158,6 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
     const idempotencyKey = reconstructionAttemptKey.current ?? crypto.randomUUID();
     reconstructionAttemptKey.current = idempotencyKey;
     startReconstructionMutation.mutate({
-      projectId: activeProjectId,
       sourceArtifactId: readySourceArtifactId,
       idempotencyKey,
       stateVersion: reconstructionStateVersion.current,
@@ -201,121 +165,63 @@ export function ProjectWorkspace({ accessToken, userId }: ProjectWorkspaceProps)
   }
 
   return (
-    <section className="panel workspace" aria-labelledby="workspace-title">
-      <p className="eyebrow">Source images</p>
-      <h2 id="workspace-title">Projects and uploads</h2>
+    <section className="panel" aria-labelledby="source-image-title">
+      <h2 id="source-image-title" className="panel__title">Photo and 3D model</h2>
 
-      <form className="stacked-form" onSubmit={handleCreateProject}>
-        <label htmlFor="project-name">New project name</label>
-        <div className="inline-form">
-          <input
-            id="project-name"
-            value={newProjectName}
-            maxLength={100}
-            onChange={(event) => setNewProjectName(event.target.value)}
-            required
-          />
-          <button
-            className="button"
-            type="submit"
-            disabled={createProjectMutation.isPending || startReconstructionMutation.isPending}
-          >
-            {createProjectMutation.isPending ? "Creating…" : "Create project"}
-          </button>
-        </div>
-        {createProjectMutation.isError ? (
-          <p className="form-error" role="alert">We could not create the project.</p>
+      <form className="stacked-form upload-form" onSubmit={(event) => void handleUpload(event)}>
+        <label htmlFor="source-image">Image</label>
+        <input
+          ref={fileInput}
+          id="source-image"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={handleFileChange}
+          disabled={isUploadBusy}
+        />
+        <p className="field-help">
+          JPEG, PNG, or WebP. Maximum {formatBytes(MAX_IMAGE_SIZE_BYTES)} and {MAX_IMAGE_PIXEL_COUNT.toLocaleString()} pixels.
+        </p>
+        {uploadError ? <p className="form-error" role="alert">{uploadError}</p> : null}
+        {uploadStage === "success" ? (
+          <p className="status status--success" role="status">Image upload complete.</p>
+        ) : null}
+        {isUploadBusy ? (
+          <p className="status status--pending" role="status">{stageMessage(uploadStage)}</p>
+        ) : null}
+        <button className="button" type="submit" disabled={!selectedFile || isUploadBusy}>
+          Upload image
+        </button>
+        {readySourceArtifactId ? (
+          <div className="stacked-form">
+            <button
+              className="button"
+              type="button"
+              onClick={handleStartReconstruction}
+              disabled={isGenerationActive}
+            >
+              Generate 3D model
+            </button>
+            {startReconstructionMutation.isPending ? (
+              <p className="status status--pending" role="status">Preparing generation…</p>
+            ) : null}
+            {startReconstructionMutation.isError ? (
+              <p className="form-error" role="alert">Generation could not be started. Please try again.</p>
+            ) : null}
+            {reconstruction.data?.status === "queued" ? (
+              <p className="status status--pending" role="status">Queued</p>
+            ) : null}
+            {reconstruction.data?.status === "running" ? (
+              <p className="status status--pending" role="status">Generating 3D model…</p>
+            ) : null}
+            {reconstruction.data?.status === "succeeded" ? (
+              <p className="status status--success" role="status">3D model generated</p>
+            ) : null}
+            {reconstruction.data?.status === "failed" || reconstruction.data?.status === "canceled" ? (
+              <p className="form-error" role="alert">Generation failed</p>
+            ) : null}
+          </div>
         ) : null}
       </form>
-
-      {projects.isPending ? <p className="status status--pending">Loading projects…</p> : null}
-      {projects.isError ? (
-        <div className="form-error" role="alert">
-          <p>We could not load your projects.</p>
-          <button className="text-button" type="button" onClick={() => void projects.refetch()}>
-            Try again
-          </button>
-        </div>
-      ) : null}
-
-      {projects.isSuccess ? (
-        <form className="stacked-form upload-form" onSubmit={(event) => void handleUpload(event)}>
-          <label htmlFor="project-select">Project</label>
-          <select
-            id="project-select"
-            value={activeProjectId}
-            onChange={(event) => {
-              setSelectedProjectId(event.target.value);
-              setUploadError(null);
-              setUploadStage("idle");
-              resetReconstructionState();
-            }}
-            disabled={availableProjects.length === 0 || isUploadBusy || startReconstructionMutation.isPending}
-          >
-            {availableProjects.length === 0 ? <option value="">Create a project first</option> : null}
-            {availableProjects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
-
-          <label htmlFor="source-image">Image</label>
-          <input
-            ref={fileInput}
-            id="source-image"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleFileChange}
-            disabled={!activeProjectId || isUploadBusy}
-          />
-          <p className="field-help">
-            JPEG, PNG, or WebP. Maximum {formatBytes(MAX_IMAGE_SIZE_BYTES)} and {MAX_IMAGE_PIXEL_COUNT.toLocaleString()} pixels.
-          </p>
-          {uploadError ? <p className="form-error" role="alert">{uploadError}</p> : null}
-          {uploadStage === "success" ? (
-            <p className="status status--success" role="status">Image upload complete.</p>
-          ) : null}
-          {isUploadBusy ? (
-            <p className="status status--pending" role="status">{stageMessage(uploadStage)}</p>
-          ) : null}
-          <button
-            className="button"
-            type="submit"
-            disabled={!selectedFile || !activeProjectId || isUploadBusy}
-          >
-            Upload image
-          </button>
-          {readySourceArtifactId ? (
-            <div className="stacked-form">
-              <button
-                className="button"
-                type="button"
-                onClick={handleStartReconstruction}
-                disabled={isGenerationActive}
-              >
-                Generate 3D model
-              </button>
-              {startReconstructionMutation.isPending ? (
-                <p className="status status--pending" role="status">Preparing generation…</p>
-              ) : null}
-              {startReconstructionMutation.isError ? (
-                <p className="form-error" role="alert">Generation could not be started. Please try again.</p>
-              ) : null}
-              {reconstruction.data?.status === "queued" ? (
-                <p className="status status--pending" role="status">Queued</p>
-              ) : null}
-              {reconstruction.data?.status === "running" ? (
-                <p className="status status--pending" role="status">Generating 3D model…</p>
-              ) : null}
-              {reconstruction.data?.status === "succeeded" ? (
-                <p className="status status--success" role="status">3D model generated</p>
-              ) : null}
-              {reconstruction.data?.status === "failed" || reconstruction.data?.status === "canceled" ? (
-                <p className="form-error" role="alert">Generation failed</p>
-              ) : null}
-            </div>
-          ) : null}
-        </form>
-      ) : null}
     </section>
   );
 }
