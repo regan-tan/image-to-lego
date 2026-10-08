@@ -16,6 +16,8 @@ authenticated application slices:
 - an owner-scoped project overview endpoint with the latest photo and 3D generation job;
 - pending/ready source-image metadata with owner-scoped RLS;
 - direct browser-to-Azure Blob upload using a short-lived, single-blob SAS;
+- short-lived, read-only, single-blob links for showing a project's photo and 3D model in the browser
+  (photo thumbnails, an interactive GLB viewer, and `.glb` download);
 - server-side confirmation of Blob existence, size, content type, and client-declared SHA-256 metadata;
 - a rolling 30-upload initiation quota over the preceding 24 hours;
 - Supabase PostgreSQL migrations with row-level security enabled;
@@ -29,8 +31,8 @@ the actual source Blob bytes before paid submission, copies the completed GLB in
 Azure Blob Storage, and records a ready `reconstructed_model` artifact. The browser polls the job
 while it is queued or running.
 
-LEGO conversion, the conversion worker, browser 3D inspection, stale-upload cleanup, and production
-deployment are **not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
+LEGO conversion, the conversion worker, stale-upload cleanup, and production deployment are
+**not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
 artifact store.
 
 ## Intended architecture
@@ -100,7 +102,35 @@ one. Pending uploads are ignored, and a job for an earlier, replaced photo does 
 | `failed` | Latest job `failed` or was `canceled` |
 
 The status is derived in the backend domain layer from one query per request; the list uses
-`LATERAL` joins so it does not issue one query per project.
+`LATERAL` joins so it does not issue one query per project. Each project also carries
+`sourceImageArtifactId` so the browser can request its thumbnail.
+
+## Viewing private photos and models
+
+Uploaded photos and generated models stay in a private Blob container. To display one, the browser
+calls `GET /api/v1/artifacts/{artifactId}/read-url` and receives `{ "url", "expiresAt" }`: a
+read-only SAS for exactly that blob, valid for `ARTIFACT_READ_URL_LIFETIME_MINUTES` (default 10).
+The browser then loads the file directly from Blob Storage; bytes never pass through FastAPI.
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant Blob as Azure Blob Storage
+
+    Browser->>API: GET /api/v1/artifacts/{id}/read-url (Bearer token)
+    API->>DB: Owner-scoped artifact lookup (RLS)
+    API-->>Browser: Read-only single-blob SAS + expiresAt (Cache-Control: no-store)
+    Browser->>Blob: GET photo or model.glb with the SAS
+```
+
+- Only the owner's `ready` source images and reconstructed models are served. A missing file, another
+  user's file, or any other artifact kind returns the same 404; a pending upload returns 409.
+- `?download=true` adds an `attachment` content disposition (`photo.jpg`, `model.glb`, …) so the
+  browser saves the file instead of opening it.
+- Links are never stored; the frontend requests a new one shortly before the old one expires. The
+  Three.js viewer is loaded lazily, only when a ready model is shown.
 
 The generation worker uses Azure Service Bus's at-least-once delivery semantics. It never resubmits a
 job once `jobs.provider_job_id` is persisted. Before submission it downloads the private source Blob
@@ -221,9 +251,11 @@ key in the application.
 
 Blob access through the generated SAS requires HTTPS. Configure Blob service CORS for each exact
 frontend origin: production origins must use HTTPS, while local development may use
-`http://localhost:5173`. Allow only methods `PUT` and `OPTIONS` and headers `content-type`,
-`x-ms-blob-type`, and `x-ms-meta-sha256`. The SAS lasts 10 minutes by default, targets exactly one
-server-generated blob name, and grants create-only permission.
+`http://localhost:5173`. Allow only methods `GET`, `PUT`, and `OPTIONS` and headers `content-type`,
+`x-ms-blob-type`, and `x-ms-meta-sha256`. `PUT` is for direct uploads; `GET` is needed because the
+3D viewer fetches the `.glb` with JavaScript (plain `<img>` tags and downloads do not need CORS). The
+upload SAS lasts 10 minutes by default, targets exactly one server-generated blob name, and grants
+create-only permission; read SAS links are read-only and equally blob-scoped.
 
 ## Testing and quality commands
 
@@ -282,6 +314,7 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 | `UPLOAD_QUOTA_WINDOW_HOURS` | API | Rolling upload quota duration |
 | `UPLOAD_PENDING_LIFETIME_HOURS` | API | Pending upload lifetime before expiry |
 | `UPLOAD_SAS_LIFETIME_MINUTES` | API | Single-blob upload SAS lifetime |
+| `ARTIFACT_READ_URL_LIFETIME_MINUTES` | API | Lifetime of read-only links for showing or downloading a photo or model |
 | `AZURE_SERVICE_BUS_NAMESPACE` | API/worker | Service Bus fully qualified namespace |
 | `AZURE_SERVICE_BUS_QUEUE` | API/worker | Durable conversion queue name |
 | `AZURE_SERVICE_BUS_GENERATION_QUEUE` | API/worker | Durable image-to-3D generation queue name |

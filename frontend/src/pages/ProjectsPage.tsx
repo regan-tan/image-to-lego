@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAppLayout } from "../components/appLayoutContext";
 import { CubeIcon, ImageIcon, PlusIcon } from "../components/Icons";
 import { StatusBadge } from "../components/StatusBadge";
+import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import { useProjects } from "../hooks/useProjects";
 import type { Project } from "../schemas/projects";
 
@@ -55,7 +57,7 @@ export function ProjectsPage() {
         <ul className="project-grid">
           {projectList.map((project) => (
             <li key={project.id}>
-              <ProjectCard project={project} />
+              <ProjectCard project={project} accessToken={session.access_token} userId={session.user.id} />
             </li>
           ))}
         </ul>
@@ -64,13 +66,17 @@ export function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+interface ProjectCardProps {
+  project: Project;
+  accessToken: string;
+  userId: string;
+}
+
+function ProjectCard({ project, accessToken, userId }: ProjectCardProps) {
   return (
     <Link to={`/projects/${project.id}`} className="project-card">
       <div className="project-card__thumbnail baseplate">
-        <span className="project-card__thumbnail-icon">
-          {project.status === "model_ready" ? <CubeIcon size={28} /> : <ImageIcon size={26} />}
-        </span>
+        <ProjectThumbnail project={project} accessToken={accessToken} userId={userId} />
       </div>
       <div className="project-card__body">
         <h2 className="project-card__name">{project.name}</h2>
@@ -80,6 +86,30 @@ function ProjectCard({ project }: { project: Project }) {
         </div>
       </div>
     </Link>
+  );
+}
+
+function ProjectThumbnail({ project, accessToken, userId }: ProjectCardProps) {
+  const readUrl = useArtifactReadUrl(accessToken, userId, project.sourceImageArtifactId);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const url = readUrl.data?.url;
+
+  if (url && failedUrl !== url) {
+    // Decorative: the card's link text already names the project.
+    return (
+      <img
+        className="project-card__photo"
+        src={url}
+        alt=""
+        loading="lazy"
+        onError={() => setFailedUrl(url)}
+      />
+    );
+  }
+  return (
+    <span className="project-card__thumbnail-icon">
+      {project.status === "model_ready" ? <CubeIcon size={28} /> : <ImageIcon size={26} />}
+    </span>
   );
 }
 

@@ -121,6 +121,21 @@ export function RetryIcon(props: IconProps) {
   return <StrokeIcon {...props}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></StrokeIcon>;
 }
 
+export function MaximizeIcon(props: IconProps) {
+  return (
+    <StrokeIcon {...props}>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </StrokeIcon>
+  );
+}
+
+export function DownloadIcon(props: IconProps) {
+  return <StrokeIcon {...props}><path d="M12 4v12" /><path d="m7 11 5 5 5-5" /><path d="M4 20h16" /></StrokeIcon>;
+}
+
 export function UploadIcon(props: IconProps) {
   return (
     <StrokeIcon {...props}>

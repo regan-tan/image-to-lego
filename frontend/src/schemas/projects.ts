@@ -14,6 +14,7 @@ export const projectSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   status: projectStatusSchema,
+  sourceImageArtifactId: z.string().uuid().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
