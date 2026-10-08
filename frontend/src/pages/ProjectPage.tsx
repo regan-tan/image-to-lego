@@ -1,15 +1,17 @@
 import { Link, useParams } from "react-router-dom";
 
 import { useAppLayout } from "../components/appLayoutContext";
-import { ArrowLeftIcon } from "../components/Icons";
-import { SourceImagePanel } from "../components/SourceImagePanel";
-import { useProjects } from "../hooks/useProjects";
+import { BrickProgress } from "../components/BrickProgress";
+import { ArrowLeftIcon, CubeIcon, ImageIcon, SpinnerIcon } from "../components/Icons";
+import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
+import { StatusBadge } from "../components/StatusBadge";
+import { isNotFound, useProject } from "../hooks/useProjects";
+import type { ProjectDetail } from "../schemas/projects";
 
 export function ProjectPage() {
-  const { projectId } = useParams();
+  const { projectId = "" } = useParams();
   const { session } = useAppLayout();
-  const projects = useProjects(session.access_token, session.user.id);
-  const project = projects.data?.find((candidate) => candidate.id === projectId);
+  const project = useProject(session.access_token, session.user.id, projectId);
 
   return (
     <div className="page__container">
@@ -18,17 +20,9 @@ export function ProjectPage() {
         All projects
       </Link>
 
-      {projects.isPending ? <p className="status status--pending" role="status">Loading project…</p> : null}
-      {projects.isError ? (
-        <div className="form-error" role="alert">
-          <p>We could not load this project.</p>
-          <button className="text-button" type="button" onClick={() => void projects.refetch()}>
-            Try again
-          </button>
-        </div>
-      ) : null}
+      {project.isPending ? <p className="status status--pending" role="status">Loading project…</p> : null}
 
-      {projects.isSuccess && !project ? (
+      {!project.data && isNotFound(project.error) ? (
         <div className="page-heading">
           <div>
             <h1>Project not found</h1>
@@ -37,19 +31,63 @@ export function ProjectPage() {
         </div>
       ) : null}
 
-      {project ? (
+      {!project.data && project.isError && !isNotFound(project.error) ? (
+        <div className="form-error" role="alert">
+          <p>We could not load this project.</p>
+          <button className="text-button" type="button" onClick={() => void project.refetch()}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      {project.data ? (
         <>
           <div className="page-heading">
-            <h1>{project.name}</h1>
+            <div className="page-heading__title-row">
+              <h1>{project.data.name}</h1>
+              <StatusBadge status={project.data.status} />
+            </div>
           </div>
-          {/* Keyed by project so upload and generation state never leaks between projects. */}
-          <SourceImagePanel
-            key={project.id}
-            accessToken={session.access_token}
-            userId={session.user.id}
-            projectId={project.id}
-          />
+          <BrickProgress status={project.data.status} />
+          <div className="project-layout">
+            <ProjectPreview project={project.data} />
+            {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
+            <ProjectStatusPanel
+              key={project.data.id}
+              project={project.data}
+              accessToken={session.access_token}
+              userId={session.user.id}
+            />
+          </div>
         </>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectPreview({ project }: { project: ProjectDetail }) {
+  if (project.status === "model_ready") {
+    return (
+      <div className="project-preview baseplate">
+        <span className="project-preview__icon project-preview__icon--model">
+          <CubeIcon size={56} />
+        </span>
+        <span className="project-preview__caption">3D model ready</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-preview baseplate">
+      <span className="project-preview__icon">
+        <ImageIcon size={44} />
+      </span>
+      <span className="project-preview__caption">{project.sourceImage ? "Photo uploaded" : "No photo yet"}</span>
+      {project.status === "generating" ? (
+        <span className="project-preview__overlay">
+          <SpinnerIcon size={16} />
+          Generating 3D model from this photo
+        </span>
       ) : null}
     </div>
   );
