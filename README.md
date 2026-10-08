@@ -12,7 +12,8 @@ authenticated application slices:
 - a deterministic fake reconstruction provider for tests;
 - Supabase Auth sign-up/sign-in for email/password, Google, and GitHub plus sign-out;
 - a verified `GET /api/v1/profile` profile endpoint;
-- authenticated project creation/listing through PostgreSQL;
+- authenticated project creation/listing through PostgreSQL, with a derived status per project;
+- an owner-scoped project overview endpoint with the latest photo and 3D generation job;
 - pending/ready source-image metadata with owner-scoped RLS;
 - direct browser-to-Azure Blob upload using a short-lived, single-blob SAS;
 - server-side confirmation of Blob existence, size, content type, and client-declared SHA-256 metadata;
@@ -81,6 +82,25 @@ and a recomputed SHA-256.
 `POST /api/v1/reconstructions` requires an `Idempotency-Key`, a project ID, and a ready source-image
 artifact ID. It returns a queued reconstruction job; exact replays return the existing job without
 publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is safe for status polling.
+
+## Project status and overview
+
+`GET /api/v1/projects` returns every project with a `status`, and
+`GET /api/v1/projects/{projectId}` returns one project with its `sourceImage` (the latest **ready**
+source image, or `null`) and `latestReconstruction` (the latest reconstruction job started from that
+image, or `null`). Both are owner-scoped; another user's project returns the same 404 as a missing
+one. Pending uploads are ignored, and a job for an earlier, replaced photo does not count.
+
+| `status` | Meaning |
+| --- | --- |
+| `needs_photo` | No ready source image yet |
+| `photo_ready` | Ready source image, no generation started for it |
+| `generating` | Latest job is `queued` or `running` |
+| `model_ready` | Latest job `succeeded` |
+| `failed` | Latest job `failed` or was `canceled` |
+
+The status is derived in the backend domain layer from one query per request; the list uses
+`LATERAL` joins so it does not issue one query per project.
 
 The generation worker uses Azure Service Bus's at-least-once delivery semantics. It never resubmits a
 job once `jobs.provider_job_id` is persisted. Before submission it downloads the private source Blob
