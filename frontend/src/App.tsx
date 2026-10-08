@@ -2,9 +2,12 @@ import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { AppLayout } from "./components/AppLayout";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
+import { ProfilePage } from "./pages/ProfilePage";
+import { ProjectPage } from "./pages/ProjectPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { SignupPage } from "./pages/SignupPage";
 
 export default function App() {
@@ -63,39 +66,24 @@ export default function App() {
     );
   }
 
+  if (!session) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage onAuthenticated={(newSession) => setSession(newSession)} />} />
+        <Route path="/signup" element={<SignupPage onAuthenticated={(newSession) => setSession(newSession)} />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          session ? (
-            <HomePage session={session} onSignedOut={() => setSession(null)} />
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-      <Route
-        path="/login"
-        element={
-          session ? (
-            <Navigate to="/" replace />
-          ) : (
-            <LoginPage onAuthenticated={(newSession) => setSession(newSession)} />
-          )
-        }
-      />
-      <Route
-        path="/signup"
-        element={
-          session ? (
-            <Navigate to="/" replace />
-          ) : (
-            <SignupPage onAuthenticated={(newSession) => setSession(newSession)} />
-          )
-        }
-      />
-      <Route path="*" element={<Navigate to={session ? "/" : "/login"} replace />} />
+      <Route element={<AppLayout session={session} onSignedOut={() => setSession(null)} />}>
+        <Route index element={<ProjectsPage />} />
+        <Route path="projects/:projectId" element={<ProjectPage />} />
+        <Route path="profile" element={<ProfilePage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

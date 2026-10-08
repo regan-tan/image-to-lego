@@ -149,11 +149,18 @@ The Vite development server listens at `http://localhost:5173` and calls the URL
 
 Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` for the frontend. Keep the publishable key in the frontend only; never expose a Supabase service-role key.
 
-The frontend provides `/login` and `/signup` public routes plus a protected `/` route that shows the authenticated profile. Supabase restores the browser session after refresh; unauthenticated requests for `/` redirect to `/login`.
+The frontend provides `/login` and `/signup` public routes. Signed-in users get three protected
+routes that share one header (an on-demand "How it works" dialog and an account menu):
 
-The protected home route also lets the user create/select a project and upload a supported JPEG,
-PNG, or WebP image. The browser hashes the image with Web Crypto, uploads directly to Azure, and
-asks the API to verify completion.
+- `/` lists the user's projects, or shows an empty state on first visit, and creates new projects;
+- `/projects/:projectId` is a project page for uploading the source image and starting generation;
+- `/profile` shows the verified profile returned by `GET /api/v1/profile`.
+
+Supabase restores the browser session after refresh; unauthenticated requests for protected routes
+redirect to `/login`.
+
+On a project page the user can upload a supported JPEG, PNG, or WebP image. The browser hashes the
+image with Web Crypto, uploads directly to Azure, and asks the API to verify completion.
 
 In Supabase Auth, enable Email and the Google and GitHub providers. Register `https://<project-ref>.supabase.co/auth/v1/callback` as the OAuth callback in the Google and GitHub provider consoles. Configure the frontend URL in Supabase Auth's Site URL and allowed Redirect URLs (for local development, `http://localhost:5173`); add production frontend URLs explicitly when deployed. Email confirmation behavior is controlled by Supabase: when it is enabled, the application asks the user to confirm their address before signing in.
 

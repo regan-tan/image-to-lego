@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { Session } from "@supabase/supabase-js";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,22 +58,42 @@ function mockSignedOutSession() {
   });
 }
 
-function mockProfileResponse() {
-  vi.mocked(fetch).mockImplementation(async (input) => {
+const castleProject = {
+  id: "eb4d4208-4c79-4bb4-a636-329a37ee5c24",
+  name: "Castle",
+  createdAt: "2026-10-06T01:00:00Z",
+  updatedAt: "2026-10-06T01:00:00Z",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function mockApi({ projects = [] as unknown[] } = {}) {
+  const storedProjects = [...projects];
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input);
-    const body = url.endsWith("/api/v1/projects")
-      ? []
-      : {
-          id: "user-123",
-          email: "builder@example.com",
-          displayName: null,
-          avatarUrl: null,
-        };
-    return new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+    if (url.endsWith("/api/v1/projects") && init?.method === "POST") {
+      storedProjects.unshift(castleProject);
+      return jsonResponse(castleProject, 201);
+    }
+    if (url.endsWith("/api/v1/projects")) {
+      return jsonResponse(storedProjects);
+    }
+    return jsonResponse({
+      id: "user-123",
+      email: "builder@example.com",
+      displayName: null,
+      avatarUrl: null,
     });
   });
+}
+
+function mockSignedInSession() {
+  authMock.getSession.mockResolvedValue({ data: { session } });
 }
 
 describe("App", () => {
@@ -137,14 +157,14 @@ describe("App", () => {
 
   it("navigates home after successful email and password login", async () => {
     authMock.signInWithPassword.mockResolvedValue({ data: { session }, error: null });
-    mockProfileResponse();
+    mockApi();
     renderApp("/login");
 
     fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "builder@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "safe-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("heading", { name: "Your profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
     expect(authMock.signInWithPassword).toHaveBeenCalledWith({
       email: "builder@example.com",
       password: "safe-password",
@@ -185,25 +205,25 @@ describe("App", () => {
   });
 
   it("redirects an authenticated user from login to home", async () => {
-    authMock.getSession.mockResolvedValue({ data: { session } });
-    mockProfileResponse();
+    mockSignedInSession();
+    mockApi();
     renderApp("/login");
 
-    expect(await screen.findByRole("heading", { name: "Your profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
   });
 
   it("redirects an authenticated user from signup to home", async () => {
-    authMock.getSession.mockResolvedValue({ data: { session } });
-    mockProfileResponse();
+    mockSignedInSession();
+    mockApi();
     renderApp("/signup");
 
-    expect(await screen.findByRole("heading", { name: "Your profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
   });
 
   it("sends the session access token to the profile endpoint", async () => {
-    authMock.getSession.mockResolvedValue({ data: { session } });
-    mockProfileResponse();
-    renderApp("/");
+    mockSignedInSession();
+    mockApi();
+    renderApp("/profile");
 
     expect(await screen.findByText("builder@example.com")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
@@ -214,14 +234,107 @@ describe("App", () => {
     );
   });
 
-  it("signs out and returns to login", async () => {
-    authMock.getSession.mockResolvedValue({ data: { session } });
-    mockProfileResponse();
+  it("signs out from the account menu and returns to login", async () => {
+    mockSignedInSession();
+    mockApi();
     renderApp("/");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(authMock.signOut).toHaveBeenCalledOnce();
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  });
+});
+
+describe("Signed-in app", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    authMock.onAuthStateChange.mockReturnValue({
+      data: { subscription: { unsubscribe: vi.fn() } },
+    });
+    mockSignedInSession();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("shows the empty baseplate instead of profile details on first visit", async () => {
+    mockApi({ projects: [] });
+    renderApp("/");
+
+    expect(await screen.findByRole("heading", { name: "Your baseplate is empty" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New project" })).toBeInTheDocument();
+    expect(screen.queryByText("builder@example.com")).not.toBeInTheDocument();
+  });
+
+  it("lists projects as cards that link to their project page", async () => {
+    mockApi({ projects: [castleProject] });
+    renderApp("/");
+
+    const card = await screen.findByRole("link", { name: /Castle/ });
+    expect(card).toHaveAttribute("href", `/projects/${castleProject.id}`);
+    expect(screen.getByText("1 project")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your baseplate is empty" })).not.toBeInTheDocument();
+  });
+
+  it("shows the signed-in email in the account menu and closes it with Escape", async () => {
+    mockApi();
+    renderApp("/");
+
+    const trigger = await screen.findByRole("button", { name: "Account menu" });
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("builder@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Profile" })).toHaveAttribute("href", "/profile");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByText("builder@example.com")).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("opens How it works only when asked and closes it again", async () => {
+    mockApi({ projects: [castleProject] });
+    renderApp("/");
+
+    await screen.findByRole("heading", { name: "Projects" });
+    expect(screen.queryByRole("dialog", { name: "How it works" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "How it works" }));
+    expect(screen.getByRole("dialog", { name: "How it works" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Generate a 3D model" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("dialog", { name: "How it works" })).not.toBeInTheDocument();
+  });
+
+  it("creates a project from the dialog and opens its page", async () => {
+    mockApi({ projects: [] });
+    renderApp("/");
+
+    fireEvent.click(await screen.findByRole("button", { name: "New project" }));
+    const dialog = screen.getByRole("dialog", { name: "New project" });
+    fireEvent.change(within(dialog).getByLabelText("Project name"), { target: { value: "  Castle  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create project" }));
+
+    expect(await screen.findByRole("heading", { name: "Castle", level: 1 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Image")).toBeInTheDocument();
+    const createCall = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST");
+    expect(createCall?.[1]?.body).toBe(JSON.stringify({ name: "Castle" }));
+    expect(new Headers(createCall?.[1]?.headers).get("Authorization")).toBe("Bearer test-access-token");
+  });
+
+  it("shows a not found message for a project the user does not have", async () => {
+    mockApi({ projects: [castleProject] });
+    renderApp("/projects/00000000-0000-4000-8000-000000000000");
+
+    expect(await screen.findByRole("heading", { name: "Project not found" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/");
   });
 });
