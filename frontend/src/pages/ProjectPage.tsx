@@ -51,14 +51,14 @@ export function ProjectPage() {
           <BrickProgress status={project.data.status} />
           <div className="project-layout">
             <ProjectPreview
-              key={project.data.id}
+              key={`preview-${project.data.id}`}
               project={project.data}
               accessToken={session.access_token}
               userId={session.user.id}
             />
             {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
             <ProjectStatusPanel
-              key={project.data.id}
+              key={`status-${project.data.id}`}
               project={project.data}
               accessToken={session.access_token}
               userId={session.user.id}
