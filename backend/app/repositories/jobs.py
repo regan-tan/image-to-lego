@@ -1,18 +1,13 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.jobs import Job, JobStatus, JobType
+from app.domain.jobs import JobStatusRecord
 
 
 class JobRepository(Protocol):
-    async def create(
+    async def get_for_owner(
         self,
         *,
-        project_id: UUID,
-        job_type: JobType,
-        idempotency_key: str,
-    ) -> Job: ...
-
-    async def get(self, *, job_id: UUID) -> Job | None: ...
-
-    async def set_status(self, *, job_id: UUID, status: JobStatus) -> Job: ...
+        job_id: UUID,
+        owner_id: UUID,
+    ) -> JobStatusRecord | None: ...
