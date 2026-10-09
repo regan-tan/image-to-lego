@@ -1,4 +1,4 @@
-import { Bounds, Center, Html, OrbitControls, useGLTF } from "@react-three/drei";
+import { Bounds, Center, OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 import { Suspense } from "react";
 
@@ -16,13 +16,7 @@ export default function ModelViewer({ url }: ModelViewerProps) {
       <ambientLight intensity={0.9} />
       <directionalLight position={[4, 6, 5]} intensity={1.6} />
       <directionalLight position={[-5, -2, -4]} intensity={0.5} />
-      <Suspense
-        fallback={(
-          <Html center>
-            <span className="model-viewer__loading">Loading 3D model…</span>
-          </Html>
-        )}
-      >
+      <Suspense fallback={null}>
         <Bounds fit clip observe margin={1.2}>
           <Center>
             <GeneratedModel url={url} />

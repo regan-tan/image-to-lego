@@ -43,8 +43,11 @@ class SqlAlchemyReconstructionRepository:
             artifact_result = await self._session.execute(
                 text(
                     """
-                    select id, project_id, kind, blob_name, mime_type, size_bytes, sha256,
-                           status, expires_at, created_at
+                    select id as source_id, project_id as source_project_id,
+                           kind as source_kind, blob_name as source_blob_name,
+                           mime_type as source_mime_type, size_bytes as source_size_bytes,
+                           sha256 as source_sha256, status as source_status,
+                           expires_at as source_expires_at, created_at as source_created_at
                     from public.artifacts
                     where id = :artifact_id and project_id = :project_id
                     """
