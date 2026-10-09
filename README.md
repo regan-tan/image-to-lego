@@ -31,9 +31,11 @@ the actual source Blob bytes before paid submission, copies the completed GLB in
 Azure Blob Storage, and records a ready `reconstructed_model` artifact. The browser polls the job
 while it is queued or running.
 
-LEGO conversion, the conversion worker, stale-upload cleanup, and production deployment are
-**not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
-artifact store.
+The pure deterministic GLB-to-LEGO converter core is implemented. It produces a single-color,
+surface-only brick model using a bounded grid-resolution search and a fixed rectangular-brick
+catalogue. Conversion API endpoints, durable conversion jobs, queue processing, artifact storage,
+the conversion worker, stale-upload cleanup, and production deployment are **not implemented yet**.
+No Supabase Storage is used; Azure Blob Storage is the artifact store.
 
 ## Intended architecture
 

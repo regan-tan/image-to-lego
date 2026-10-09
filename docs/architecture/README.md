@@ -1,8 +1,9 @@
 # Intended architecture
 
 Status: **Authenticated profile, project metadata, direct source-image upload, queued image-to-3D
-reconstruction, and browser photo/3D-model viewing through short-lived read-only SAS links are
-implemented. Conversion and production deployment are not.**
+reconstruction, browser photo/3D-model viewing through short-lived read-only SAS links, and a pure
+deterministic GLB-to-LEGO converter core are implemented. Conversion API/queue/worker/frontend
+integration and production deployment are not.**
 
 ```mermaid
 flowchart LR
@@ -30,7 +31,9 @@ API route -> application service -> repository/provider protocol -> infrastructu
 - Purpose-specific repositories isolate PostgreSQL persistence. There is no generic repository base class.
 - The reconstruction protocol owns provider-neutral request/status models. The fal.ai adapter translates TRELLIS queue responses at this boundary.
 - Binary content belongs in Azure Blob Storage; PostgreSQL stores artifact metadata and blob names only.
-- CPU-intensive mesh conversion runs in an independently deployed worker image, never in a request handler or FastAPI `BackgroundTasks`.
+- The pure converter core is independent of application infrastructure. Future CPU-intensive mesh
+  conversion runs in an independently deployed worker image, never in a request handler or FastAPI
+  `BackgroundTasks`.
 
 ## Job delivery and idempotency
 
