@@ -244,7 +244,7 @@ class GenerationJobProcessor:
             f"{worker_job.reconstruction.job.id}/model.{extension}"
         )
         try:
-            created = await self._blob_storage.upload_generated_model(
+            created = await self._blob_storage.upload_generated_artifact(
                 blob_name=blob_name,
                 content=content,
                 mime_type=mime_type,

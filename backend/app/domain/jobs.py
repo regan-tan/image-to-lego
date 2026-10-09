@@ -41,7 +41,29 @@ class ReconstructionJob:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversionJob:
+    job: Job
+    source_artifact_id: UUID
+    target_parts: int
+    up_axis: str
+    output_artifact_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerReconstructionJob:
     reconstruction: ReconstructionJob
     owner_id: UUID
     source_artifact: Artifact
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerConversionJob:
+    conversion: ConversionJob
+    owner_id: UUID
+    source_artifact: Artifact
+
+
+@dataclass(frozen=True, slots=True)
+class JobStatusRecord:
+    job: Job
+    output_artifact_id: UUID | None

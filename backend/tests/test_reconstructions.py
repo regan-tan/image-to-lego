@@ -5,7 +5,11 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from app.api.v1.reconstructions import get_generation_queue, get_reconstruction_repository
+from app.api.v1.reconstructions import (
+    get_generation_queue,
+    get_job_repository,
+    get_reconstruction_repository,
+)
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
 from app.core.errors import ApplicationError
@@ -161,7 +165,7 @@ class FakeBlobStorage:
         self.read_urls += 1
         return "https://storage.example.test/input?sig=secret"
 
-    async def upload_generated_model(
+    async def upload_generated_artifact(
         self,
         *,
         blob_name: str,
@@ -242,6 +246,7 @@ def api_context() -> tuple[httpx.AsyncClient, FakeReconstructionRepository, Fake
 
     app.dependency_overrides[get_current_user] = current_user
     app.dependency_overrides[get_reconstruction_repository] = lambda: repository
+    app.dependency_overrides[get_job_repository] = lambda: repository
     app.dependency_overrides[get_generation_queue] = lambda: queue
     return (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test"),

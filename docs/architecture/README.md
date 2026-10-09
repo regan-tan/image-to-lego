@@ -12,10 +12,13 @@ flowchart LR
     API -->|"owner-scoped metadata<br/>implemented"| SupabaseDb["Supabase PostgreSQL<br/>projects + artifact lifecycle"]
     API -->|"single-blob create-only SAS + declared-metadata confirmation<br/>implemented"| Blob["Azure Blob Storage<br/>private source images"]
     Web -->|"direct HTTPS PUT<br/>binary never enters API"| Blob
-    API -->|"job/run + identifier-only message"| Bus["Azure Service Bus<br/>generation queue"]
-    Bus -->|"at-least-once delivery"| Worker["Python generation worker"]
-    Worker -->|"submit/status/result"| Fal["fal.ai / TRELLIS"]
-    Worker -->|"validated source + canonical GLB"| Blob
+    API -->|"reconstruction job/run + identifier-only message"| GenerationBus["Azure Service Bus<br/>generation queue"]
+    GenerationBus -->|"at-least-once delivery"| GenerationWorker["Python generation worker"]
+    GenerationWorker -->|"submit/status/result"| Fal["fal.ai / TRELLIS"]
+    GenerationWorker -->|"validated source + canonical GLB"| Blob
+    API -->|"conversion job/run + identifier-only message"| ConversionBus["Azure Service Bus<br/>conversion queue"]
+    ConversionBus -->|"at-least-once delivery"| ConversionWorker["Python conversion worker"]
+    ConversionWorker -->|"verified GLB + canonical LEGO JSON"| Blob
 ```
 
 ## Dependency boundaries
@@ -37,14 +40,16 @@ API route -> application service -> repository/provider protocol -> infrastructu
 
 ## Job delivery and idempotency
 
-Azure Service Bus is the durable generation transport. Delivery is at least once, so the generation
-worker treats duplicate messages as normal. The database uniqueness constraint on `(project_id, type,
-idempotency_key)` establishes the API idempotency boundary. Once persisted, `provider_job_id` prevents
-normal duplicate delivery from submitting another paid fal request. A unique partial index makes output
-artifact publication idempotent for each reconstruction job.
+Azure Service Bus is the durable transport for generation and conversion. Delivery is at least once,
+so both workers treat duplicate messages as normal. The database uniqueness constraint on
+`(project_id, type, idempotency_key)` establishes the API idempotency boundary. Once persisted,
+`provider_job_id` prevents normal duplicate delivery from submitting another paid fal request. Unique
+partial indexes make output artifact publication idempotent for each reconstruction and conversion job.
 
-The API creates the durable job/run before publishing. This slice intentionally does not add a
-transactional outbox: a failed initial publish marks the new job failed and returns 503. If a worker
+The API creates each durable job/run before publishing. This slice intentionally does not add a
+transactional outbox: a failed initial publish marks the new job failed and returns 503. The conversion
+worker atomically claims queued work, verifies the reconstructed GLB SHA-256, and uses create-only
+canonical Blob naming plus the output index to make duplicate delivery harmless. If a generation worker
 crashes after claiming a provider submission but before persisting its ID, later delivery treats the
 running, ID-less job as ambiguous: it waits while the claim is fresh and then fails it unconfirmed rather
 than risking duplicate paid work. The design does not claim distributed exactly-once delivery.

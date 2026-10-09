@@ -33,9 +33,11 @@ while it is queued or running.
 
 The pure deterministic GLB-to-LEGO converter core is implemented. It produces a single-color,
 surface-only brick model using a bounded grid-resolution search and a fixed rectangular-brick
-catalogue. Conversion API endpoints, durable conversion jobs, queue processing, artifact storage,
-the conversion worker, stale-upload cleanup, and production deployment are **not implemented yet**.
-No Supabase Storage is used; Azure Blob Storage is the artifact store.
+catalogue. The backend conversion slice is also implemented: an owner can start an idempotent
+conversion of a ready reconstructed model, and a separate worker stores one canonical JSON LEGO
+model artifact. The frontend conversion journey, LEGO renderer, instructions, and production
+deployment remain **not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
+artifact store.
 
 ## Intended architecture
 
@@ -47,7 +49,8 @@ The future request flow is:
 2. FastAPI stores relational metadata in Supabase PostgreSQL and binary artifacts in Azure Blob Storage.
 3. The API creates an idempotent reconstruction job/run and publishes only its job and owner IDs to the generation queue.
 4. A generation worker validates the private source Blob, submits/polls fal.ai/TRELLIS, and copies the returned GLB to canonical Azure Blob Storage.
-5. The API exposes owner-scoped job status for browser polling. Future conversion remains a separate queue/worker concern.
+5. The API exposes owner-scoped job status for browser polling. A conversion job validates a ready
+   reconstructed GLB, then the conversion worker produces a canonical private JSON LEGO model.
 
 See [Architecture](docs/architecture/README.md) for the component diagram and boundary details.
 
@@ -86,6 +89,15 @@ and a recomputed SHA-256.
 `POST /api/v1/reconstructions` requires an `Idempotency-Key`, a project ID, and a ready source-image
 artifact ID. It returns a queued reconstruction job; exact replays return the existing job without
 publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is safe for status polling.
+
+## Implemented conversion flow
+
+`POST /api/v1/conversions` requires an `Idempotency-Key`, a project ID, a ready
+`reconstructed_model` artifact ID, `targetParts`, and `upAxis`. Exact replays return the existing
+conversion job without publishing a second message; a reused key with different input returns 409.
+The conversion worker verifies the private GLB's SHA-256, calls the deterministic converter, and
+stores stable JSON at `projects/{projectId}/conversions/{jobId}/lego-model.json`. It creates one
+ready `lego_model` artifact per conversion job only after the canonical Blob is durable.
 
 ## Project status and overview
 
@@ -231,11 +243,12 @@ is not the table owner, and does not have `BYPASSRLS`. Each repository transacti
 verified JWT subject in the transaction-local `app.current_user_id` setting; the migration's RLS
 policies use that value and pooled connections cannot retain it after the transaction.
 
-After applying the reconstruction migration, provision the hosted API role outside the portable
+After applying the reconstruction and conversion migrations, provision the hosted API role outside the portable
 migrations if it does not already have the required table privileges:
 
 ```sql
-grant select, insert, update on public.jobs, public.artifacts, public.reconstruction_runs
+grant select, insert, update on public.jobs, public.artifacts, public.reconstruction_runs,
+public.conversion_runs
 to image_to_lego_api;
 ```
 
@@ -290,14 +303,15 @@ docker build -t image-to-lego-api:local backend
 docker run --rm -p 8000:8000 image-to-lego-api:local
 ```
 
-The same image can invoke the future worker entry point:
+The same image can invoke either worker entry point:
 
 ```powershell
 docker run --rm image-to-lego-api:local python -m app.workers.generation_worker
+docker run --rm image-to-lego-api:local python -m app.workers.conversion_worker
 ```
 
 The generation worker requires configured PostgreSQL, Blob Storage, Service Bus, and `FAL_KEY` values.
-The separate conversion worker remains an unimplemented scaffold.
+The conversion worker requires PostgreSQL, Blob Storage, and the existing conversion Service Bus queue.
 
 ## Environment variables
 

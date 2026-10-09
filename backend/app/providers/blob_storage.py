@@ -42,7 +42,7 @@ class BlobStorage(Protocol):
 
     async def download_bounded(self, *, blob_name: str, max_bytes: int) -> bytes: ...
 
-    async def upload_generated_model(
+    async def upload_generated_artifact(
         self,
         *,
         blob_name: str,
@@ -177,7 +177,7 @@ class AzureBlobStorage:
         except AzureError as error:
             raise BlobStorageError("Could not download the blob.") from error
 
-    async def upload_generated_model(
+    async def upload_generated_artifact(
         self,
         *,
         blob_name: str,

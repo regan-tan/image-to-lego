@@ -9,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.dependencies import CurrentOwnerId
 from app.core.database import DatabaseSession
 from app.core.errors import ApplicationError
-from app.domain.jobs import ReconstructionJob
+from app.domain.jobs import JobStatusRecord, ReconstructionJob
 from app.providers.generation_queue import GenerationQueue
+from app.repositories.jobs import JobRepository
 from app.repositories.reconstruction import ReconstructionRepository
+from app.repositories.sqlalchemy_jobs import SqlAlchemyJobRepository
 from app.repositories.sqlalchemy_reconstruction import SqlAlchemyReconstructionRepository
 from app.services.reconstruction import ReconstructionInitiationService
 
@@ -34,7 +36,13 @@ class ReconstructionResponse(BaseModel):
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
 
 
-class JobResponse(ReconstructionResponse):
+class JobResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: UUID = Field(serialization_alias="jobId")
+    project_id: UUID = Field(serialization_alias="projectId")
+    type: Literal["reconstruction", "conversion"]
+    status: Literal["queued", "running", "succeeded", "failed", "canceled"]
     output_artifact_id: UUID | None = Field(serialization_alias="outputArtifactId")
     error_code: str | None = Field(serialization_alias="errorCode")
     error_message: str | None = Field(serialization_alias="errorMessage")
@@ -44,6 +52,10 @@ class JobResponse(ReconstructionResponse):
 
 def get_reconstruction_repository(session: DatabaseSession) -> ReconstructionRepository:
     return SqlAlchemyReconstructionRepository(session)
+
+
+def get_job_repository(session: DatabaseSession) -> JobRepository:
+    return SqlAlchemyJobRepository(session)
 
 
 def get_generation_queue(request: Request) -> GenerationQueue:
@@ -61,6 +73,7 @@ ReconstructionRepositoryDependency = Annotated[
     Depends(get_reconstruction_repository),
 ]
 GenerationQueueDependency = Annotated[GenerationQueue, Depends(get_generation_queue)]
+JobRepositoryDependency = Annotated[JobRepository, Depends(get_job_repository)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
@@ -99,12 +112,12 @@ async def create_reconstruction(
 async def get_job(
     job_id: UUID,
     owner_id: CurrentOwnerId,
-    repository: ReconstructionRepositoryDependency,
+    repository: JobRepositoryDependency,
 ) -> JobResponse:
-    reconstruction = await repository.get_for_owner(job_id=job_id, owner_id=owner_id)
-    if reconstruction is None:
+    job_status = await repository.get_for_owner(job_id=job_id, owner_id=owner_id)
+    if job_status is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The job does not exist.")
-    return _job_response(reconstruction)
+    return _job_response(job_status)
 
 
 def _reconstruction_response(reconstruction: ReconstructionJob) -> ReconstructionResponse:
@@ -116,14 +129,17 @@ def _reconstruction_response(reconstruction: ReconstructionJob) -> Reconstructio
     )
 
 
-def _job_response(reconstruction: ReconstructionJob) -> JobResponse:
+def _job_response(job_status: JobStatusRecord) -> JobResponse:
     return JobResponse(
-        **_reconstruction_response(reconstruction).model_dump(),
-        output_artifact_id=reconstruction.output_artifact_id,
-        error_code=reconstruction.job.error_code,
-        error_message=reconstruction.job.error_message,
-        created_at=reconstruction.job.created_at,
-        updated_at=reconstruction.job.updated_at,
+        job_id=job_status.job.id,
+        project_id=job_status.job.project_id,
+        type=job_status.job.type.value,
+        status=job_status.job.status.value,
+        output_artifact_id=job_status.output_artifact_id,
+        error_code=job_status.job.error_code,
+        error_message=job_status.job.error_message,
+        created_at=job_status.job.created_at,
+        updated_at=job_status.job.updated_at,
     )
 
 
