@@ -6,6 +6,7 @@ import { getArtifactReadUrl, getJob, getLegoModel, startConversion, startReconst
 import { startBrowserDownload } from "../browserDownload";
 import { conversionPollInterval } from "../conversionPolling";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
+import type { LegoPartsListResult } from "../legoPartsList";
 import type { Conversion, ConversionStatus } from "../schemas/conversions";
 import type { LegoModel } from "../schemas/legoModels";
 import type { ProjectDetail } from "../schemas/projects";
@@ -27,6 +28,7 @@ import {
   SpinnerIcon,
 } from "./Icons";
 import { PhotoPicker } from "./PhotoPicker";
+import { PartsListSummary } from "./PartsListWorkspace";
 
 interface ProjectStatusPanelProps {
   project: ProjectDetail;
@@ -34,9 +36,11 @@ interface ProjectStatusPanelProps {
   userId: string;
   onConversionStatusChange: (status: ConversionStatus | null) => void;
   legoModel: LegoModel | null;
+  partsList: LegoPartsListResult | null;
   onLegoModelLoaded: (model: LegoModel) => void;
   isRehydratingLegoModel: boolean;
   hasPersistedLegoModelError: boolean;
+  onViewFullPartsList: () => void;
 }
 
 interface GenerationRequest {
@@ -51,9 +55,11 @@ export function ProjectStatusPanel({
   userId,
   onConversionStatusChange,
   legoModel,
+  partsList,
   onLegoModelLoaded,
   isRehydratingLegoModel,
   hasPersistedLegoModelError,
+  onViewFullPartsList,
 }: ProjectStatusPanelProps) {
   const queryClient = useQueryClient();
   const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
@@ -294,7 +300,7 @@ export function ProjectStatusPanel({
               onLoaded={onLegoModelLoaded}
             />
           ) : null}
-          {legoModel ? <LegoSummary model={legoModel} /> : null}
+          {legoModel ? <LegoSummary model={legoModel} partsList={partsList} onViewFullPartsList={onViewFullPartsList} /> : null}
         </>
       ) : null}
 
@@ -365,7 +371,7 @@ function LegoResult({
   return null;
 }
 
-function LegoSummary({ model }: { model: LegoModel }) {
+function LegoSummary({ model, partsList, onViewFullPartsList }: { model: LegoModel; partsList: LegoPartsListResult | null; onViewFullPartsList: () => void }) {
   const { dimensions } = model;
   return (
     <section className="lego-result" aria-labelledby="lego-result-title">
@@ -373,6 +379,7 @@ function LegoSummary({ model }: { model: LegoModel }) {
         <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
         <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall</p>
       </div>
+      {partsList ? <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} /> : null}
     </section>
   );
 }

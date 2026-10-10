@@ -9,10 +9,14 @@ import { ArrowLeftIcon } from "../components/Icons";
 import { ProjectPreview } from "../components/ProjectPreview";
 import type { PreviewView } from "../components/ProjectPreview";
 import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
+import { PartsListWorkspace } from "../components/PartsListWorkspace";
 import { StatusBadge } from "../components/StatusBadge";
 import { isNotFound, useProject } from "../hooks/useProjects";
+import { createLegoPartsList } from "../legoPartsList";
 import type { ConversionStatus } from "../schemas/conversions";
 import type { LegoModel } from "../schemas/legoModels";
+
+type ResultView = "model" | "parts";
 
 export function ProjectPage() {
   const { projectId = "" } = useParams();
@@ -26,6 +30,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const [conversionStatus, setConversionStatus] = useState<ConversionStatus | null>(null);
   const [legoModel, setLegoModel] = useState<LegoModel | null>(null);
   const [previewView, setPreviewView] = useState<PreviewView | null>(null);
+  const [resultView, setResultView] = useState<ResultView>("model");
   const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
   const persistedLegoModel = useQuery({
     queryKey: ["lego-model", session.user.id, persistedLegoArtifactId],
@@ -39,6 +44,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   }, []);
   const currentLegoModel = legoModel ?? persistedLegoModel.data ?? null;
   const currentPreviewView = previewView ?? (currentLegoModel ? "lego" : "model");
+  const partsList = currentLegoModel ? createLegoPartsList(currentLegoModel) : null;
 
   return (
     <div className="page__container">
@@ -84,7 +90,13 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
             conversionStatus={conversionStatus}
             legoModelReady={currentLegoModel !== null}
           />
-          <div className="project-layout">
+          {currentLegoModel ? (
+            <div className="result-view-toggle segmented-control" role="group" aria-label="Completed build view">
+              <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>LEGO model</button>
+              <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
+            </div>
+          ) : null}
+          <div className="project-layout" hidden={currentLegoModel !== null && resultView === "parts"}>
             <ProjectPreview
               key={`preview-${project.data.id}`}
               project={project.data}
@@ -102,11 +114,14 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
               userId={session.user.id}
               onConversionStatusChange={setConversionStatus}
               legoModel={currentLegoModel}
+              partsList={partsList}
               onLegoModelLoaded={handleLegoModelLoaded}
               isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
               hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
+              onViewFullPartsList={() => setResultView("parts")}
             />
           </div>
+          {currentLegoModel && resultView === "parts" && partsList ? <PartsListWorkspace partsList={partsList} /> : null}
         </>
       ) : null}
     </div>
