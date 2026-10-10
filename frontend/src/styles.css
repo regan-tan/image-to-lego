@@ -936,6 +936,101 @@ h1 {
   padding-top: 0.5rem;
 }
 
+.result-view-toggle {
+  position: static;
+  width: fit-content;
+  margin-bottom: 1.5rem;
+  background: var(--color-surface);
+}
+
+.parts-list-summary {
+  display: grid;
+  gap: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.parts-list-workspace {
+  display: grid;
+  max-width: 68rem;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: 0 1rem 2.5rem rgb(93 112 82 / 8%);
+}
+
+.parts-list-workspace__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.parts-list-workspace__heading h2,
+.parts-list-workspace__heading p {
+  margin: 0;
+}
+
+.parts-list-workspace__heading p {
+  margin-top: 0.375rem;
+  color: var(--color-text-secondary);
+}
+
+.parts-list__table-wrap {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.parts-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.parts-list__table th:first-child,
+.parts-list__table td:first-child {
+  width: 32%;
+}
+
+.parts-list__table th:nth-child(2),
+.parts-list__table td:nth-child(2) {
+  width: 20%;
+}
+
+.parts-list__table th:nth-child(3),
+.parts-list__table td:nth-child(3) {
+  width: 30%;
+}
+
+.parts-list__table th,
+.parts-list__table td {
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.parts-list__table th {
+  color: var(--color-text-muted);
+  background: var(--color-surface-raised);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.parts-list__table td:last-child,
+.parts-list__table th:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.parts-list__table tr:last-child td {
+  border-bottom: 0;
+}
+
 .progress-bar {
   height: 8px;
   overflow: hidden;
@@ -1428,6 +1523,46 @@ h1 {
 
   .header-link {
     padding: 0 0.5rem;
+  }
+
+  .parts-list__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .parts-list__table,
+  .parts-list__table tbody,
+  .parts-list__table tr,
+  .parts-list__table td {
+    display: block;
+  }
+
+  .parts-list__table tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .parts-list__table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .parts-list__table td {
+    display: flex;
+    padding: 0.25rem 0.75rem;
+    justify-content: space-between;
+    gap: 1rem;
+    border: 0;
+    text-align: right;
+  }
+
+  .parts-list__table td::before {
+    content: attr(data-label);
+    color: var(--color-text-muted);
+    font-weight: 600;
+    text-align: left;
   }
 
 }

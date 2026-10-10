@@ -49,7 +49,7 @@ export function ProjectPreview({
             </button>
           ) : null}
           {legoModel ? (
-            <button type="button" aria-pressed={view === "lego"} onClick={() => onViewChange("lego")}>
+            <button type="button" aria-label="LEGO model preview" aria-pressed={view === "lego"} onClick={() => onViewChange("lego")}>
               LEGO model
             </button>
           ) : null}
