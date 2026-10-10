@@ -25,17 +25,13 @@ const SCREEN_READER_STATE: Record<StepState, string> = {
 export function BrickProgress({
   status,
   conversionStatus,
-  legoModelReady,
 }: {
   status: ProjectStatus;
   conversionStatus: ConversionStatus | null;
-  legoModelReady: boolean;
 }) {
-  const states = legoModelReady
-    ? ["done", "done", "done"] as const
-    : conversionStatus === "queued" || conversionStatus === "running"
-      ? ["done", "done", "current"] as const
-      : STEP_STATES[status];
+  const states = conversionStatus === "queued" || conversionStatus === "running"
+    ? ["done", "done", "current"] as const
+    : STEP_STATES[status];
   return (
     <ol className="brick-progress" aria-label="Progress">
       {STEP_LABELS.map((label, index) => {

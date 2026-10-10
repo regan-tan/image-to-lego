@@ -17,9 +17,8 @@ export function PartsListSummary({ partsList, onViewFullPartsList }: PartsListSu
         <h3 id="parts-list-summary-title" className="side-panel__title">Parts list</h3>
         <p className="side-panel__hint">{partsList.totalPartCount} total parts</p>
         <p className="side-panel__hint">{partsList.uniquePartTypeCount} unique part types</p>
-        <p className="side-panel__hint">Most common: <span>{partLabel(partsList.parts[0])}</span></p>
       </div>
-      <div className="side-panel__actions">
+      <div className="side-panel__actions parts-list-summary__actions">
         <button type="button" className="button button--secondary" onClick={onViewFullPartsList}>View full parts list</button>
         <PartsListDownloadButton parts={partsList.parts} />
       </div>

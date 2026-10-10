@@ -12,7 +12,7 @@ export const legoModelSchema = z.object({
   metadata: z.object({
     algorithmVersion: z.string(),
     sourceSha256: z.string(),
-    targetParts: z.number(),
+    targetParts: z.number().optional(),
     occupiedCellCount: z.number(),
     gridSize: dimensionsSchema,
     candidateCount: z.number(),

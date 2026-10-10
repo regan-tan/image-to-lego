@@ -12,6 +12,11 @@ import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
 import { PartsListWorkspace } from "../components/PartsListWorkspace";
 import { StatusBadge } from "../components/StatusBadge";
 import { isNotFound, useProject } from "../hooks/useProjects";
+import {
+  DEFAULT_BUILD_COMPLEXITY,
+  buildComplexityForTargetParts,
+  type BuildComplexity,
+} from "../legoBuildComplexity";
 import { createLegoPartsList } from "../legoPartsList";
 import type { ConversionStatus } from "../schemas/conversions";
 import type { LegoModel } from "../schemas/legoModels";
@@ -31,6 +36,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const [legoModel, setLegoModel] = useState<LegoModel | null>(null);
   const [previewView, setPreviewView] = useState<PreviewView | null>(null);
   const [resultView, setResultView] = useState<ResultView>("model");
+  const [selectedBuildComplexity, setSelectedBuildComplexity] = useState<BuildComplexity | null>(null);
   const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
   const persistedLegoModel = useQuery({
     queryKey: ["lego-model", session.user.id, persistedLegoArtifactId],
@@ -41,8 +47,16 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const handleLegoModelLoaded = useCallback((model: LegoModel) => {
     setLegoModel(model);
     setPreviewView("lego");
+    setSelectedBuildComplexity(
+      buildComplexityForTargetParts(model.metadata.targetParts) ?? DEFAULT_BUILD_COMPLEXITY,
+    );
   }, []);
   const currentLegoModel = legoModel ?? persistedLegoModel.data ?? null;
+  const buildComplexity = selectedBuildComplexity
+    ?? (currentLegoModel
+      ? buildComplexityForTargetParts(currentLegoModel.metadata.targetParts)
+      : undefined)
+    ?? DEFAULT_BUILD_COMPLEXITY;
   const currentPreviewView = previewView ?? (currentLegoModel ? "lego" : "model");
   const partsList = currentLegoModel ? createLegoPartsList(currentLegoModel) : null;
 
@@ -85,11 +99,12 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
               />
             </div>
           </div>
-          <BrickProgress
-            status={project.data.status}
-            conversionStatus={conversionStatus}
-            legoModelReady={currentLegoModel !== null}
-          />
+          {currentLegoModel ? null : (
+            <BrickProgress
+              status={project.data.status}
+              conversionStatus={conversionStatus}
+            />
+          )}
           {currentLegoModel ? (
             <div className="result-view-toggle segmented-control" role="group" aria-label="Completed build view">
               <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>LEGO model</button>
@@ -119,6 +134,8 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
               isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
               hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
               onViewFullPartsList={() => setResultView("parts")}
+              buildComplexity={buildComplexity}
+              onBuildComplexityChange={setSelectedBuildComplexity}
             />
           </div>
           {currentLegoModel && resultView === "parts" && partsList ? <PartsListWorkspace partsList={partsList} /> : null}
