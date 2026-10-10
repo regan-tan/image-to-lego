@@ -38,9 +38,14 @@ const latestReconstructionSchema = z.object({
   updatedAt: z.string(),
 });
 
+const latestLegoModelSchema = z.object({
+  artifactId: z.string().uuid(),
+});
+
 export const projectDetailSchema = projectSchema.extend({
   sourceImage: sourceImageSchema.nullable(),
   latestReconstruction: latestReconstructionSchema.nullable(),
+  latestLegoModel: latestLegoModelSchema.nullable(),
 });
 
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;

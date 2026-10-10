@@ -1,18 +1,18 @@
 :root {
-  --color-background: #0e151c;
-  --color-surface: #16202a;
-  --color-surface-raised: #1f2b36;
-  --color-border: #24313d;
-  --color-border-strong: #34424f;
-  --color-text: #f4f2ed;
-  --color-text-secondary: #c9d2da;
-  --color-text-muted: #9aa7b2;
-  --color-error-text: #ff7a6b;
+  --color-background: #fdfcf8;
+  --color-surface: #ffffff;
+  --color-surface-raised: #f0ebe5;
+  --color-border: #ded8cf;
+  --color-border-strong: #c9bfb2;
+  --color-text: #2c2c24;
+  --color-text-secondary: #53534a;
+  --color-text-muted: #78786c;
+  --color-error-text: #a85448;
 
-  --color-brand: #ffcd00;
-  --color-brand-hover: #ffd633;
-  --color-brand-edge: #d9a900;
-  --color-on-brand: #101820;
+  --color-brand: #5d7052;
+  --color-brand-hover: #4d6144;
+  --color-brand-edge: #43563a;
+  --color-on-brand: #f3f4f1;
 
   /* Official LEGO colour values from the LDraw colour table (LDConfig.ldr). */
   --lego-blue: #0055bf;
@@ -20,15 +20,14 @@
   --lego-red: #c91a09;
   --lego-light-bluish-gray: #a0a5a9;
 
-  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    sans-serif;
-  --font-body: Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --font-display: Fraunces, Georgia, serif;
+  --font-body: Nunito, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
 
-  --radius-small: 6px;
-  --radius-medium: 10px;
-  --radius-large: 16px;
-  --radius-extra-large: 20px;
+  --radius-small: 12px;
+  --radius-medium: 16px;
+  --radius-large: 24px;
+  --radius-extra-large: 32px;
 
   /* Darker bottom edge that makes buttons and badges read as moulded bricks. */
   --brick-edge-brand: inset 0 -3px 0 var(--color-brand-edge);
@@ -38,8 +37,8 @@
   --page-max-width: 71rem;
 
   /* Studded "baseplate" texture used behind photos, models and empty states. */
-  --color-baseplate: #131c25;
-  --color-baseplate-stud: #1c2833;
+  --color-baseplate: #f0ebe5;
+  --color-baseplate-stud: #e6dccd;
 
   color: var(--color-text);
   background: var(--color-background);
@@ -56,6 +55,9 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: var(--color-background);
+  background-image: radial-gradient(rgb(93 112 82 / 4%) 1px, transparent 1px);
+  background-size: 16px 16px;
 }
 
 :focus-visible {
@@ -162,6 +164,8 @@ h1 {
   color: var(--color-on-brand);
   background: var(--color-brand);
   box-shadow: var(--brick-edge-brand);
+  border-radius: 999px;
+  transition: transform 200ms ease, background 200ms ease, box-shadow 200ms ease;
 }
 
 .button:hover {
@@ -530,6 +534,7 @@ h1 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
   background: var(--color-surface);
+  box-shadow: 0 1rem 2.5rem rgb(93 112 82 / 8%);
 }
 
 /* Projects */
@@ -891,6 +896,7 @@ h1 {
   border: 1px solid var(--color-border);
   border-radius: 18px;
   background: var(--color-surface);
+  box-shadow: 0 1rem 2.5rem rgb(93 112 82 / 8%);
 }
 
 .side-panel__intro {
@@ -922,6 +928,12 @@ h1 {
   color: var(--color-text-muted);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.lego-result {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
 }
 
 .progress-bar {
@@ -1409,10 +1421,30 @@ h1 {
   .dialog__content {
     padding: 1.5rem 1.25rem;
   }
+
+  .app-header__actions {
+    gap: 0;
+  }
+
+  .header-link {
+    padding: 0 0.5rem;
+  }
+
 }
 
 @media (max-width: 420px) {
   .app-header__brand-name {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

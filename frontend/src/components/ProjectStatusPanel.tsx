@@ -1,10 +1,13 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getArtifactReadUrl, startReconstruction } from "../api/client";
+import { getArtifactReadUrl, getJob, getLegoModel, startConversion, startReconstruction } from "../api/client";
 import { startBrowserDownload } from "../browserDownload";
+import { conversionPollInterval } from "../conversionPolling";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
+import type { Conversion, ConversionStatus } from "../schemas/conversions";
+import type { LegoModel } from "../schemas/legoModels";
 import type { ProjectDetail } from "../schemas/projects";
 import {
   checkImageFileBasics,
@@ -29,6 +32,11 @@ interface ProjectStatusPanelProps {
   project: ProjectDetail;
   accessToken: string;
   userId: string;
+  onConversionStatusChange: (status: ConversionStatus | null) => void;
+  legoModel: LegoModel | null;
+  onLegoModelLoaded: (model: LegoModel) => void;
+  isRehydratingLegoModel: boolean;
+  hasPersistedLegoModelError: boolean;
 }
 
 interface GenerationRequest {
@@ -37,10 +45,21 @@ interface GenerationRequest {
 }
 
 /** The project page's side panel: explains the current state and offers the one next action. */
-export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStatusPanelProps) {
+export function ProjectStatusPanel({
+  project,
+  accessToken,
+  userId,
+  onConversionStatusChange,
+  legoModel,
+  onLegoModelLoaded,
+  isRehydratingLegoModel,
+  hasPersistedLegoModelError,
+}: ProjectStatusPanelProps) {
   const queryClient = useQueryClient();
   const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
   const generationAttempt = useRef<{ scope: string; key: string } | null>(null);
+  const conversionAttempt = useRef<{ sourceArtifactId: string; key: string } | null>(null);
+  const [conversionJob, setConversionJob] = useState<Conversion | null>(null);
 
   async function refreshProject() {
     await Promise.all([
@@ -64,6 +83,25 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
     onSuccess: (readUrl) => startBrowserDownload(readUrl.url),
   });
 
+  const conversionStatus = useQuery({
+    queryKey: ["conversion-job", userId, conversionJob?.jobId],
+    queryFn: ({ signal }) => getJob(accessToken, conversionJob?.jobId ?? "", signal),
+    enabled: conversionJob !== null,
+    refetchInterval: (query) => conversionPollInterval(query.state.data?.status ?? conversionJob?.status),
+  });
+  const activeConversion = conversionStatus.data ?? conversionJob;
+  useEffect(() => {
+    onConversionStatusChange(activeConversion?.status ?? null);
+  }, [activeConversion?.status, onConversionStatusChange]);
+  const conversion = useMutation({
+    mutationFn: ({ sourceArtifactId, idempotencyKey }: GenerationRequest) => startConversion(
+      accessToken,
+      { projectId: project.id, sourceArtifactId, targetParts: 300, upAxis: "y" },
+      idempotencyKey,
+    ),
+    onSuccess: setConversionJob,
+  });
+
   function handleGenerate() {
     const sourceImage = project.sourceImage;
     if (!sourceImage || generation.isPending) {
@@ -80,6 +118,23 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
       sourceArtifactId: sourceImage.artifactId,
       idempotencyKey: generationAttempt.current.key,
     });
+  }
+
+  function handleConvert() {
+    const sourceArtifactId = project.latestReconstruction?.outputArtifactId;
+    if (!sourceArtifactId || conversion.isPending) return;
+    if (
+      activeConversion?.status === "failed"
+      || activeConversion?.status === "canceled"
+      || activeConversion?.status === "succeeded"
+    ) {
+      conversionAttempt.current = null;
+      setConversionJob(null);
+    }
+    if (conversionAttempt.current?.sourceArtifactId !== sourceArtifactId) {
+      conversionAttempt.current = { sourceArtifactId, key: crypto.randomUUID() };
+    }
+    conversion.mutate({ sourceArtifactId, idempotencyKey: conversionAttempt.current.key });
   }
 
   if (project.status === "needs_photo" || isReplacingPhoto) {
@@ -182,10 +237,18 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
             text="Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."
           />
           <div className="side-panel__actions">
-            <button type="button" className="button button--coming-soon" disabled>
+            <button
+              type="button"
+              className={`button ${activeConversion?.status === "succeeded" ? "button--secondary" : "button--large"}`}
+              onClick={handleConvert}
+              disabled={!modelArtifactId || isRehydratingLegoModel || conversion.isPending || activeConversion?.status === "queued" || activeConversion?.status === "running"}
+            >
               <BrickIcon />
-              Convert to LEGO
-              <span className="badge badge--neutral">Coming soon</span>
+              {conversion.isPending || activeConversion?.status === "queued" ? "Starting conversion..." : null}
+              {activeConversion?.status === "running" ? "Converting to LEGO..." : null}
+              {!conversion.isPending && activeConversion?.status !== "queued" && activeConversion?.status !== "running"
+                ? activeConversion?.status === "succeeded" ? "Convert again" : "Convert to LEGO"
+                : null}
             </button>
             {modelArtifactId ? (
               <button
@@ -202,6 +265,36 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
               <p className="form-error" role="alert">The download could not be started. Please try again.</p>
             ) : null}
           </div>
+          {conversion.isError ? <p className="form-error" role="alert">We could not start the conversion. Please try again.</p> : null}
+          {isRehydratingLegoModel ? (
+            <p className="status status--pending" role="status">Loading saved LEGO model...</p>
+          ) : null}
+          {hasPersistedLegoModelError ? (
+            <p className="form-error" role="alert">We couldnâ€™t load the saved LEGO model. You can convert it again.</p>
+          ) : null}
+          {activeConversion?.status === "queued" || activeConversion?.status === "running" ? (
+            <p className="status status--pending" role="status">
+              <SpinnerIcon size={16} />
+              {legoModel
+                ? "Creating a replacement LEGO model. Your current model stays available."
+                : "Converting your 3D model to LEGO..."}
+            </p>
+          ) : null}
+          {activeConversion?.status === "failed" || activeConversion?.status === "canceled" ? (
+            <div className="alert" role="alert">
+              <p>{activeConversion.errorMessage ?? "The LEGO conversion did not finish. Try again when you are ready."}</p>
+              <button type="button" className="button button--secondary" onClick={handleConvert}>Try conversion again</button>
+            </div>
+          ) : null}
+          {activeConversion?.status === "succeeded" && activeConversion.outputArtifactId ? (
+            <LegoResult
+              accessToken={accessToken}
+              userId={userId}
+              artifactId={activeConversion.outputArtifactId}
+              onLoaded={onLegoModelLoaded}
+            />
+          ) : null}
+          {legoModel ? <LegoSummary model={legoModel} /> : null}
         </>
       ) : null}
 
@@ -242,6 +335,45 @@ export function ProjectStatusPanel({ project, accessToken, userId }: ProjectStat
 
       {project.sourceImage ? <PhotoDetails sourceImage={project.sourceImage} /> : null}
     </aside>
+  );
+}
+
+function LegoResult({
+  accessToken,
+  userId,
+  artifactId,
+  onLoaded,
+}: {
+  accessToken: string;
+  userId: string;
+  artifactId: string;
+  onLoaded: (model: LegoModel) => void;
+}) {
+  const legoModel = useQuery({
+    queryKey: ["lego-model", userId, artifactId],
+    queryFn: ({ signal }) => getLegoModel(accessToken, artifactId, signal),
+  });
+  useEffect(() => {
+    if (legoModel.data) {
+      onLoaded(legoModel.data);
+    }
+  }, [legoModel.data, onLoaded]);
+  if (legoModel.isPending) return <p className="status status--pending" role="status">Loading LEGO model...</p>;
+  if (legoModel.isError || !legoModel.data) {
+    return <p className="form-error" role="alert">The LEGO model could not be loaded safely. Please try again.</p>;
+  }
+  return null;
+}
+
+function LegoSummary({ model }: { model: LegoModel }) {
+  const { dimensions } = model;
+  return (
+    <section className="lego-result" aria-labelledby="lego-result-title">
+      <div>
+        <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
+        <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall</p>
+      </div>
+    </section>
   );
 }
 

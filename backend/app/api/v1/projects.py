@@ -49,10 +49,17 @@ class LatestReconstructionResponse(BaseModel):
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
 
+class LatestLegoModelResponse(BaseModel):
+    artifact_id: UUID = Field(serialization_alias="artifactId")
+
+
 class ProjectDetailResponse(ProjectResponse):
     source_image: SourceImageResponse | None = Field(serialization_alias="sourceImage")
     latest_reconstruction: LatestReconstructionResponse | None = Field(
         serialization_alias="latestReconstruction"
+    )
+    latest_lego_model: LatestLegoModelResponse | None = Field(
+        serialization_alias="latestLegoModel"
     )
 
 
@@ -165,6 +172,11 @@ def _project_detail_response(overview: ProjectOverview) -> ProjectDetailResponse
                 updated_at=reconstruction.updated_at,
             )
             if reconstruction is not None
+            else None
+        ),
+        latest_lego_model=(
+            LatestLegoModelResponse(artifact_id=overview.latest_lego_model.artifact_id)
+            if overview.latest_lego_model is not None
             else None
         ),
     )

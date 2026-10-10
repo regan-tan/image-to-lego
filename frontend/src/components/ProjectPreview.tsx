@@ -2,8 +2,10 @@ import { lazy, type ReactNode, Suspense, useRef, useState } from "react";
 
 import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import type { ProjectDetail } from "../schemas/projects";
+import type { LegoModel } from "../schemas/legoModels";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { CubeIcon, ImageIcon, MaximizeIcon, RetryIcon, SpinnerIcon } from "./Icons";
+import LegoModelViewer from "./LegoModelViewer";
 
 const ModelViewer = lazy(() => import("./ModelViewer"));
 
@@ -11,32 +13,52 @@ interface ProjectPreviewProps {
   project: ProjectDetail;
   accessToken: string;
   userId: string;
+  legoModel: LegoModel | null;
+  view: PreviewView;
+  onViewChange: (view: PreviewView) => void;
 }
 
-type PreviewView = "model" | "photo";
+export type PreviewView = "model" | "photo" | "lego";
 
 /** The large preview area of the project page: the 3D model once ready, otherwise the photo. */
-export function ProjectPreview({ project, accessToken, userId }: ProjectPreviewProps) {
+export function ProjectPreview({
+  project,
+  accessToken,
+  userId,
+  legoModel,
+  view,
+  onViewChange,
+}: ProjectPreviewProps) {
   const modelArtifactId = project.status === "model_ready"
     ? project.latestReconstruction?.outputArtifactId ?? null
     : null;
-  const [view, setView] = useState<PreviewView>("model");
   const showModel = modelArtifactId !== null && view === "model";
 
   return (
     <div className="project-preview baseplate">
-      {modelArtifactId !== null ? (
+      {modelArtifactId !== null || legoModel !== null ? (
         <div className="segmented-control" role="group" aria-label="Preview">
-          <button type="button" aria-pressed={view === "model"} onClick={() => setView("model")}>
-            3D model
-          </button>
-          <button type="button" aria-pressed={view === "photo"} onClick={() => setView("photo")}>
-            Photo
-          </button>
+          {project.sourceImage ? (
+            <button type="button" aria-pressed={view === "photo"} onClick={() => onViewChange("photo")}>
+              Photo
+            </button>
+          ) : null}
+          {modelArtifactId !== null ? (
+            <button type="button" aria-pressed={view === "model"} onClick={() => onViewChange("model")}>
+              3D model
+            </button>
+          ) : null}
+          {legoModel ? (
+            <button type="button" aria-pressed={view === "lego"} onClick={() => onViewChange("lego")}>
+              LEGO model
+            </button>
+          ) : null}
         </div>
       ) : null}
 
-      {showModel ? (
+      {view === "lego" && legoModel ? (
+        <LegoModelViewer model={legoModel} />
+      ) : showModel ? (
         <ModelPreview artifactId={modelArtifactId} accessToken={accessToken} userId={userId} />
       ) : (
         <PhotoPreview

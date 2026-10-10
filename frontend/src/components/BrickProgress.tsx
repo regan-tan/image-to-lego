@@ -1,4 +1,5 @@
 import type { ProjectStatus } from "../schemas/projects";
+import type { ConversionStatus } from "../schemas/conversions";
 import { AlertIcon, CheckIcon, SpinnerIcon } from "./Icons";
 
 type StepState = "done" | "current" | "failed" | "upcoming";
@@ -21,8 +22,20 @@ const SCREEN_READER_STATE: Record<StepState, string> = {
 };
 
 /** The three project steps drawn as LEGO bricks that fill in as each step completes. */
-export function BrickProgress({ status }: { status: ProjectStatus }) {
-  const states = STEP_STATES[status];
+export function BrickProgress({
+  status,
+  conversionStatus,
+  legoModelReady,
+}: {
+  status: ProjectStatus;
+  conversionStatus: ConversionStatus | null;
+  legoModelReady: boolean;
+}) {
+  const states = legoModelReady
+    ? ["done", "done", "done"] as const
+    : conversionStatus === "queued" || conversionStatus === "running"
+      ? ["done", "done", "current"] as const
+      : STEP_STATES[status];
   return (
     <ol className="brick-progress" aria-label="Progress">
       {STEP_LABELS.map((label, index) => {

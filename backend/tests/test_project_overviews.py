@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.domain.jobs import JobStatus
 from app.domain.projects import (
     Project,
+    ProjectLegoModel,
     ProjectOverview,
     ProjectReconstruction,
     ProjectSourceImage,
@@ -17,6 +18,7 @@ from app.domain.projects import (
     project_status,
 )
 from app.main import create_app
+from app.repositories.sqlalchemy_projects import _PROJECT_OVERVIEW_SELECT
 
 OWNER_ID = UUID("0c3d60a8-5117-44e5-821b-abc1c0c8f3d0")
 OTHER_OWNER_ID = UUID("6e43e80d-9276-4d37-af4f-12f7f85d4f50")
@@ -179,7 +181,33 @@ async def test_project_detail_returns_latest_photo_and_reconstruction() -> None:
             "createdAt": "2026-10-08T09:00:00Z",
             "updatedAt": "2026-10-08T09:00:00Z",
         },
+        "latestLegoModel": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_project_detail_includes_the_latest_ready_lego_model() -> None:
+    lego_artifact_id = uuid4()
+    overview = ProjectOverview(
+        make_project(),
+        make_source_image(),
+        make_reconstruction(JobStatus.SUCCEEDED, output_artifact_id=uuid4()),
+        ProjectLegoModel(artifact_id=lego_artifact_id),
+    )
+
+    async with client_for([overview]) as client:
+        response = await client.get(f"/api/v1/projects/{overview.project.id}")
+
+    assert response.status_code == 200
+    assert response.json()["latestLegoModel"] == {"artifactId": str(lego_artifact_id)}
+
+
+def test_project_overview_query_selects_the_newest_ready_lego_model() -> None:
+    assert """and a.kind = 'lego_model'
+          and a.status = 'ready'
+          and j.type = 'conversion'
+          and j.status = 'succeeded'
+        order by a.created_at desc, a.id desc""" in _PROJECT_OVERVIEW_SELECT
 
 
 @pytest.mark.asyncio

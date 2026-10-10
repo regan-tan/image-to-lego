@@ -11,12 +11,14 @@ from app.repositories.artifacts import ArtifactRepository
 DOWNLOAD_FILE_NAMES_BY_KIND = {
     "source_image": "photo",
     "reconstructed_model": "model",
+    "lego_model": "lego-model",
 }
 FILE_EXTENSIONS_BY_MIME_TYPE = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
     "model/gltf-binary": "glb",
+    "application/json": "json",
 }
 
 

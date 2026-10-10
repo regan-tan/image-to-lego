@@ -1,17 +1,44 @@
 import { Link, useParams } from "react-router-dom";
+import { useCallback, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { getLegoModel } from "../api/client";
 import { useAppLayout } from "../components/appLayoutContext";
 import { BrickProgress } from "../components/BrickProgress";
 import { ArrowLeftIcon } from "../components/Icons";
 import { ProjectPreview } from "../components/ProjectPreview";
+import type { PreviewView } from "../components/ProjectPreview";
 import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { isNotFound, useProject } from "../hooks/useProjects";
+import type { ConversionStatus } from "../schemas/conversions";
+import type { LegoModel } from "../schemas/legoModels";
 
 export function ProjectPage() {
   const { projectId = "" } = useParams();
+
+  return <ProjectPageContent key={projectId} projectId={projectId} />;
+}
+
+function ProjectPageContent({ projectId }: { projectId: string }) {
   const { session } = useAppLayout();
   const project = useProject(session.access_token, session.user.id, projectId);
+  const [conversionStatus, setConversionStatus] = useState<ConversionStatus | null>(null);
+  const [legoModel, setLegoModel] = useState<LegoModel | null>(null);
+  const [previewView, setPreviewView] = useState<PreviewView | null>(null);
+  const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
+  const persistedLegoModel = useQuery({
+    queryKey: ["lego-model", session.user.id, persistedLegoArtifactId],
+    queryFn: ({ signal }) => getLegoModel(session.access_token, persistedLegoArtifactId ?? "", signal),
+    enabled: persistedLegoArtifactId !== null,
+    retry: false,
+  });
+  const handleLegoModelLoaded = useCallback((model: LegoModel) => {
+    setLegoModel(model);
+    setPreviewView("lego");
+  }, []);
+  const currentLegoModel = legoModel ?? persistedLegoModel.data ?? null;
+  const currentPreviewView = previewView ?? (currentLegoModel ? "lego" : "model");
 
   return (
     <div className="page__container">
@@ -45,16 +72,27 @@ export function ProjectPage() {
           <div className="page-heading">
             <div className="page-heading__title-row">
               <h1>{project.data.name}</h1>
-              <StatusBadge status={project.data.status} />
+              <StatusBadge
+                status={project.data.status}
+                conversionStatus={conversionStatus}
+                legoModelReady={currentLegoModel !== null}
+              />
             </div>
           </div>
-          <BrickProgress status={project.data.status} />
+          <BrickProgress
+            status={project.data.status}
+            conversionStatus={conversionStatus}
+            legoModelReady={currentLegoModel !== null}
+          />
           <div className="project-layout">
             <ProjectPreview
               key={`preview-${project.data.id}`}
               project={project.data}
               accessToken={session.access_token}
               userId={session.user.id}
+              legoModel={currentLegoModel}
+              view={currentPreviewView}
+              onViewChange={setPreviewView}
             />
             {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
             <ProjectStatusPanel
@@ -62,6 +100,11 @@ export function ProjectPage() {
               project={project.data}
               accessToken={session.access_token}
               userId={session.user.id}
+              onConversionStatusChange={setConversionStatus}
+              legoModel={currentLegoModel}
+              onLegoModelLoaded={handleLegoModelLoaded}
+              isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
+              hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
             />
           </div>
         </>

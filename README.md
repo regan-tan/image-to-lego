@@ -104,8 +104,11 @@ ready `lego_model` artifact per conversion job only after the canonical Blob is 
 `GET /api/v1/projects` returns every project with a `status`, and
 `GET /api/v1/projects/{projectId}` returns one project with its `sourceImage` (the latest **ready**
 source image, or `null`) and `latestReconstruction` (the latest reconstruction job started from that
-image, or `null`). Both are owner-scoped; another user's project returns the same 404 as a missing
-one. Pending uploads are ignored, and a job for an earlier, replaced photo does not count.
+image, or `null`). Project detail also returns `latestLegoModel` (the artifact ID of the most recently
+created **ready** `lego_model` from a successful conversion, or `null`), so the browser can request a
+separate owner-scoped read URL and rehydrate the persisted result. Both are owner-scoped; another
+user's project returns the same 404 as a missing one. Pending uploads are ignored, and a job for an
+earlier, replaced photo does not count.
 
 | `status` | Meaning |
 | --- | --- |
