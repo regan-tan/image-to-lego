@@ -14,6 +14,8 @@ import {
   type UploadInitiation,
 } from "../schemas/uploads";
 import { reconstructionSchema, type Reconstruction } from "../schemas/reconstructions";
+import { conversionSchema, type Conversion } from "../schemas/conversions";
+import { legoModelSchema, type LegoModel } from "../schemas/legoModels";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
   /\/$/,
@@ -135,6 +137,33 @@ export async function startReconstruction(
     body: JSON.stringify(request),
   });
   return reconstructionSchema.parse(await response.json());
+}
+
+export async function startConversion(
+  accessToken: string,
+  request: { projectId: string; sourceArtifactId: string; targetParts: number; upAxis: "y" },
+  idempotencyKey: string,
+): Promise<Conversion> {
+  const response = await authenticatedRequest("/api/v1/conversions", accessToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(request),
+  });
+  return conversionSchema.parse(await response.json());
+}
+
+export async function getJob(accessToken: string, jobId: string, signal?: AbortSignal): Promise<Conversion> {
+  const response = await authenticatedRequest(`/api/v1/jobs/${encodeURIComponent(jobId)}`, accessToken, { signal });
+  return conversionSchema.parse(await response.json());
+}
+
+export async function getLegoModel(accessToken: string, artifactId: string, signal?: AbortSignal): Promise<LegoModel> {
+  const readUrl = await getArtifactReadUrl(accessToken, artifactId, {}, signal);
+  const response = await fetch(readUrl.url, { signal });
+  if (!response.ok) {
+    throw new Error("LEGO model download failed.");
+  }
+  return legoModelSchema.parse(await response.json());
 }
 
 /** A short-lived, read-only link to one of the user's files in Azure Blob Storage. */

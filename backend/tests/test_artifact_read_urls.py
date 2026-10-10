@@ -129,6 +129,7 @@ async def test_read_url_is_short_lived_for_one_blob_and_never_cached(
     ("kind", "mime_type", "expected_file_name"),
     [
         ("reconstructed_model", "model/gltf-binary", "model.glb"),
+        ("lego_model", "application/json", "lego-model.json"),
         ("source_image", "image/jpeg", "photo.jpg"),
         ("source_image", "image/webp", "photo.webp"),
     ],

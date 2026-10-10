@@ -22,6 +22,9 @@ vi.mock("./lib/supabase", () => ({
 vi.mock("./components/ModelViewer", () => ({
   default: ({ url }: { url: string }) => <div data-testid="model-viewer" data-url={url} />,
 }));
+vi.mock("./components/LegoModelViewer", () => ({
+  default: () => <div data-testid="lego-model-viewer" />,
+}));
 
 const downloadMock = vi.hoisted(() => ({ startBrowserDownload: vi.fn() }));
 vi.mock("./browserDownload", () => downloadMock);
@@ -45,6 +48,9 @@ const READY_SOURCE_IMAGE = {
 };
 
 const MODEL_ARTIFACT_ID = "9a1c0e1e-3a7a-4d6b-9a37-5f0c2f2b7b11";
+const LEGO_ARTIFACT_ID = "1a1c0e1e-3a7a-4d6b-9a37-5f0c2f2b7b12";
+const REPLACEMENT_LEGO_ARTIFACT_ID = "2a1c0e1e-3a7a-4d6b-9a37-5f0c2f2b7b12";
+const REPLACEMENT_JOB_ID = "f8d8397b-2ed7-4b28-a9e1-8124c136347a";
 
 function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   const detail: ProjectDetail = {
@@ -56,6 +62,7 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     updatedAt: "2026-10-08T09:00:00Z",
     sourceImage: null,
     latestReconstruction: null,
+    latestLegoModel: null,
     ...overrides,
   };
   return { ...detail, sourceImageArtifactId: detail.sourceImage?.artifactId ?? null };
@@ -95,18 +102,62 @@ interface FakeApiOptions {
   project?: ProjectDetail | null;
   blobUploadFailures?: number;
   generationStartFailures?: number;
+  conversionResults?: FakeConversionResult[];
+  delayedLegoArtifactId?: string;
+  invalidLegoArtifactId?: string;
+}
+
+interface FakeConversionResult {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "canceled";
+  outputArtifactId?: string;
+  errorMessage?: string;
+}
+
+function legoModelResponse(partCount: number) {
+  return {
+    partCount,
+    dimensions: { widthStuds: 2, depthStuds: 2, heightBricks: 1, widthMm: 16, depthMm: 16, heightMm: 9.6 },
+    metadata: { algorithmVersion: "surface-grid-v1", sourceSha256: "a", targetParts: 300, occupiedCellCount: 4, gridSize: { widthStuds: 2, depthStuds: 2, heightBricks: 1 }, candidateCount: 1, occupancyMode: "surface" },
+    placements: [{ brickType: "brick_2x2", dimensions: { lengthStuds: 2, widthStuds: 2, heightBricks: 1 }, position: { x: 0, y: 0, z: 0 }, orientationDegrees: 0, color: "light_bluish_gray" }],
+  };
 }
 
 /** A tiny in-memory stand-in for the backend that changes state the way the real API does. */
-function installFakeApi({ project = null, blobUploadFailures = 0, generationStartFailures = 0 }: FakeApiOptions = {}) {
+function installFakeApi({
+  project = null,
+  blobUploadFailures = 0,
+  generationStartFailures = 0,
+  conversionResults = [],
+  delayedLegoArtifactId,
+  invalidLegoArtifactId,
+}: FakeApiOptions = {}) {
   let current = project;
   let blobFailuresLeft = blobUploadFailures;
   let generationFailuresLeft = generationStartFailures;
+  let conversionResult: FakeConversionResult = {
+    jobId: JOB_ID,
+    status: "succeeded",
+    outputArtifactId: LEGO_ARTIFACT_ID,
+  };
+  let conversionStarts = 0;
+  let resolveDelayedLegoModel: ((response: Response) => void) | null = null;
   const requests: { method: string; path: string; init?: RequestInit }[] = [];
 
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === readUrlFor(LEGO_ARTIFACT_ID) || url === readUrlFor(REPLACEMENT_LEGO_ARTIFACT_ID)) {
+      if (url === readUrlFor(delayedLegoArtifactId ?? "")) {
+        return new Promise<Response>((resolve) => {
+          resolveDelayedLegoModel = resolve;
+        });
+      }
+      if (url === readUrlFor(invalidLegoArtifactId ?? "")) {
+        return jsonResponse({ partCount: "not a number" });
+      }
+      return jsonResponse(legoModelResponse(url === readUrlFor(LEGO_ARTIFACT_ID) ? 1 : 2));
+    }
     if (url === UPLOAD_URL) {
       requests.push({ method, path: "blob", init });
       if (blobFailuresLeft > 0) {
@@ -171,11 +222,23 @@ function installFakeApi({ project = null, blobUploadFailures = 0, generationStar
       current = { ...current, status: "generating", latestReconstruction: reconstruction("queued") };
       return jsonResponse({ jobId: JOB_ID, projectId: PROJECT_ID, type: "reconstruction", status: "queued" }, 201);
     }
+    if (path === "/api/v1/conversions" && current) {
+      conversionResult = conversionResults[conversionStarts] ?? conversionResult;
+      conversionStarts += 1;
+      return jsonResponse({ projectId: PROJECT_ID, type: "conversion", ...conversionResult }, 201);
+    }
+    if (path === `/api/v1/jobs/${conversionResult.jobId}`) {
+      return jsonResponse({ projectId: PROJECT_ID, type: "conversion", ...conversionResult });
+    }
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
 
   return {
     posts: (path: string) => requests.filter((request) => request.method === "POST" && request.path === path),
+    readUrlRequests: (artifactId: string) => requests.filter(
+      (request) => request.path === `/api/v1/artifacts/${artifactId}/read-url`,
+    ),
+    resolveDelayedLegoModel: () => resolveDelayedLegoModel?.(jsonResponse(legoModelResponse(2))),
   };
 }
 
@@ -194,6 +257,12 @@ function renderApp(route: string) {
 
 function idempotencyKey(init: RequestInit | undefined) {
   return new Headers(init?.headers).get("Idempotency-Key");
+}
+
+function legoSummary() {
+  const summary = screen.getByRole("heading", { name: "Build summary" }).parentElement;
+  if (!summary) throw new Error("LEGO summary is missing its content container.");
+  return summary;
 }
 
 describe("project flows", () => {
@@ -330,8 +399,8 @@ describe("project flows", () => {
     expect(idempotencyKey(api.posts("/api/v1/reconstructions")[0]?.init)).toBeTruthy();
   });
 
-  it("offers LEGO conversion as coming soon once the 3D model is ready", async () => {
-    installFakeApi({
+  it("shows a completed LEGO build in the primary preview and lets the user switch views", async () => {
+    const api = installFakeApi({
       project: projectDetail({
         status: "model_ready",
         sourceImage: READY_SOURCE_IMAGE,
@@ -341,8 +410,169 @@ describe("project flows", () => {
     renderApp(`/projects/${PROJECT_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Your 3D model is ready" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Convert to LEGO/ })).toBeDisabled();
-    expect(screen.getByText("3D model ready", { selector: ".badge" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
+    expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
+    expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "LEGO model" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("LEGO model ready", { selector: ".badge" })).toBeInTheDocument();
+    const progress = screen.getByRole("list", { name: "Progress" });
+    expect(within(progress).getByText("LEGO build").closest("li")).not.toHaveAttribute("aria-current");
+    expect(within(progress).getByText("LEGO build")).toHaveTextContent("completed");
+
+    fireEvent.click(screen.getByRole("button", { name: "3D model" }));
+    expect(await screen.findByTestId("model-viewer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Photo" }));
+    expect(await screen.findByRole("img", { name: "Photo of Castle" })).toBeInTheDocument();
+
+    const conversion = api.posts("/api/v1/conversions")[0];
+    expect(JSON.parse(String(conversion?.init?.body))).toEqual({ projectId: PROJECT_ID, sourceArtifactId: MODEL_ARTIFACT_ID, targetParts: 300, upAxis: "y" });
+    expect(idempotencyKey(conversion?.init)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
+    await waitFor(() => expect(api.posts("/api/v1/conversions")).toHaveLength(2));
+    expect(idempotencyKey(api.posts("/api/v1/conversions")[1]?.init)).not.toBe(idempotencyKey(conversion?.init));
+  });
+
+  it("does not show a LEGO result or start conversion for an existing project without one", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    await screen.findByRole("heading", { name: "Your 3D model is ready" });
+
+    expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Build summary" })).not.toBeInTheDocument();
+    expect(api.posts("/api/v1/conversions")).toHaveLength(0);
+  });
+
+  it("rehydrates a saved LEGO model without starting a conversion", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+        latestLegoModel: { artifactId: LEGO_ARTIFACT_ID },
+      }),
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
+    expect(api.readUrlRequests(LEGO_ARTIFACT_ID)).toHaveLength(1);
+    expect(api.posts("/api/v1/conversions")).toHaveLength(0);
+    expect(screen.getByText("LEGO model ready", { selector: ".badge" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "LEGO model" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
+    expect(legoSummary()).toHaveTextContent("1 parts");
+    expect(legoSummary()).toHaveTextContent("2 × 2 studs");
+    const progress = screen.getByRole("list", { name: "Progress" });
+    expect(within(progress).getByText("LEGO build")).toHaveTextContent("completed");
+  });
+
+  it("keeps the 3D project usable when a saved LEGO model is invalid", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+        latestLegoModel: { artifactId: LEGO_ARTIFACT_ID },
+      }),
+      invalidLegoArtifactId: LEGO_ARTIFACT_ID,
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldnâ€™t load the saved LEGO model");
+    expect(await screen.findByTestId("model-viewer")).toHaveAttribute("data-url", readUrlFor(MODEL_ARTIFACT_ID));
+    expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
+    await waitFor(() => expect(api.posts("/api/v1/conversions")).toHaveLength(1));
+  });
+
+  it("keeps the last LEGO model visible while a replacement conversion is running", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+      conversionResults: [
+        { jobId: JOB_ID, status: "succeeded", outputArtifactId: LEGO_ARTIFACT_ID },
+        { jobId: REPLACEMENT_JOB_ID, status: "running" },
+      ],
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Convert to LEGO" }));
+    await screen.findByRole("heading", { name: "Build summary" });
+    expect(legoSummary()).toHaveTextContent("1 parts");
+    const firstAttempt = api.posts("/api/v1/conversions")[0];
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
+
+    expect(await screen.findByText("Creating a replacement LEGO model. Your current model stays available.")).toBeInTheDocument();
+    expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
+    expect(legoSummary()).toHaveTextContent("1 parts");
+    expect(idempotencyKey(api.posts("/api/v1/conversions")[1]?.init)).not.toBe(idempotencyKey(firstAttempt?.init));
+  });
+
+  it("preserves the last LEGO model when a replacement conversion fails", async () => {
+    installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+      conversionResults: [
+        { jobId: JOB_ID, status: "succeeded", outputArtifactId: LEGO_ARTIFACT_ID },
+        { jobId: REPLACEMENT_JOB_ID, status: "failed", errorMessage: "The replacement could not be built." },
+      ],
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Convert to LEGO" }));
+    await screen.findByRole("heading", { name: "Build summary" });
+    expect(legoSummary()).toHaveTextContent("1 parts");
+    fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The replacement could not be built.");
+    expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
+    expect(legoSummary()).toHaveTextContent("1 parts");
+  });
+
+  it("replaces the LEGO model only after the replacement artifact loads", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+      conversionResults: [
+        { jobId: JOB_ID, status: "succeeded", outputArtifactId: LEGO_ARTIFACT_ID },
+        { jobId: REPLACEMENT_JOB_ID, status: "succeeded", outputArtifactId: REPLACEMENT_LEGO_ARTIFACT_ID },
+      ],
+      delayedLegoArtifactId: REPLACEMENT_LEGO_ARTIFACT_ID,
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Convert to LEGO" }));
+    await screen.findByRole("heading", { name: "Build summary" });
+    expect(legoSummary()).toHaveTextContent("1 parts");
+    fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
+
+    expect(await screen.findByText("Loading LEGO model...")).toBeInTheDocument();
+    expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
+    expect(legoSummary()).toHaveTextContent("1 parts");
+
+    api.resolveDelayedLegoModel();
+
+    await waitFor(() => expect(legoSummary()).toHaveTextContent("2 parts"));
+    expect(screen.getByRole("button", { name: "LEGO model" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows the uploaded photo through a short-lived read link", async () => {
@@ -374,6 +604,7 @@ describe("project flows", () => {
 
     expect(await screen.findByTestId("model-viewer")).toHaveAttribute("data-url", readUrlFor(MODEL_ARTIFACT_ID));
     expect(screen.getByRole("button", { name: "3D model" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Photo" }));
 

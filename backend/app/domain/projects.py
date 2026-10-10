@@ -47,10 +47,18 @@ class ProjectReconstruction:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectLegoModel:
+    """The most recently created ready LEGO model produced by a successful conversion."""
+
+    artifact_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectOverview:
     project: Project
     source_image: ProjectSourceImage | None
     reconstruction: ProjectReconstruction | None
+    latest_lego_model: ProjectLegoModel | None = None
 
     @property
     def status(self) -> ProjectStatus:

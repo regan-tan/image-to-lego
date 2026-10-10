@@ -10,6 +10,7 @@ from app.core.database import set_database_owner
 from app.domain.jobs import JobStatus
 from app.domain.projects import (
     Project,
+    ProjectLegoModel,
     ProjectOverview,
     ProjectReconstruction,
     ProjectSourceImage,
@@ -31,7 +32,8 @@ _PROJECT_OVERVIEW_SELECT = """
         reconstruction.error_code as reconstruction_error_code,
         reconstruction.error_message as reconstruction_error_message,
         reconstruction.created_at as reconstruction_created_at,
-        reconstruction.updated_at as reconstruction_updated_at
+        reconstruction.updated_at as reconstruction_updated_at,
+        lego_model.id as lego_model_id
     from public.projects p
     left join lateral (
         select a.id, a.mime_type, a.size_bytes, a.created_at
@@ -56,6 +58,18 @@ _PROJECT_OVERVIEW_SELECT = """
         order by j.created_at desc, j.id desc
         limit 1
     ) reconstruction on true
+    left join lateral (
+        select a.id
+        from public.artifacts a
+        join public.jobs j on j.id = a.producer_job_id
+        where a.project_id = p.id
+          and a.kind = 'lego_model'
+          and a.status = 'ready'
+          and j.type = 'conversion'
+          and j.status = 'succeeded'
+        order by a.created_at desc, a.id desc
+        limit 1
+    ) lego_model on true
 """
 
 
@@ -155,8 +169,12 @@ def _overview_from_row(row: RowMapping) -> ProjectOverview:
             created_at=cast(datetime, row["reconstruction_created_at"]),
             updated_at=cast(datetime, row["reconstruction_updated_at"]),
         )
+    latest_lego_model = None
+    if row["lego_model_id"] is not None:
+        latest_lego_model = ProjectLegoModel(artifact_id=cast(UUID, row["lego_model_id"]))
     return ProjectOverview(
         project=_project_from_row(row),
         source_image=source_image,
         reconstruction=reconstruction,
+        latest_lego_model=latest_lego_model,
     )
