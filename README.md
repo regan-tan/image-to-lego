@@ -54,6 +54,30 @@ The future request flow is:
 
 See [Architecture](docs/architecture/README.md) for the component diagram and boundary details.
 
+## Deployment status and plan
+
+Cloud deployment is proposed but not implemented yet. The target is one low-cost development
+environment: Azure Static Web Apps hosts the React/Vite frontend, while one immutable backend image
+is deployed as three independently scaled Azure Container Apps for the FastAPI API, generation
+worker, and conversion worker. Azure Service Bus provides the two durable job queues; ACR stores the
+image; Blob Storage stores private artifacts; Key Vault supplies runtime secrets; and Azure Monitor
+collects operational logs and metrics. Supabase Free remains the managed PostgreSQL and Auth service.
+
+The API has public managed HTTPS ingress because the browser calls it directly. Both workers have no
+ingress and scale from their own queue depth. Container Apps provides API replica load distribution,
+so this environment does not need a separate load balancer. The proposed GitHub Actions release flow
+builds the backend image once, deploys the same git-SHA image to all three apps, deploys the frontend,
+and runs smoke tests after the existing CI checks pass.
+
+Infrastructure-as-code, a second environment, automated external database backups, and paid
+high-availability services are intentionally deferred. Supabase Free inactivity pauses, temporary
+downtime, and manual recovery are accepted capstone limitations; external logical backups are a
+documented production-readiness proposal rather than an implemented feature.
+
+See the [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md) for resource sizing,
+scaling, ingress, security, resilience, monitoring, cost controls, release steps, and acceptance
+checks.
+
 ## Implemented source-image upload flow
 
 The API accepts metadata only; image bytes never pass through FastAPI.
@@ -166,7 +190,7 @@ frontend/             React, TypeScript, Vite application and tests
 supabase/             Local Supabase configuration and SQL migrations
 docs/architecture/    System architecture documentation
 docs/decisions/       Architecture decision records (ADRs)
-docs/deployment/      Future Azure CI/CD plan
+docs/deployment/      Proposed Azure deployment and CI/CD plan
 docs/testing/         Test strategy and isolation rules
 infra/                Reserved documentation boundary for reviewed IaC
 .github/workflows/    Continuous integration
@@ -356,7 +380,7 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 - [ADR-004: Azure cloud platform](docs/decisions/ADR-004-azure-cloud.md)
 - [ADR-005: Azure Blob Storage](docs/decisions/ADR-005-azure-blob-storage.md)
 - [ADR-006: Modular monolith](docs/decisions/ADR-006-modular-monolith.md)
-- [Future Azure CI/CD plan](docs/deployment/azure-cicd-plan.md)
+- [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md)
 - [Testing strategy](docs/testing/README.md)
 
 ## License
