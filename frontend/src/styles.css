@@ -1013,6 +1013,16 @@ h1 {
   text-align: left;
 }
 
+.color-swatch {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-right: 0.45rem;
+  vertical-align: -0.1rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+}
+
 .parts-list__table th {
   color: var(--color-text-muted);
   background: var(--color-surface-raised);

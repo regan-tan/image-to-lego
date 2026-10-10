@@ -1,4 +1,5 @@
 import type { LegoModel } from "./schemas/legoModels";
+import { legoColorLabel } from "./legoColors";
 
 export interface LegoPartGroup {
   brickType: string;
@@ -45,7 +46,7 @@ export function partLabel(part: LegoPartGroup): string {
 }
 
 export function colorLabel(color: string): string {
-  return color.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return legoColorLabel(color);
 }
 
 export function serializePartsListCsv(parts: LegoPartGroup[]): string {

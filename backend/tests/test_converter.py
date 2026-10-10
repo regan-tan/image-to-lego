@@ -1,5 +1,6 @@
 import pytest
 import trimesh
+from PIL import Image
 
 import app.conversion.core as converter_core
 from app.conversion.core import (
@@ -59,10 +60,112 @@ def all_placement_cells(placements: tuple[BrickPlacement, ...]) -> set[GridPosit
     return cells
 
 
+def placement_geometry(
+    placements: tuple[BrickPlacement, ...],
+) -> list[tuple[object, GridPosition, int]]:
+    return [
+        (placement.brick_type, placement.position, placement.orientation_degrees)
+        for placement in placements
+    ]
+
+
 def test_conversion_is_deterministic() -> None:
     glb_bytes = box_glb()
     settings = ConversionSettings(target_parts=24)
     assert convert_glb(glb_bytes, settings) == convert_glb(glb_bytes, settings)
+
+
+def test_source_vertex_colors_change_only_placement_colors() -> None:
+    mesh = trimesh.creation.box(extents=(4.0, 3.0, 2.0))
+    mesh.visual.vertex_colors = [
+        (201, 26, 9, 255) if vertex[0] < 0 else (0, 85, 191, 255) for vertex in mesh.vertices
+    ]
+    settings = ConversionSettings(target_parts=24)
+
+    neutral = convert_glb(box_glb(), settings)
+    colored = convert_glb(glb_from_mesh(mesh), settings)
+
+    assert placement_geometry(colored.placements) == placement_geometry(neutral.placements)
+    assert len({placement.color for placement in colored.placements}) > 1
+
+
+def test_texture_uv_colors_preserve_geometry_and_are_deterministic() -> None:
+    left = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    left.apply_translation((-1.5, 0.0, 0.0))
+    right = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    right.apply_translation((1.5, 0.0, 0.0))
+    mesh = trimesh.util.concatenate((left, right))
+    neutral_glb = glb_from_mesh(mesh)
+
+    texture = Image.new("RGB", (2, 1))
+    texture.putdata([(201, 26, 9), (0, 85, 191)])
+    uv = [(0.1 if vertex[0] < 0 else 0.9, 0.5) for vertex in mesh.vertices]
+    material = trimesh.visual.material.PBRMaterial(  # type: ignore[no-untyped-call]
+        baseColorTexture=texture,
+        baseColorFactor=(1.0, 1.0, 1.0, 1.0),
+    )
+    mesh.visual = trimesh.visual.texture.TextureVisuals(  # type: ignore[no-untyped-call]
+        uv=uv, material=material
+    )
+    textured_glb = glb_from_mesh(mesh)
+    settings = ConversionSettings(target_parts=24)
+
+    neutral = convert_glb(neutral_glb, settings)
+    first = convert_glb(textured_glb, settings)
+    second = convert_glb(textured_glb, settings)
+
+    assert placement_geometry(first.placements) == placement_geometry(neutral.placements)
+    assert {placement.color for placement in first.placements} == {"red", "blue"}
+    assert first == second
+
+
+def test_material_only_color_is_used_when_no_texture_or_vertex_colors_exist() -> None:
+    mesh = trimesh.creation.box(extents=(4.0, 3.0, 2.0))
+    material = trimesh.visual.material.PBRMaterial(  # type: ignore[no-untyped-call]
+        baseColorFactor=(201, 26, 9, 255)
+    )
+    mesh.visual = trimesh.visual.texture.TextureVisuals(  # type: ignore[no-untyped-call]
+        uv=[(0.0, 0.0)] * len(mesh.vertices),
+        material=material,
+    )
+
+    model = convert_glb(glb_from_mesh(mesh), ConversionSettings(target_parts=24))
+
+    assert {placement.color for placement in model.placements} == {"red"}
+
+
+def test_face_colors_are_extracted_without_vertex_color_conversion() -> None:
+    mesh = trimesh.creation.box(extents=(4.0, 3.0, 2.0))
+    mesh.visual.face_colors = [
+        (201, 26, 9, 255) if center[0] < 0 else (0, 85, 191, 255)
+        for center in mesh.triangles_center
+    ]
+
+    colors, source = converter_core._face_colors(mesh, len(mesh.faces))
+
+    assert source == "vertex/face"
+    assert set(colors) == {(201, 26, 9), (0, 85, 191)}
+
+
+def test_unusable_texture_uv_falls_back_without_changing_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = ConversionSettings(target_parts=24)
+    neutral = convert_glb(box_glb(), settings)
+    mesh = trimesh.creation.box(extents=(4.0, 3.0, 2.0))
+    texture = Image.new("RGB", (1, 1), (201, 26, 9))
+    mesh.visual = trimesh.visual.texture.TextureVisuals(  # type: ignore[no-untyped-call]
+        uv=[(0.0, 0.0)],
+        material=trimesh.visual.material.PBRMaterial(  # type: ignore[no-untyped-call]
+            baseColorTexture=texture
+        ),
+    )
+    monkeypatch.setattr(converter_core, "_load_mesh", lambda _: mesh)
+
+    converted = convert_glb(box_glb(), settings)
+
+    assert placement_geometry(converted.placements) == placement_geometry(neutral.placements)
+    assert {placement.color for placement in converted.placements} == {"light_bluish_gray"}
 
 
 def test_placements_have_no_overlap_and_exactly_cover_reported_surface_cells() -> None:
@@ -79,11 +182,7 @@ def test_only_supported_bricks_and_orientations_are_emitted() -> None:
 
 
 def test_packing_uses_largest_supported_brick_first() -> None:
-    occupied_cells = {
-        GridPosition(x, y, 0)
-        for y in range(2)
-        for x in range(4)
-    }
+    occupied_cells = {GridPosition(x, y, 0) for y in range(2) for x in range(4)}
     placements = pack_occupied_cells(occupied_cells)
     assert len(placements) == 1
     assert placements[0].brick_type.name == "brick_2x4"
@@ -102,8 +201,7 @@ def test_target_parts_selects_a_different_resolution_and_approximately_changes_p
 def test_larger_targets_select_monotonically_finer_grid_resolutions() -> None:
     glb_bytes = box_glb()
     models = [
-        convert_glb(glb_bytes, ConversionSettings(target_parts=target))
-        for target in (80, 200, 400)
+        convert_glb(glb_bytes, ConversionSettings(target_parts=target)) for target in (80, 200, 400)
     ]
     grid_cell_counts = [model.metadata.grid_size.cell_count for model in models]
     part_counts = [model.part_count for model in models]

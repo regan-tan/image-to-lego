@@ -2,6 +2,7 @@ import { Bounds, OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 
 import { placementRenderGeometry } from "../legoRenderGeometry";
+import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
 
 export default function LegoModelViewer({ model }: { model: LegoModel }) {
@@ -16,7 +17,7 @@ export default function LegoModelViewer({ model }: { model: LegoModel }) {
             return (
               <mesh key={`${placement.brickType}-${index}`} position={brick.center} castShadow receiveShadow>
                 <boxGeometry args={brick.size} />
-                <meshStandardMaterial color="#a0a5a9" roughness={0.72} />
+                <meshStandardMaterial color={legoColorHex(placement.color)} roughness={0.72} />
               </mesh>
             );
           })}

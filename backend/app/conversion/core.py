@@ -1,19 +1,30 @@
-"""Deterministic, geometry-only conversion from a GLB mesh to LEGO brick placements."""
+"""Deterministic GLB-to-LEGO conversion with geometry-preserving color mapping."""
 
 from __future__ import annotations
 
-from collections.abc import Collection
+import logging
+from collections import defaultdict
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 from io import BytesIO
 from math import isfinite, prod
-from typing import cast
+from typing import Any, cast
 
 import trimesh
 
-ALGORITHM_VERSION = "surface-grid-v1"
-DEFAULT_COLOR = "light_bluish_gray"
+from app.conversion.colors import (
+    DEFAULT_COLOR,
+    apply_base_color_factor,
+    most_common_palette_color,
+    nearest_palette_color,
+    normalize_rgb,
+)
+
+logger = logging.getLogger(__name__)
+
+ALGORITHM_VERSION = "surface-grid-v2"
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
 BRICK_HEIGHT_MM = 9.6
@@ -128,7 +139,11 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     if len(glb_bytes) > MAX_INPUT_BYTES:
         raise ConversionError("GLB input exceeds the configured size limit.")
 
-    vertices, faces = _load_triangles(glb_bytes)
+    mesh = _load_mesh(glb_bytes)
+    vertices = [
+        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
+    ]
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
     normalized_vertices = _normalize_vertices(vertices, settings.up_axis)
 
     best: tuple[int, int, tuple[BrickPlacement, ...], GridSize, int] | None = None
@@ -170,6 +185,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         raise ConversionError("Target parts would exceed the configured grid safety limit.")
 
     _, _, placements, grid_size, occupied_cell_count = best
+    placements = _color_placements(placements, normalized_vertices, faces, mesh, grid_size)
     dimensions = _model_dimensions(placements)
     metadata = AlgorithmMetadata(
         algorithm_version=ALGORITHM_VERSION,
@@ -220,9 +236,7 @@ def _validate_settings(settings: ConversionSettings) -> None:
         raise ConversionError("Target parts exceeds the configured safety limit.")
 
 
-def _load_triangles(
-    glb_bytes: bytes,
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+def _load_mesh(glb_bytes: bytes) -> trimesh.Trimesh:
     try:
         scene = cast(
             trimesh.Scene,
@@ -235,10 +249,8 @@ def _load_triangles(
     if not isinstance(mesh, trimesh.Trimesh) or mesh.is_empty:
         raise ConversionError("GLB does not contain a mesh.")
 
-    vertices = [
-        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
-    ]
-    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
+    vertices = mesh.vertices.tolist()
+    faces = mesh.faces.tolist()
     if not faces:
         raise ConversionError("GLB does not contain any triangles.")
     if len(faces) > MAX_TRIANGLE_COUNT:
@@ -248,7 +260,182 @@ def _load_triangles(
     if any(len(face) != 3 for face in faces):
         raise ConversionError("GLB contains a non-triangle face.")
 
-    return vertices, faces
+    return mesh
+
+
+def _color_placements(
+    placements: tuple[BrickPlacement, ...],
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int]],
+    mesh: trimesh.Trimesh,
+    grid_size: GridSize,
+) -> tuple[BrickPlacement, ...]:
+    face_colors, color_source = _face_colors(mesh, len(faces))
+    if not any(face_colors):
+        _log_color_samples("fallback", 0, len(placements))
+        return placements
+
+    cell_colors: dict[GridPosition, list[str]] = defaultdict(list)
+    all_colors: list[str] = []
+    maximum = (
+        max(vertex[0] for vertex in vertices),
+        max(vertex[1] for vertex in vertices),
+        max(vertex[2] for vertex in vertices),
+    )
+    for face, rgb in zip(faces, face_colors, strict=True):
+        if rgb is None:
+            continue
+        color = nearest_palette_color(rgb)
+        all_colors.append(color)
+        triangle = [vertices[index] for index in face]
+        centroid = (
+            sum(vertex[0] for vertex in triangle) / 3,
+            sum(vertex[1] for vertex in triangle) / 3,
+            sum(vertex[2] for vertex in triangle) / 3,
+        )
+        samples = [*triangle, centroid]
+        for sample in samples:
+            cell_colors[_point_to_grid_cell(sample, maximum, grid_size)].append(color)
+
+    fallback = most_common_palette_color(all_colors) if all_colors else DEFAULT_COLOR
+    colored: list[BrickPlacement] = []
+    fallback_count = 0
+    for placement in placements:
+        colors = [
+            color for cell in _placement_cells(placement) for color in cell_colors.get(cell, [])
+        ]
+        if colors:
+            color = most_common_palette_color(colors)
+        else:
+            color = fallback
+            fallback_count += 1
+        colored.append(
+            BrickPlacement(
+                brick_type=placement.brick_type,
+                position=placement.position,
+                orientation_degrees=placement.orientation_degrees,
+                color=color,
+            )
+        )
+    _log_color_samples(color_source, len(all_colors), fallback_count)
+    return tuple(colored)
+
+
+def _point_to_grid_cell(
+    point: tuple[float, float, float], maximum: tuple[float, float, float], grid_size: GridSize
+) -> GridPosition:
+    scales = (grid_size.width_studs - 1, grid_size.depth_studs - 1, grid_size.height_bricks - 1)
+    coordinates = [round(point[index] / maximum[index] * scales[index]) for index in range(3)]
+    return GridPosition(*coordinates)
+
+
+def _face_colors(
+    mesh: trimesh.Trimesh, face_count: int
+) -> tuple[list[tuple[int, int, int] | None], str]:
+    """Extract visual data without allowing malformed visuals to affect geometry conversion."""
+    visual = cast(Any, mesh.visual)
+
+    try:
+        texture_colors = _texture_face_colors(mesh, visual)
+        if any(texture_colors):
+            return texture_colors, "texture"
+    except (AttributeError, IndexError, TypeError, ValueError):
+        logger.debug("Texture color extraction failed; trying other visual data.", exc_info=True)
+
+    if bool(getattr(visual, "defined", False)):
+        try:
+            face_colors = _normalized_colors(getattr(visual, "face_colors", None))
+            if getattr(visual, "kind", None) == "face" and len(face_colors) == face_count:
+                return face_colors, "vertex/face"
+
+            vertex_colors = _normalized_colors(getattr(visual, "vertex_colors", None))
+            if len(vertex_colors) == len(mesh.vertices):
+                colors = [
+                    _average_rgb([vertex_colors[index] for index in face])
+                    for face in mesh.faces.tolist()
+                ]
+                if any(colors):
+                    return colors, "vertex/face"
+            if len(face_colors) == face_count and any(face_colors):
+                return face_colors, "vertex/face"
+        except (AttributeError, IndexError, TypeError, ValueError):
+            logger.debug(
+                "Vertex/face color extraction failed; trying material data.", exc_info=True
+            )
+
+    try:
+        material_colors = _material_face_colors(visual, face_count)
+        if any(material_colors):
+            return material_colors, "material"
+    except (AttributeError, TypeError, ValueError):
+        logger.debug("Material color extraction failed; using the neutral fallback.", exc_info=True)
+    return [None] * face_count, "fallback"
+
+
+def _texture_face_colors(
+    mesh: trimesh.Trimesh, visual: object
+) -> list[tuple[int, int, int] | None]:
+    if getattr(visual, "kind", None) != "texture":
+        return []
+
+    uv = getattr(visual, "uv", None)
+    material = getattr(visual, "material", None)
+    image = getattr(material, "baseColorTexture", None)
+    if image is None:
+        image = getattr(material, "image", None)
+    if uv is None or image is None or not hasattr(material, "to_color"):
+        return []
+    if len(uv) != len(mesh.vertices):
+        return []
+
+    face_uv = uv[mesh.faces].mean(axis=1)
+    sampled = cast(Any, material).to_color(face_uv)
+    if sampled is None or not hasattr(sampled, "tolist"):
+        return []
+
+    factor = getattr(material, "baseColorFactor", None)
+    if factor is None:
+        return _normalized_colors(sampled)
+    return [
+        apply_base_color_factor(color, cast(Sequence[object], factor)) for color in sampled.tolist()
+    ]
+
+
+def _material_face_colors(visual: object, face_count: int) -> list[tuple[int, int, int] | None]:
+    material = getattr(visual, "material", None)
+    for name in ("baseColorFactor", "diffuse"):
+        value = getattr(material, name, None)
+        if value is not None:
+            color = normalize_rgb(cast(Sequence[object], value))
+            if color is not None:
+                return [color] * face_count
+    return [None] * face_count
+
+
+def _normalized_colors(colors: object) -> list[tuple[int, int, int] | None]:
+    if colors is None or not hasattr(colors, "tolist"):
+        return []
+    return [normalize_rgb(cast(Sequence[object], color)) for color in colors.tolist()]
+
+
+def _average_rgb(colors: Sequence[tuple[int, int, int] | None]) -> tuple[int, int, int] | None:
+    usable = [color for color in colors if color is not None]
+    if not usable:
+        return None
+    return tuple(round(sum(color[index] for color in usable) / len(usable)) for index in range(3))  # type: ignore[return-value]
+
+
+def _log_color_samples(color_source: str, source_count: int, fallback_count: int) -> None:
+    counts = {"texture": 0, "vertex/face": 0, "material": 0}
+    if color_source in counts:
+        counts[color_source] = source_count
+    logger.debug(
+        "Conversion color samples: texture=%d vertex/face=%d material=%d fallback=%d",
+        counts["texture"],
+        counts["vertex/face"],
+        counts["material"],
+        fallback_count,
+    )
 
 
 def _normalize_vertices(
@@ -345,9 +532,7 @@ def _surface_cells(
     return cells
 
 
-def _first_fitting_brick(
-    position: GridPosition, remaining: set[GridPosition]
-) -> BrickPlacement:
+def _first_fitting_brick(position: GridPosition, remaining: set[GridPosition]) -> BrickPlacement:
     for brick_type in BRICK_CATALOGUE:
         orientations = (
             (0,)

@@ -31,10 +31,10 @@ the actual source Blob bytes before paid submission, copies the completed GLB in
 Azure Blob Storage, and records a ready `reconstructed_model` artifact. The browser polls the job
 while it is queued or running.
 
-The pure deterministic GLB-to-LEGO converter core is implemented. It produces a single-color,
-surface-only brick model using a bounded grid-resolution search and a fixed rectangular-brick
-catalogue. The backend conversion slice is also implemented: an owner can start an idempotent
-conversion of a ready reconstructed model, and a separate worker stores one canonical JSON LEGO
+The pure deterministic GLB-to-LEGO converter core is implemented. It produces a fixed-palette,
+surface-only brick model using source GLB visual data, a bounded grid-resolution search, and a fixed
+rectangular-brick catalogue. The backend conversion slice is also implemented: an owner can start
+an idempotent conversion of a ready reconstructed model, and a separate worker stores one canonical JSON LEGO
 model artifact. The frontend conversion journey, LEGO renderer, instructions, and production
 deployment remain **not implemented yet**. No Supabase Storage is used; Azure Blob Storage is the
 artifact store.
