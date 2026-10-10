@@ -6,6 +6,14 @@ import { getArtifactReadUrl, getJob, getLegoModel, startConversion, startReconst
 import { startBrowserDownload } from "../browserDownload";
 import { conversionPollInterval } from "../conversionPolling";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
+import {
+  BUILD_COMPLEXITY_PRESETS,
+  DEFAULT_BUILD_COMPLEXITY,
+  buildComplexityForTargetParts,
+  buildComplexityLabel,
+  targetPartsForBuildComplexity,
+  type BuildComplexity,
+} from "../legoBuildComplexity";
 import type { LegoPartsListResult } from "../legoPartsList";
 import type { Conversion, ConversionStatus } from "../schemas/conversions";
 import type { LegoModel } from "../schemas/legoModels";
@@ -41,11 +49,17 @@ interface ProjectStatusPanelProps {
   isRehydratingLegoModel: boolean;
   hasPersistedLegoModelError: boolean;
   onViewFullPartsList: () => void;
+  buildComplexity: BuildComplexity;
+  onBuildComplexityChange: (complexity: BuildComplexity) => void;
 }
 
 interface GenerationRequest {
   sourceArtifactId: string;
   idempotencyKey: string;
+}
+
+interface ConversionAttempt extends GenerationRequest {
+  targetParts: number;
 }
 
 /** The project page's side panel: explains the current state and offers the one next action. */
@@ -60,12 +74,15 @@ export function ProjectStatusPanel({
   isRehydratingLegoModel,
   hasPersistedLegoModelError,
   onViewFullPartsList,
+  buildComplexity,
+  onBuildComplexityChange,
 }: ProjectStatusPanelProps) {
   const queryClient = useQueryClient();
   const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
   const generationAttempt = useRef<{ scope: string; key: string } | null>(null);
-  const conversionAttempt = useRef<{ sourceArtifactId: string; key: string } | null>(null);
+  const conversionAttempt = useRef<ConversionAttempt | null>(null);
   const [conversionJob, setConversionJob] = useState<Conversion | null>(null);
+  const complexityHelpId = useId();
 
   async function refreshProject() {
     await Promise.all([
@@ -100,9 +117,9 @@ export function ProjectStatusPanel({
     onConversionStatusChange(activeConversion?.status ?? null);
   }, [activeConversion?.status, onConversionStatusChange]);
   const conversion = useMutation({
-    mutationFn: ({ sourceArtifactId, idempotencyKey }: GenerationRequest) => startConversion(
+    mutationFn: ({ sourceArtifactId, targetParts, idempotencyKey }: ConversionAttempt) => startConversion(
       accessToken,
-      { projectId: project.id, sourceArtifactId, targetParts: 300, upAxis: "y" },
+      { projectId: project.id, sourceArtifactId, targetParts, upAxis: "y" },
       idempotencyKey,
     ),
     onSuccess: setConversionJob,
@@ -129,18 +146,28 @@ export function ProjectStatusPanel({
   function handleConvert() {
     const sourceArtifactId = project.latestReconstruction?.outputArtifactId;
     if (!sourceArtifactId || conversion.isPending) return;
-    if (
+    const isRetryingSameRequest = conversion.isError
+      && conversionAttempt.current?.sourceArtifactId === sourceArtifactId;
+    if (!isRetryingSameRequest && (
       activeConversion?.status === "failed"
       || activeConversion?.status === "canceled"
       || activeConversion?.status === "succeeded"
-    ) {
+    )) {
       conversionAttempt.current = null;
       setConversionJob(null);
     }
     if (conversionAttempt.current?.sourceArtifactId !== sourceArtifactId) {
-      conversionAttempt.current = { sourceArtifactId, key: crypto.randomUUID() };
+      conversionAttempt.current = {
+        sourceArtifactId,
+        targetParts: targetPartsForBuildComplexity(buildComplexity),
+        idempotencyKey: crypto.randomUUID(),
+      };
+    } else if (isRetryingSameRequest) {
+      onBuildComplexityChange(
+        buildComplexityForTargetParts(conversionAttempt.current.targetParts) ?? DEFAULT_BUILD_COMPLEXITY,
+      );
     }
-    conversion.mutate({ sourceArtifactId, idempotencyKey: conversionAttempt.current.key });
+    conversion.mutate(conversionAttempt.current);
   }
 
   if (project.status === "needs_photo" || isReplacingPhoto) {
@@ -171,9 +198,15 @@ export function ProjectStatusPanel({
   const generationStartError = generation.isError ? (
     <p className="form-error" role="alert">We could not start generating. Please try again.</p>
   ) : null;
+  const conversionIsRunning = conversion.isPending
+    || activeConversion?.status === "queued"
+    || activeConversion?.status === "running";
+  const activeBuildLabel = conversion.variables
+    ? buildComplexityLabel(conversion.variables.targetParts)
+    : undefined;
 
   return (
-    <aside className="side-panel" aria-labelledby="panel-title">
+    <aside className={`side-panel${legoModel ? " side-panel--completed" : ""}`} aria-labelledby="panel-title">
       {project.status === "photo_ready" ? (
         <>
           <PanelIntro
@@ -244,18 +277,26 @@ export function ProjectStatusPanel({
               ? "Explore the LEGO model, review its parts list, or convert it again."
               : "Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."}
           />
+          {legoModel ? <LegoSummary model={legoModel} /> : null}
+          <BuildComplexitySelector
+            value={buildComplexity}
+            onChange={onBuildComplexityChange}
+            disabled={conversionIsRunning || isRehydratingLegoModel}
+            helpId={complexityHelpId}
+            compact={legoModel !== null}
+          />
           <div className="side-panel__actions">
             <button
               type="button"
-              className={`button ${activeConversion?.status === "succeeded" ? "button--secondary" : "button--large"}`}
+              className="button button--large"
               onClick={handleConvert}
-              disabled={!modelArtifactId || isRehydratingLegoModel || conversion.isPending || activeConversion?.status === "queued" || activeConversion?.status === "running"}
+              disabled={!modelArtifactId || isRehydratingLegoModel || conversionIsRunning}
             >
               <BrickIcon />
               {conversion.isPending || activeConversion?.status === "queued" ? "Starting conversion..." : null}
               {activeConversion?.status === "running" ? "Converting to LEGO..." : null}
               {!conversion.isPending && activeConversion?.status !== "queued" && activeConversion?.status !== "running"
-                ? activeConversion?.status === "succeeded" ? "Convert again" : "Convert to LEGO"
+                ? legoModel ? "Convert again" : "Convert to LEGO"
                 : null}
             </button>
             {modelArtifactId ? (
@@ -280,12 +321,12 @@ export function ProjectStatusPanel({
           {hasPersistedLegoModelError ? (
             <p className="form-error" role="alert">We couldn't load the saved LEGO model. You can convert it again.</p>
           ) : null}
-          {activeConversion?.status === "queued" || activeConversion?.status === "running" ? (
+          {conversionIsRunning ? (
             <p className="status status--pending" role="status">
               <SpinnerIcon size={16} />
               {legoModel
-                ? "Creating a replacement LEGO model. Your current model stays available."
-                : "Converting your 3D model to LEGO..."}
+                ? `Creating a${activeBuildLabel ? ` ${activeBuildLabel}` : " replacement"} LEGO build. Your current model stays available.`
+                : `Creating a${activeBuildLabel ? ` ${activeBuildLabel}` : ""} LEGO build...`}
             </p>
           ) : null}
           {activeConversion?.status === "failed" || activeConversion?.status === "canceled" ? (
@@ -302,7 +343,9 @@ export function ProjectStatusPanel({
               onLoaded={onLegoModelLoaded}
             />
           ) : null}
-          {legoModel ? <LegoSummary model={legoModel} partsList={partsList} onViewFullPartsList={onViewFullPartsList} /> : null}
+          {legoModel && partsList ? (
+            <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} />
+          ) : null}
         </>
       ) : null}
 
@@ -373,17 +416,56 @@ function LegoResult({
   return null;
 }
 
-function LegoSummary({ model, partsList, onViewFullPartsList }: { model: LegoModel; partsList: LegoPartsListResult | null; onViewFullPartsList: () => void }) {
+function LegoSummary({ model }: { model: LegoModel }) {
   const { dimensions } = model;
+  const complexityLabel = buildComplexityLabel(model.metadata.targetParts) ?? "Custom";
   return (
     <section className="lego-result" aria-labelledby="lego-result-title">
-      <div>
-        <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
-        <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall</p>
-        <p className="side-panel__hint">Colors are approximated from the reconstructed 3D model.</p>
-      </div>
-      {partsList ? <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} /> : null}
+      <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
+      <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall · {complexityLabel} target</p>
     </section>
+  );
+}
+
+function BuildComplexitySelector({
+  value,
+  onChange,
+  disabled,
+  helpId,
+  compact,
+}: {
+  value: BuildComplexity;
+  onChange: (value: BuildComplexity) => void;
+  disabled: boolean;
+  helpId: string;
+  compact: boolean;
+}) {
+  return (
+    <fieldset
+      className={`complexity-selector${compact ? " complexity-selector--compact" : ""}`}
+      aria-describedby={helpId}
+      disabled={disabled}
+    >
+      <legend>Build complexity</legend>
+      <div className="complexity-selector__options">
+        {BUILD_COMPLEXITY_PRESETS.map((preset) => (
+          <label key={preset.id} className="complexity-option">
+            <input
+              type="radio"
+              name="build-complexity"
+              value={preset.id}
+              checked={value === preset.id}
+              onChange={() => onChange(preset.id)}
+            />
+            <span>
+              <strong>{preset.label}</strong>
+              <small>{preset.description}</small>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p id={helpId}>{compact ? "Final part count may vary." : "Choose how detailed you want the LEGO build to be. Final part count may vary."}</p>
+    </fieldset>
   );
 }
 
