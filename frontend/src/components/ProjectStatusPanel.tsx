@@ -239,8 +239,10 @@ export function ProjectStatusPanel({
       {project.status === "model_ready" ? (
         <>
           <PanelIntro
-            title="Your 3D model is ready"
-            text="Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."
+            title={legoModel ? "Your LEGO model is ready" : "Your 3D model is ready"}
+            text={legoModel
+              ? "Explore the LEGO model, review its parts list, or convert it again."
+              : "Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."}
           />
           <div className="side-panel__actions">
             <button
@@ -276,7 +278,7 @@ export function ProjectStatusPanel({
             <p className="status status--pending" role="status">Loading saved LEGO model...</p>
           ) : null}
           {hasPersistedLegoModelError ? (
-            <p className="form-error" role="alert">We couldnâ€™t load the saved LEGO model. You can convert it again.</p>
+            <p className="form-error" role="alert">We couldn't load the saved LEGO model. You can convert it again.</p>
           ) : null}
           {activeConversion?.status === "queued" || activeConversion?.status === "running" ? (
             <p className="status status--pending" role="status">
@@ -378,6 +380,7 @@ function LegoSummary({ model, partsList, onViewFullPartsList }: { model: LegoMod
       <div>
         <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
         <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall</p>
+        <p className="side-panel__hint">Colors are approximated from the reconstructed 3D model.</p>
       </div>
       {partsList ? <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} /> : null}
     </section>

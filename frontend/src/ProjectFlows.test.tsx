@@ -417,9 +417,13 @@ describe("project flows", () => {
     renderApp(`/projects/${PROJECT_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Your 3D model is ready" })).toBeInTheDocument();
+    expect(screen.getByText("Next, you’ll be able to turn it into a LEGO build with a parts list and building steps.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
     expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your LEGO model is ready" })).toBeInTheDocument();
+    expect(screen.getByText("Explore the LEGO model, review its parts list, or convert it again.")).toBeInTheDocument();
+    expect(screen.queryByText("Next, you’ll be able to turn it into a LEGO build with a parts list and building steps.")).not.toBeInTheDocument();
     expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
     const completedBuildView = screen.getByRole("group", { name: "Completed build view" });
     expect(within(completedBuildView).getByRole("button", { name: "LEGO model" })).toHaveAttribute("aria-pressed", "true");
@@ -480,6 +484,8 @@ describe("project flows", () => {
     renderApp(`/projects/${PROJECT_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your LEGO model is ready" })).toBeInTheDocument();
+    expect(screen.getByText("Explore the LEGO model, review its parts list, or convert it again.")).toBeInTheDocument();
     expect(api.readUrlRequests(LEGO_ARTIFACT_ID)).toHaveLength(1);
     expect(api.posts("/api/v1/conversions")).toHaveLength(0);
     expect(screen.getByText("LEGO model ready", { selector: ".badge" })).toBeInTheDocument();
@@ -517,7 +523,7 @@ describe("project flows", () => {
     });
     renderApp(`/projects/${PROJECT_ID}`);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("couldnâ€™t load the saved LEGO model");
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load the saved LEGO model. You can convert it again.");
     expect(await screen.findByTestId("model-viewer")).toHaveAttribute("data-url", readUrlFor(MODEL_ARTIFACT_ID));
     expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
 

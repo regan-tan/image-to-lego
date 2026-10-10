@@ -1,4 +1,5 @@
 import { colorLabel, type LegoPartsListResult, type LegoPartGroup, partLabel, serializePartsListCsv } from "../legoPartsList";
+import { legoColorHex } from "../legoColors";
 
 interface PartsListSummaryProps {
   partsList: LegoPartsListResult;
@@ -69,7 +70,10 @@ function PartsListRow({ part }: { part: LegoPartGroup }) {
     <tr>
       <td data-label="Part">{partLabel(part)}</td>
       <td data-label="Size">{part.lengthStuds} × {part.widthStuds}</td>
-      <td data-label="Color">{colorLabel(part.color)}</td>
+      <td data-label="Color">
+        <span className="color-swatch" style={{ backgroundColor: legoColorHex(part.color) }} aria-hidden="true" />
+        {colorLabel(part.color)}
+      </td>
       <td data-label="Quantity">{part.quantity}</td>
     </tr>
   );
