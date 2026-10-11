@@ -208,6 +208,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "partId": placement.brick_type.part_id,
                 "partName": placement.brick_type.name,
                 "shape": placement.brick_type.shape,
+                "geometryAsset": placement.brick_type.geometry_asset,
                 "dimensions": {
                     "lengthStuds": placement.brick_type.dimensions.length_studs,
                     "widthStuds": placement.brick_type.dimensions.width_studs,

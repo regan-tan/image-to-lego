@@ -2,7 +2,7 @@ import { Bounds, OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 
 import { classifyPlacementForBuildStep } from "../legoBuildInstructions";
-import { placementRenderGeometry, slopeRenderGeometry } from "../legoRenderGeometry";
+import { generatedPartRenderGeometry, placementRenderGeometry } from "../legoRenderGeometry";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
 
@@ -34,13 +34,13 @@ export default function LegoModelViewer({ model, currentLayerZ }: LegoModelViewe
                 depthWrite={opacity === 1}
               />
             );
-            if (placement.shape === "slope_33_3x1") {
-              const slope = slopeRenderGeometry(placement, model);
+            const generatedGeometry = generatedPartRenderGeometry(placement, model);
+            if (generatedGeometry !== null) {
               return (
                 <mesh key={`${placement.brickType}-${index}`} castShadow receiveShadow>
                   <bufferGeometry>
-                    <bufferAttribute attach="attributes-position" args={[slope.vertices, 3]} />
-                    <bufferAttribute attach="index" args={[slope.indices, 1]} />
+                    <bufferAttribute attach="attributes-position" args={[generatedGeometry.vertices, 3]} />
+                    <bufferAttribute attach="index" args={[generatedGeometry.indices, 1]} />
                   </bufferGeometry>
                   {material}
                 </mesh>
