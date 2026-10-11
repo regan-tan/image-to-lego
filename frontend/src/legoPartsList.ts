@@ -14,9 +14,11 @@ export type LegoPartsListResult =
   | { valid: true; parts: LegoPartGroup[]; totalPartCount: number; uniquePartTypeCount: number }
   | { valid: false };
 
-export function createLegoPartsList(model: LegoModel): LegoPartsListResult {
+export function aggregateLegoPlacements(
+  placements: LegoModel["placements"],
+): LegoPartGroup[] {
   const groups = new Map<string, LegoPartGroup>();
-  for (const placement of model.placements) {
+  for (const placement of placements) {
     const { brickType, dimensions, color } = placement;
     const key = [brickType, dimensions.lengthStuds, dimensions.widthStuds, dimensions.heightBricks, color].join("|");
     const existing = groups.get(key);
@@ -26,7 +28,11 @@ export function createLegoPartsList(model: LegoModel): LegoPartsListResult {
     }
     groups.set(key, { brickType, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightBricks: dimensions.heightBricks, color, quantity: 1 });
   }
-  const parts = [...groups.values()].sort(compareParts);
+  return [...groups.values()].sort(compareParts);
+}
+
+export function createLegoPartsList(model: LegoModel): LegoPartsListResult {
+  const parts = aggregateLegoPlacements(model.placements);
   const totalPartCount = parts.reduce((total, part) => total + part.quantity, 0);
   if (totalPartCount !== model.partCount) return { valid: false };
   return { valid: true, parts, totalPartCount, uniquePartTypeCount: parts.length };

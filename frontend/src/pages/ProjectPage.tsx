@@ -1,10 +1,11 @@
 import { Link, useParams } from "react-router-dom";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getLegoModel } from "../api/client";
 import { useAppLayout } from "../components/appLayoutContext";
 import { BrickProgress } from "../components/BrickProgress";
+import { BuildGuideWorkspace } from "../components/BuildGuideWorkspace";
 import { ArrowLeftIcon } from "../components/Icons";
 import { ProjectPreview } from "../components/ProjectPreview";
 import type { PreviewView } from "../components/ProjectPreview";
@@ -17,11 +18,12 @@ import {
   buildComplexityForTargetParts,
   type BuildComplexity,
 } from "../legoBuildComplexity";
+import { deriveLegoBuildSteps } from "../legoBuildInstructions";
 import { createLegoPartsList } from "../legoPartsList";
 import type { ConversionStatus } from "../schemas/conversions";
 import type { LegoModel } from "../schemas/legoModels";
 
-type ResultView = "model" | "parts";
+type ResultView = "model" | "parts" | "guide";
 
 export function ProjectPage() {
   const { projectId = "" } = useParams();
@@ -36,6 +38,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const [legoModel, setLegoModel] = useState<LegoModel | null>(null);
   const [previewView, setPreviewView] = useState<PreviewView | null>(null);
   const [resultView, setResultView] = useState<ResultView>("model");
+  const [buildStepIndex, setBuildStepIndex] = useState(0);
   const [selectedBuildComplexity, setSelectedBuildComplexity] = useState<BuildComplexity | null>(null);
   const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
   const persistedLegoModel = useQuery({
@@ -47,6 +50,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const handleLegoModelLoaded = useCallback((model: LegoModel) => {
     setLegoModel(model);
     setPreviewView("lego");
+    setBuildStepIndex(0);
     setSelectedBuildComplexity(
       buildComplexityForTargetParts(model.metadata.targetParts) ?? DEFAULT_BUILD_COMPLEXITY,
     );
@@ -59,9 +63,13 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
     ?? DEFAULT_BUILD_COMPLEXITY;
   const currentPreviewView = previewView ?? (currentLegoModel ? "lego" : "model");
   const partsList = currentLegoModel ? createLegoPartsList(currentLegoModel) : null;
+  const buildSteps = useMemo(
+    () => currentLegoModel ? deriveLegoBuildSteps(currentLegoModel) : [],
+    [currentLegoModel],
+  );
 
   return (
-    <div className="page__container">
+    <div className={`page__container${currentLegoModel ? " page__container--completed" : ""}`}>
       <Link to="/" className="back-link">
         <ArrowLeftIcon size={16} />
         All projects
@@ -109,18 +117,21 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
             <div className="result-view-toggle segmented-control" role="group" aria-label="Completed build view">
               <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>LEGO model</button>
               <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
+              <button type="button" aria-pressed={resultView === "guide"} onClick={() => setResultView("guide")}>Build guide</button>
             </div>
           ) : null}
-          <div className="project-layout" hidden={currentLegoModel !== null && resultView === "parts"}>
-            <ProjectPreview
-              key={`preview-${project.data.id}`}
-              project={project.data}
-              accessToken={session.access_token}
-              userId={session.user.id}
-              legoModel={currentLegoModel}
-              view={currentPreviewView}
-              onViewChange={setPreviewView}
-            />
+          <div className={`project-layout${currentLegoModel && resultView === "model" ? " project-layout--completed" : ""}`}>
+            {currentLegoModel === null || resultView === "model" ? (
+              <ProjectPreview
+                key={`preview-${project.data.id}`}
+                project={project.data}
+                accessToken={session.access_token}
+                userId={session.user.id}
+                legoModel={currentLegoModel}
+                view={currentPreviewView}
+                onViewChange={setPreviewView}
+              />
+            ) : null}
             {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
             <ProjectStatusPanel
               key={`status-${project.data.id}`}
@@ -136,9 +147,20 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
               onViewFullPartsList={() => setResultView("parts")}
               buildComplexity={buildComplexity}
               onBuildComplexityChange={setSelectedBuildComplexity}
+              isVisible={currentLegoModel === null || resultView === "model"}
             />
           </div>
-          {currentLegoModel && resultView === "parts" && partsList ? <PartsListWorkspace partsList={partsList} /> : null}
+          {currentLegoModel && resultView === "parts" && partsList ? (
+            <PartsListWorkspace partsList={partsList} />
+          ) : null}
+          {currentLegoModel && resultView === "guide" ? (
+            <BuildGuideWorkspace
+              model={currentLegoModel}
+              steps={buildSteps}
+              currentStepIndex={buildStepIndex}
+              onStepChange={setBuildStepIndex}
+            />
+          ) : null}
         </>
       ) : null}
     </div>

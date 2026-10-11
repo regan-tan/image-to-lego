@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createLegoPartsList, serializePartsListCsv } from "./legoPartsList";
+import { aggregateLegoPlacements, createLegoPartsList, serializePartsListCsv } from "./legoPartsList";
 import type { LegoModel } from "./schemas/legoModels";
 
 function model(placements: LegoModel["placements"], partCount = placements.length): LegoModel {
@@ -29,6 +29,15 @@ describe("createLegoPartsList", () => {
 
   it("detects a part count mismatch", () => {
     expect(createLegoPartsList(model([placement()], 2))).toEqual({ valid: false });
+  });
+});
+
+describe("aggregateLegoPlacements", () => {
+  it("uses the same grouping without requiring a complete model", () => {
+    expect(aggregateLegoPlacements([
+      placement(),
+      placement({ orientationDegrees: 90, position: { x: 2, y: 0, z: 0 } }),
+    ])).toEqual([expect.objectContaining({ quantity: 2 })]);
   });
 });
 
