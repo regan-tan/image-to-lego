@@ -172,7 +172,8 @@
   {
     "partId": "4286",
     "name": "Slope 33 3 x 1",
-    "family": "slope",
+    "family": "slope_33",
+    "slopeProfile": "rise_33_3",
     "shape": "slope_33_3x1",
     "widthStuds": 1,
     "lengthStuds": 3,

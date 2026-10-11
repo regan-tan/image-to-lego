@@ -37,7 +37,7 @@ def test_fitter_catalogue_preserves_the_existing_explicit_order() -> None:
         ("3623", "plate", 1, 3, 1, 11),
         ("3023", "plate", 1, 2, 1, 12),
         ("3024", "plate", 1, 1, 1, 13),
-        ("4286", "slope", 1, 3, 3, 14),
+        ("4286", "slope_33", 1, 3, 3, 14),
     )
     assert LEGO_PART_CATALOGUE == FITTER_PARTS
 
@@ -46,3 +46,11 @@ def test_geometry_references_and_color_availability_resolve_for_fitter_parts() -
     assert load_part_geometry(PART_BY_ID["3001"].geometry_asset or "") is not None
     assert load_part_geometry(PART_BY_ID["4286"].geometry_asset or "") is not None
     assert all(PART_COLOR_AVAILABILITY[part.part_id] for part in FITTER_PARTS)
+
+
+def test_slope_33_catalogue_profile_is_explicit() -> None:
+    slope = PART_BY_ID["4286"]
+
+    assert slope.family == "slope_33"
+    assert slope.slope_profile == "rise_33_3"
+    assert slope.catalogue_key == "slope_1x3"

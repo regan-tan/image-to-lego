@@ -27,6 +27,7 @@ from app.conversion.fidelity import FidelityMetrics, evaluate_fidelity
 from app.conversion.part_catalogue import (
     BRICK_HEIGHT_PLATES,
     LEGO_PART_CATALOGUE,
+    SLOPE_33_FAMILY,
     LegoPart,
     legacy_grid_catalogue,
 )
@@ -45,6 +46,9 @@ MAX_TARGET_PARTS = 10_000
 MAX_GRID_CELLS = 250_000
 MINIMUM_AXIS_EXTENT = 1e-9
 GRID_CELL_BUDGET_FACTORS = (0.5, 1.0, 2.0, 4.0, 8.0)
+SLOPE_ORIENTATIONS = (0, 90, 180, 270)
+SLOPE_33_PROFILE = "rise_33_3"
+SLOPE_33_HEIGHT_PROFILES = ((0, 1, 3), (0, 2, 3))
 
 
 class Axis(StrEnum):
@@ -154,7 +158,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         raise ConversionError("Target parts would exceed the configured grid safety limit.")
 
     occupied_cells = _surface_cells(normalized_vertices, faces, grid_size)
-    slope_placements, reserved_slope_cells = _place_4286_slopes(occupied_cells)
+    slope_placements, reserved_slope_cells = _place_supported_slopes(occupied_cells)
     remaining_cells = occupied_cells - reserved_slope_cells
     rectangular_placements = pack_occupied_cells(remaining_cells) if remaining_cells else ()
     placements = slope_placements + rectangular_placements
@@ -174,7 +178,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
             scaled_vertices,
             faces,
             _placement_boxes(placements),
-            slope_vertices=_slope_4286_vertices(placements),
+            slope_vertices=_slope_vertices(placements),
             target_parts=settings.target_parts,
         ),
     )
@@ -628,30 +632,40 @@ def _placement_boxes(
     return tuple(boxes)
 
 
-def _place_4286_slopes(
+def _place_supported_slopes(
     occupied_cells: Collection[GridPosition],
 ) -> tuple[tuple[BrickPlacement, ...], frozenset[GridPosition]]:
-    """Select non-overlapping exposed 4286 runs before rectangular packing."""
-    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    """Select non-overlapping exposed runs for each supported slope family."""
+    slope_parts = tuple(part for part in BRICK_CATALOGUE if part.family == SLOPE_33_FAMILY)
+    return _place_slope_33_family(occupied_cells, slope_parts)
+
+
+def _place_slope_33_family(
+    occupied_cells: Collection[GridPosition],
+    slope_parts: Collection[LegoPart],
+) -> tuple[tuple[BrickPlacement, ...], frozenset[GridPosition]]:
+    """Fit the declared 33-degree profile using only the LEGO grid surface."""
+    if not slope_parts:
+        return (), frozenset()
     top_cells = _top_surface_cells(occupied_cells)
     selected: list[BrickPlacement] = []
     reserved: set[GridPosition] = set()
 
-    for orientation in (0, 90, 180, 270):
-        for y in range(max(cell.y for cell in top_cells) + 1):
-            for x in range(max(cell.x for cell in top_cells) + 1):
-                candidate = _slope_4286_candidate(top_cells, x, y, orientation)
-                if candidate is None or not reserved.isdisjoint(candidate):
-                    continue
-                heights = [cell.z for cell in candidate]
-                selected.append(
-                    BrickPlacement(
-                        slope,
-                        GridPosition(x, y, min(heights)),
-                        orientation,
+    for slope in slope_parts:
+        for orientation in SLOPE_ORIENTATIONS:
+            for y in range(max(cell.y for cell in top_cells) + 1):
+                for x in range(max(cell.x for cell in top_cells) + 1):
+                    candidate = _slope_33_candidate(top_cells, slope, x, y, orientation)
+                    if candidate is None or not reserved.isdisjoint(candidate):
+                        continue
+                    selected.append(
+                        BrickPlacement(
+                            slope,
+                            GridPosition(x, y, min(cell.z for cell in candidate)),
+                            orientation,
+                        )
                     )
-                )
-                reserved.update(candidate)
+                    reserved.update(candidate)
 
     return tuple(selected), frozenset(reserved)
 
@@ -666,42 +680,70 @@ def _top_surface_cells(occupied_cells: Collection[GridPosition]) -> frozenset[Gr
     return frozenset(highest.values())
 
 
-def _slope_4286_candidate(
-    top_cells: Collection[GridPosition], x: int, y: int, orientation: int
-) -> tuple[GridPosition, GridPosition, GridPosition] | None:
+def _slope_33_candidate(
+    top_cells: Collection[GridPosition],
+    slope: LegoPart,
+    x: int,
+    y: int,
+    orientation: int,
+) -> tuple[GridPosition, ...] | None:
+    if slope.slope_profile != SLOPE_33_PROFILE:
+        return None
     if orientation in (0, 180):
-        positions = ((x, y), (x + 1, y), (x + 2, y))
+        positions = tuple(
+            (x + length_offset, y + width_offset)
+            for width_offset in range(slope.width_studs)
+            for length_offset in range(slope.length_studs)
+        )
     else:
-        positions = ((x, y), (x, y + 1), (x, y + 2))
+        positions = tuple(
+            (x + width_offset, y + length_offset)
+            for width_offset in range(slope.width_studs)
+            for length_offset in range(slope.length_studs)
+        )
     by_position = {(cell.x, cell.y): cell for cell in top_cells}
     cells = tuple(by_position.get(position) for position in positions)
     if any(cell is None for cell in cells):
         return None
-    first, middle, last = cast(tuple[GridPosition, GridPosition, GridPosition], cells)
-    changes = (middle.z - first.z, last.z - middle.z)
-    if orientation in (180, 270):
-        changes = (-changes[0], -changes[1])
-    if changes not in ((1, 2), (2, 1)):
+    candidates = cast(tuple[GridPosition, ...], cells)
+    base_height = min(cell.z for cell in candidates)
+    height_profiles = (
+        SLOPE_33_HEIGHT_PROFILES
+        if orientation in (0, 90)
+        else tuple(tuple(reversed(profile)) for profile in SLOPE_33_HEIGHT_PROFILES)
+    )
+    if not any(
+        all(
+            cell.z == base_height + height_profile[index % slope.length_studs]
+            for index, cell in enumerate(candidates)
+        )
+        for height_profile in height_profiles
+    ):
         return None
-    return first, middle, last
+    return candidates
 
 
-def _slope_4286_vertices(
+def _slope_vertices(
     placements: Collection[BrickPlacement],
 ) -> tuple[tuple[tuple[float, float, float], ...], ...]:
-    """Return simple outer triangular-prism geometry for the one supported slope."""
+    """Return simple outer triangular-prism geometry for supported slope families."""
     slopes = []
     for placement in placements:
-        if placement.brick_type.shape != "slope_33_3x1":
+        if placement.brick_type.family != SLOPE_33_FAMILY:
             continue
         base = placement.position
+        dimensions = placement.brick_type.dimensions
         local_vertices = (
             (0.0, 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-            (3.0, 0.0, 3.0),
-            (0.0, 1.0, 0.0),
-            (3.0, 1.0, 0.0),
-            (3.0, 1.0, 3.0),
+            (float(dimensions.length_studs), 0.0, 0.0),
+            (float(dimensions.length_studs), 0.0, float(dimensions.height_plates)),
+            (0.0, float(dimensions.width_studs), 0.0),
+            (float(dimensions.length_studs), float(dimensions.width_studs), 0.0),
+            (
+                float(dimensions.length_studs),
+                float(dimensions.width_studs),
+                float(dimensions.height_plates),
+            ),
         )
         vertices = []
         for length, width, height in local_vertices:
@@ -710,9 +752,9 @@ def _slope_4286_vertices(
             elif placement.orientation_degrees == 90:
                 horizontal = (base.x + width, base.y + length)
             elif placement.orientation_degrees == 180:
-                horizontal = (base.x + 3.0 - length, base.y + width)
+                horizontal = (base.x + dimensions.length_studs - length, base.y + width)
             else:
-                horizontal = (base.x + width, base.y + 3.0 - length)
+                horizontal = (base.x + width, base.y + dimensions.length_studs - length)
             vertices.append((horizontal[0], horizontal[1], base.z + height))
         slopes.append(tuple(vertices))
     return tuple(slopes)

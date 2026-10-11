@@ -101,7 +101,7 @@ def test_orientation_changes_the_lego_box_footprint() -> None:
 def test_slope_fidelity_uses_the_wedge_instead_of_its_bounding_box() -> None:
     slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
     placement = BrickPlacement(slope, GridPosition(0, 0, 0), 0)
-    vertices = converter_core._slope_4286_vertices((placement,))[0]
+    vertices = converter_core._slope_vertices((placement,))[0]
     faces = [
         (0, 1, 2), (3, 5, 4), (0, 4, 1), (0, 3, 4),
         (1, 4, 5), (1, 5, 2), (0, 2, 5), (0, 5, 3),
