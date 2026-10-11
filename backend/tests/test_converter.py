@@ -17,6 +17,8 @@ from app.conversion.core import (
     ConversionError,
     ConversionSettings,
     GridPosition,
+    GridSize,
+    _safe_interior_cells,
     convert_glb,
     pack_occupied_cells,
 )
@@ -514,6 +516,62 @@ def test_safety_limits_are_enforced() -> None:
         convert_glb(box_glb(), ConversionSettings(target_parts=MAX_TARGET_PARTS + 1))
     with pytest.raises(ConversionError, match="size limit"):
         convert_glb(b"x" * (MAX_INPUT_BYTES + 1), ConversionSettings(target_parts=10))
+
+
+def surface_cells_with_empty_space(
+    grid_size: GridSize, empty_cells: frozenset[GridPosition]
+) -> frozenset[GridPosition]:
+    return frozenset(
+        GridPosition(x, y, z)
+        for z in range(grid_size.height_plates)
+        for y in range(grid_size.depth_studs)
+        for x in range(grid_size.width_studs)
+        if GridPosition(x, y, z) not in empty_cells
+    )
+
+
+def test_enclosed_cavity_is_safe_in_a_watertight_mesh() -> None:
+    grid_size = GridSize(3, 3, 3)
+    cavity = GridPosition(1, 1, 1)
+
+    assert _safe_interior_cells(
+        surface_cells_with_empty_space(grid_size, frozenset({cavity})),
+        grid_size,
+        mesh_is_watertight=True,
+    ) == frozenset({cavity})
+
+
+@pytest.mark.parametrize(
+    ("exterior_cell", "connection"),
+    (
+        (GridPosition(0, 1, 1), "face"),
+        (GridPosition(0, 0, 1), "edge"),
+        (GridPosition(0, 0, 0), "corner"),
+    ),
+)
+def test_empty_space_connected_to_exterior_is_not_safe(
+    exterior_cell: GridPosition, connection: str
+) -> None:
+    grid_size = GridSize(3, 3, 3)
+    cavity = GridPosition(1, 1, 1)
+
+    safe_cells = _safe_interior_cells(
+        surface_cells_with_empty_space(grid_size, frozenset({cavity, exterior_cell})),
+        grid_size,
+        mesh_is_watertight=True,
+    )
+
+    assert not safe_cells, connection
+
+
+def test_non_watertight_mesh_has_no_safe_interior_cells() -> None:
+    grid_size = GridSize(3, 3, 3)
+
+    assert not _safe_interior_cells(
+        surface_cells_with_empty_space(grid_size, frozenset({GridPosition(1, 1, 1)})),
+        grid_size,
+        mesh_is_watertight=False,
+    )
 
 
 @pytest.mark.parametrize("glb_bytes", [box_glb(), open_tetrahedron_glb()])

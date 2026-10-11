@@ -49,6 +49,13 @@ GRID_CELL_BUDGET_FACTORS = (0.5, 1.0, 2.0, 4.0, 8.0)
 SLOPE_ORIENTATIONS = (0, 90, 180, 270)
 SLOPE_33_PROFILE = "rise_33_3"
 SLOPE_33_HEIGHT_PROFILES = ((0, 1, 3), (0, 2, 3))
+_EMPTY_SPACE_NEIGHBOR_OFFSETS = tuple(
+    (x_offset, y_offset, z_offset)
+    for z_offset in (-1, 0, 1)
+    for y_offset in (-1, 0, 1)
+    for x_offset in (-1, 0, 1)
+    if (x_offset, y_offset, z_offset) != (0, 0, 0)
+)
 
 
 class Axis(StrEnum):
@@ -131,6 +138,14 @@ class LegoModel:
     metadata: AlgorithmMetadata
 
 
+@dataclass(frozen=True, slots=True)
+class SourceOccupancy:
+    """Voxel cells from the source mesh, separated by their safe-use meaning."""
+
+    surface_cells: frozenset[GridPosition]
+    safe_interior_cells: frozenset[GridPosition]
+
+
 def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     """Convert GLB bytes into a deterministic surface model on a plate-height grid."""
     _validate_settings(settings)
@@ -157,7 +172,8 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     if grid_size.cell_count > MAX_GRID_CELLS:
         raise ConversionError("Target parts would exceed the configured grid safety limit.")
 
-    occupied_cells = _surface_cells(normalized_vertices, faces, grid_size)
+    source_occupancy = _source_occupancy(normalized_vertices, faces, grid_size)
+    occupied_cells = source_occupancy.surface_cells
     slope_placements, reserved_slope_cells = _place_supported_slopes(occupied_cells)
     remaining_cells = occupied_cells - reserved_slope_cells
     rectangular_placements = pack_occupied_cells(remaining_cells) if remaining_cells else ()
@@ -557,6 +573,68 @@ def _surface_cells(
     ):
         raise ConversionError("Surface voxelization produced cells outside the requested grid.")
     return cells
+
+
+def _source_occupancy(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int]],
+    grid_size: GridSize,
+) -> SourceOccupancy:
+    """Build a conservative source-volume mask without changing surface fitting.
+
+    Only watertight meshes can prove an enclosed source volume. For those meshes,
+    a cell is safe when a 26-neighbour flood fill from the grid boundary cannot
+    reach it without crossing a surface voxel. Non-watertight meshes deliberately
+    expose no safe interior cells so later repair cannot bridge a real opening.
+    """
+    surface_cells = _surface_cells(vertices, faces, grid_size)
+    scaled_vertices = _scale_vertices_to_grid(vertices, grid_size)
+    mesh = trimesh.Trimesh(vertices=scaled_vertices, faces=faces, process=False, validate=False)
+    safe_interior_cells = _safe_interior_cells(
+        surface_cells,
+        grid_size,
+        mesh_is_watertight=mesh.is_watertight,
+    )
+    return SourceOccupancy(surface_cells, safe_interior_cells)
+
+
+def _safe_interior_cells(
+    surface_cells: frozenset[GridPosition],
+    grid_size: GridSize,
+    *,
+    mesh_is_watertight: bool,
+) -> frozenset[GridPosition]:
+    """Return only enclosed non-surface cells of a watertight source mesh."""
+    if not mesh_is_watertight:
+        return frozenset()
+
+    all_cells = {
+        GridPosition(x, y, z)
+        for z in range(grid_size.height_plates)
+        for y in range(grid_size.depth_studs)
+        for x in range(grid_size.width_studs)
+    }
+    empty_cells = all_cells - surface_cells
+    exterior_cells = {
+        cell
+        for cell in empty_cells
+        if cell.x in (0, grid_size.width_studs - 1)
+        or cell.y in (0, grid_size.depth_studs - 1)
+        or cell.z in (0, grid_size.height_plates - 1)
+    }
+    pending = list(exterior_cells)
+    while pending:
+        cell = pending.pop()
+        for x_offset, y_offset, z_offset in _EMPTY_SPACE_NEIGHBOR_OFFSETS:
+            neighbor = GridPosition(
+                cell.x + x_offset,
+                cell.y + y_offset,
+                cell.z + z_offset,
+            )
+            if neighbor in empty_cells and neighbor not in exterior_cells:
+                exterior_cells.add(neighbor)
+                pending.append(neighbor)
+    return frozenset(empty_cells - exterior_cells)
 
 
 def _scale_vertices_to_grid(
