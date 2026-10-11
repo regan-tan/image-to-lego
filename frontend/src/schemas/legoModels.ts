@@ -32,6 +32,8 @@ export const legoModelSchema = z.object({
   }),
   placements: z.array(z.object({
     brickType: z.string(),
+    partId: z.string().optional(),
+    partName: z.string().optional(),
     dimensions: partDimensionsSchema,
     position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
     orientationDegrees: z.union([z.literal(0), z.literal(90)]),

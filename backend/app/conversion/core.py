@@ -22,6 +22,12 @@ from app.conversion.colors import (
     normalize_rgb,
 )
 from app.conversion.fidelity import FidelityMetrics, evaluate_fidelity
+from app.conversion.part_catalogue import (
+    BRICK_HEIGHT_PLATES,
+    LEGO_PART_CATALOGUE,
+    LegoPart,
+    legacy_grid_catalogue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +35,6 @@ ALGORITHM_VERSION = "surface-grid-v3"
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
 PLATE_HEIGHT_MM = 3.2
-BRICK_HEIGHT_PLATES = 3
 
 # These bounds keep one conversion's memory use and packing work predictable.
 MAX_INPUT_BYTES = 16 * 1024 * 1024
@@ -74,53 +79,14 @@ class GridSize:
         return self.width_studs * self.depth_studs * self.height_plates
 
 
-@dataclass(frozen=True, slots=True)
-class BrickDimensions:
-    length_studs: int
-    width_studs: int
-    height_plates: int = BRICK_HEIGHT_PLATES
-
-
-@dataclass(frozen=True, slots=True)
-class BrickType:
-    name: str
-    dimensions: BrickDimensions
-
-
-BRICK_CATALOGUE = (
-    BrickType("brick_2x4", BrickDimensions(4, 2)),
-    BrickType("brick_2x3", BrickDimensions(3, 2)),
-    BrickType("brick_2x2", BrickDimensions(2, 2)),
-    BrickType("brick_1x4", BrickDimensions(4, 1)),
-    BrickType("brick_1x3", BrickDimensions(3, 1)),
-    BrickType("plate_2x4", BrickDimensions(4, 2, 1)),
-    BrickType("plate_2x3", BrickDimensions(3, 2, 1)),
-    BrickType("brick_1x2", BrickDimensions(2, 1)),
-    BrickType("plate_2x2", BrickDimensions(2, 2, 1)),
-    BrickType("plate_1x4", BrickDimensions(4, 1, 1)),
-    BrickType("brick_1x1", BrickDimensions(1, 1)),
-    BrickType("plate_1x3", BrickDimensions(3, 1, 1)),
-    BrickType("plate_1x2", BrickDimensions(2, 1, 1)),
-    BrickType("plate_1x1", BrickDimensions(1, 1, 1)),
-)
-
-LEGACY_BRICK_CATALOGUE = tuple(
-    BrickType(
-        brick_type.name,
-        BrickDimensions(
-            brick_type.dimensions.length_studs,
-            brick_type.dimensions.width_studs,
-            1,
-        ),
-    )
-    for brick_type in BRICK_CATALOGUE
-    if brick_type.name.startswith("brick_")
-)
+BrickType = LegoPart
+BRICK_CATALOGUE = LEGO_PART_CATALOGUE
+LEGACY_BRICK_CATALOGUE = legacy_grid_catalogue()
 
 
 @dataclass(frozen=True, slots=True)
 class BrickPlacement:
-    brick_type: BrickType
+    brick_type: LegoPart
     position: GridPosition
     orientation_degrees: int
     color: str = DEFAULT_COLOR
@@ -213,7 +179,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
 
 def pack_occupied_cells(
     occupied_cells: Collection[GridPosition],
-    catalogue: tuple[BrickType, ...] = BRICK_CATALOGUE,
+    catalogue: tuple[LegoPart, ...] = BRICK_CATALOGUE,
 ) -> tuple[BrickPlacement, ...]:
     """Cover occupied grid cells with the fixed catalogue in deterministic largest-first order."""
     remaining = set(occupied_cells)
@@ -591,7 +557,7 @@ def _scale_vertices_to_grid(
 def _first_fitting_brick(
     position: GridPosition,
     remaining: set[GridPosition],
-    catalogue: tuple[BrickType, ...],
+    catalogue: tuple[LegoPart, ...],
 ) -> BrickPlacement:
     for brick_type in catalogue:
         orientations = (

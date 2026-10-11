@@ -4,7 +4,6 @@ from app.conversion.colors import DEFAULT_COLOR, LEGO_PALETTE, nearest_palette_c
 from app.conversion.core import (
     ALGORITHM_VERSION,
     Axis,
-    BrickDimensions,
     BrickPlacement,
     BrickType,
     ConversionError,
@@ -17,6 +16,7 @@ from app.conversion.core import (
     pack_occupied_cells,
 )
 from app.conversion.fidelity import FidelityMetrics
+from app.conversion.part_catalogue import BrickDimensions, LegoPart
 
 __all__ = [
     "ALGORITHM_VERSION",
@@ -31,6 +31,7 @@ __all__ = [
     "GridPosition",
     "GridSize",
     "LegoModel",
+    "LegoPart",
     "LEGO_PALETTE",
     "ModelDimensions",
     "convert_glb",
