@@ -350,6 +350,7 @@ def test_slope_placement_serializes_with_its_explicit_shape() -> None:
             "partId": "4286",
             "partName": "Slope 33 3 x 1",
             "shape": "slope_33_3x1",
+            "geometryAsset": "4286",
             "dimensions": {"lengthStuds": 3, "widthStuds": 1, "heightPlates": 3},
             "position": {"x": 0, "y": 0, "z": 0},
             "orientationDegrees": 0,

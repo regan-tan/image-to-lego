@@ -1,4 +1,6 @@
 import { heightInPlates, type LegoModel } from "./schemas/legoModels";
+import part3001 from "../../backend/app/conversion/part_geometry_assets/3001.json";
+import part4286 from "../../backend/app/conversion/part_geometry_assets/4286.json";
 
 const PLATE_HEIGHT_UNITS = 0.4;
 
@@ -7,10 +9,21 @@ export interface RenderedBrick {
   center: [number, number, number];
 }
 
-export interface RenderedSlope {
+export interface RenderedPartGeometry {
   vertices: Float32Array;
-  indices: Uint16Array;
+  indices: Uint32Array;
 }
+
+interface PartGeometryAsset {
+  partId: string;
+  positions: number[];
+  indices: number[];
+}
+
+const PART_GEOMETRY_ASSETS: Record<string, PartGeometryAsset> = {
+  [part3001.partId]: part3001,
+  [part4286.partId]: part4286,
+};
 
 export function placementRenderGeometry(
   placement: LegoModel["placements"][number],
@@ -36,42 +49,38 @@ export function placementRenderGeometry(
   };
 }
 
-export function slopeRenderGeometry(
+export function generatedPartRenderGeometry(
   placement: LegoModel["placements"][number],
   model: LegoModel,
-): RenderedSlope {
-  const height = heightInPlates(placement.dimensions) * PLATE_HEIGHT_UNITS;
+): RenderedPartGeometry | null {
+  const assetName = placement.geometryAsset ?? placement.partId;
+  const asset = assetName === undefined ? undefined : PART_GEOMETRY_ASSETS[assetName];
+  if (asset === undefined) return null;
+
   const positionZ = model.dimensions.heightPlates === undefined
     ? placement.position.z * 3
     : placement.position.z;
-  const localVertices: Array<[number, number, number]> = [
-    [0, 0, 0],
-    [3, 0, 0],
-    [3, 0, height],
-    [0, 1, 0],
-    [3, 1, 0],
-    [3, 1, height],
-  ];
-  const vertices = localVertices.flatMap(([length, width, vertical]) => {
-    const [gridX, gridY] = slopeHorizontalPosition(placement, length, width);
+  const vertices = asset.positions.flatMap((_, index, positions) => {
+    if (index % 3 !== 0) return [];
+    const [gridX, gridY] = transformedHorizontalPosition(
+      placement,
+      positions[index],
+      positions[index + 1],
+    );
     return [
       gridX - model.dimensions.widthStuds / 2,
-      positionZ * PLATE_HEIGHT_UNITS + vertical - heightInPlates(model.dimensions) * PLATE_HEIGHT_UNITS / 2,
+      (positionZ + positions[index + 2]) * PLATE_HEIGHT_UNITS
+        - heightInPlates(model.dimensions) * PLATE_HEIGHT_UNITS / 2,
       gridY - model.dimensions.depthStuds / 2,
     ];
   });
   return {
     vertices: new Float32Array(vertices),
-    indices: new Uint16Array([
-      0, 1, 2, 3, 5, 4,
-      0, 4, 1, 0, 3, 4,
-      1, 4, 5, 1, 5, 2,
-      0, 2, 5, 0, 5, 3,
-    ]),
+    indices: new Uint32Array(asset.indices),
   };
 }
 
-function slopeHorizontalPosition(
+function transformedHorizontalPosition(
   placement: LegoModel["placements"][number],
   length: number,
   width: number,
@@ -82,8 +91,14 @@ function slopeHorizontalPosition(
     case 90:
       return [placement.position.x + width, placement.position.y + length];
     case 180:
-      return [placement.position.x + 3 - length, placement.position.y + width];
+      return [
+        placement.position.x + placement.dimensions.lengthStuds - length,
+        placement.position.y + width,
+      ];
     case 270:
-      return [placement.position.x + width, placement.position.y + 3 - length];
+      return [
+        placement.position.x + width,
+        placement.position.y + placement.dimensions.lengthStuds - length,
+      ];
   }
 }
