@@ -25,6 +25,7 @@ class LegoPart:
     width_studs: int
     length_studs: int
     height_plates: int
+    shape: str = "rectangular"
 
     @property
     def dimensions(self) -> BrickDimensions:
@@ -51,6 +52,7 @@ LEGO_PART_CATALOGUE = (
     LegoPart("3623", "Plate 1 x 3", "plate", 1, 3, PLATE_HEIGHT_PLATES),
     LegoPart("3023", "Plate 1 x 2", "plate", 1, 2, PLATE_HEIGHT_PLATES),
     LegoPart("3024", "Plate 1 x 1", "plate", 1, 1, PLATE_HEIGHT_PLATES),
+    LegoPart("4286", "Slope 33 3 x 1", "slope", 1, 3, BRICK_HEIGHT_PLATES, "slope_33_3x1"),
 )
 
 

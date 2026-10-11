@@ -16,6 +16,18 @@ PROJECTION_PADDING_RATIO = 0.01
 Point3D = tuple[float, float, float]
 Box = tuple[float, float, float, float, float, float]
 Projection = tuple[int, int]
+SlopeVertices = tuple[Point3D, ...]
+
+_SLOPE_PRISM_FACES = (
+    (0, 1, 2),
+    (3, 5, 4),
+    (0, 4, 1),
+    (0, 3, 4),
+    (1, 4, 5),
+    (1, 5, 2),
+    (0, 2, 5),
+    (0, 5, 3),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,12 +50,13 @@ def evaluate_fidelity(
     lego_boxes: Sequence[Box],
     *,
     target_parts: int,
+    slope_vertices: Sequence[SlopeVertices] = (),
 ) -> FidelityMetrics:
     """Measure a source mesh and completed LEGO solids in their shared grid space."""
-    front_iou = _projection_iou(source_vertices, faces, lego_boxes, (0, 2))
-    side_iou = _projection_iou(source_vertices, faces, lego_boxes, (1, 2))
-    top_iou = _projection_iou(source_vertices, faces, lego_boxes, (0, 1))
-    actual_parts = len(lego_boxes)
+    front_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (0, 2))
+    side_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (1, 2))
+    top_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (0, 1))
+    actual_parts = len(lego_boxes) + len(slope_vertices)
     part_count_delta = actual_parts - target_parts
     return FidelityMetrics(
         metrics_version=SILHOUETTE_METRICS_VERSION,
@@ -81,18 +94,23 @@ def _projection_iou(
     source_vertices: Sequence[Point3D],
     faces: Sequence[tuple[int, int, int]],
     lego_boxes: Sequence[Box],
+    slope_vertices: Sequence[SlopeVertices],
     projection: Projection,
 ) -> float:
-    bounds = _projection_bounds(source_vertices, lego_boxes, projection)
+    bounds = _projection_bounds(source_vertices, lego_boxes, slope_vertices, projection)
     source_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     lego_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     _draw_source_triangles(source_mask, source_vertices, faces, projection, bounds)
     _draw_lego_boxes(lego_mask, lego_boxes, projection, bounds)
+    _draw_lego_slopes(lego_mask, slope_vertices, projection, bounds)
     return binary_mask_iou(source_mask, lego_mask)
 
 
 def _projection_bounds(
-    source_vertices: Sequence[Point3D], lego_boxes: Sequence[Box], projection: Projection
+    source_vertices: Sequence[Point3D],
+    lego_boxes: Sequence[Box],
+    slope_vertices: Sequence[SlopeVertices],
+    projection: Projection,
 ) -> tuple[float, float, float, float]:
     first_axis, second_axis = projection
     coordinates = [
@@ -106,6 +124,8 @@ def _projection_bounds(
             for first in (minimum[first_axis], maximum[first_axis])
             for second in (minimum[second_axis], maximum[second_axis])
         )
+    for slope in slope_vertices:
+        coordinates.extend((vertex[first_axis], vertex[second_axis]) for vertex in slope)
     if not coordinates:
         return (0.0, 1.0, 0.0, 1.0)
     minimum_first = min(point[0] for point in coordinates)
@@ -151,6 +171,18 @@ def _draw_lego_boxes(
         left, right = sorted((first[0], second[0]))
         top, bottom = sorted((first[1], second[1]))
         draw.rectangle((left, top, right, bottom), fill=1)
+
+
+def _draw_lego_slopes(
+    mask: Image.Image,
+    slope_vertices: Sequence[SlopeVertices],
+    projection: Projection,
+    bounds: tuple[float, float, float, float],
+) -> None:
+    draw = ImageDraw.Draw(mask)
+    for slope in slope_vertices:
+        for face in _SLOPE_PRISM_FACES:
+            draw.polygon([_to_pixel(slope[index], projection, bounds) for index in face], fill=1)
 
 
 def _to_pixel(

@@ -79,6 +79,7 @@ PART_COLOR_AVAILABILITY: Final = MappingProxyType(
         "3623": _VERIFIED_COLOR_IDS,
         "3023": _VERIFIED_COLOR_IDS,
         "3024": _VERIFIED_COLOR_IDS,
+        "4286": _VERIFIED_COLOR_IDS,
     }
 )
 

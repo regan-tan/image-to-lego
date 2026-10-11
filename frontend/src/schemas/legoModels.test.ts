@@ -28,4 +28,18 @@ describe("legoModelSchema", () => {
   it("continues to parse artifacts without canonical color fields", () => {
     expect(legoModelSchema.parse(legacyModel).placements[0]?.colorId).toBeUndefined();
   });
+
+  it("accepts the four directional orientations used by 4286", () => {
+    for (const orientationDegrees of [0, 90, 180, 270]) {
+      const model = {
+        ...legacyModel,
+        placements: [{
+          ...legacyModel.placements[0],
+          shape: "slope_33_3x1",
+          orientationDegrees,
+        }],
+      };
+      expect(legoModelSchema.parse(model).placements[0]?.orientationDegrees).toBe(orientationDegrees);
+    }
+  });
 });

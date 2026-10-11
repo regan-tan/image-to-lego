@@ -10,7 +10,8 @@ import trimesh
 
 from app.api.v1.conversions import get_conversion_queue, get_conversion_repository
 from app.api.v1.reconstructions import get_job_repository
-from app.conversion import Axis, ConversionSettings, convert_glb
+from app.conversion import Axis, BrickPlacement, ConversionSettings, GridPosition, convert_glb
+from app.conversion.core import BRICK_CATALOGUE
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
 from app.domain.artifacts import Artifact, ArtifactStatus
@@ -330,6 +331,34 @@ def test_lego_model_json_is_stable() -> None:
     assert model.metadata.fidelity == repeated_model.metadata.fidelity
     assert json.loads(first)["metadata"]["algorithmVersion"] == model.metadata.algorithm_version
     assert json.loads(first)["metadata"]["fidelity"]["meanIoU"] == model.metadata.fidelity.mean_iou
+
+
+def test_slope_placement_serializes_with_its_explicit_shape() -> None:
+    model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    slope_model = replace(
+        model,
+        placements=(BrickPlacement(slope, GridPosition(0, 0, 0), 0),),
+        part_count=1,
+    )
+
+    output = json.loads(serialize_lego_model(slope_model))
+
+    assert output["placements"] == [
+        {
+            "brickType": "slope_1x3",
+            "partId": "4286",
+            "partName": "Slope 33 3 x 1",
+            "shape": "slope_33_3x1",
+            "dimensions": {"lengthStuds": 3, "widthStuds": 1, "heightPlates": 3},
+            "position": {"x": 0, "y": 0, "z": 0},
+            "orientationDegrees": 0,
+            "color": "light_bluish_gray",
+            "colorId": None,
+            "colorName": None,
+            "colorHex": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio

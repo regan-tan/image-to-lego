@@ -33,7 +33,7 @@ from app.conversion.part_catalogue import (
 
 logger = logging.getLogger(__name__)
 
-ALGORITHM_VERSION = "surface-grid-v3"
+ALGORITHM_VERSION = "surface-grid-v4"
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
 PLATE_HEIGHT_MM = 3.2
@@ -154,7 +154,10 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         raise ConversionError("Target parts would exceed the configured grid safety limit.")
 
     occupied_cells = _surface_cells(normalized_vertices, faces, grid_size)
-    placements = pack_occupied_cells(occupied_cells)
+    slope_placements, reserved_slope_cells = _place_4286_slopes(occupied_cells)
+    remaining_cells = occupied_cells - reserved_slope_cells
+    rectangular_placements = pack_occupied_cells(remaining_cells) if remaining_cells else ()
+    placements = slope_placements + rectangular_placements
     occupied_cell_count = len(occupied_cells)
     placements = _color_placements(placements, normalized_vertices, faces, mesh, grid_size)
     dimensions = _model_dimensions(placements)
@@ -171,6 +174,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
             scaled_vertices,
             faces,
             _placement_boxes(placements),
+            slope_vertices=_slope_4286_vertices(placements),
             target_parts=settings.target_parts,
         ),
     )
@@ -571,6 +575,8 @@ def _first_fitting_brick(
     catalogue: tuple[LegoPart, ...],
 ) -> BrickPlacement:
     for brick_type in catalogue:
+        if brick_type.shape != "rectangular":
+            continue
         orientations = (
             (0,)
             if brick_type.dimensions.length_studs == brick_type.dimensions.width_studs
@@ -587,7 +593,7 @@ def _placement_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
     dimensions = placement.brick_type.dimensions
     length = dimensions.length_studs
     width = dimensions.width_studs
-    if placement.orientation_degrees == 90:
+    if placement.orientation_degrees in (90, 270):
         length, width = width, length
     return frozenset(
         GridPosition(placement.position.x + x, placement.position.y + y, placement.position.z + z)
@@ -602,10 +608,12 @@ def _placement_boxes(
 ) -> tuple[tuple[float, float, float, float, float, float], ...]:
     boxes = []
     for placement in placements:
+        if placement.brick_type.shape != "rectangular":
+            continue
         dimensions = placement.brick_type.dimensions
         length = dimensions.length_studs
         width = dimensions.width_studs
-        if placement.orientation_degrees == 90:
+        if placement.orientation_degrees in (90, 270):
             length, width = width, length
         boxes.append(
             (
@@ -618,6 +626,96 @@ def _placement_boxes(
             )
         )
     return tuple(boxes)
+
+
+def _place_4286_slopes(
+    occupied_cells: Collection[GridPosition],
+) -> tuple[tuple[BrickPlacement, ...], frozenset[GridPosition]]:
+    """Select non-overlapping exposed 4286 runs before rectangular packing."""
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    top_cells = _top_surface_cells(occupied_cells)
+    selected: list[BrickPlacement] = []
+    reserved: set[GridPosition] = set()
+
+    for orientation in (0, 90, 180, 270):
+        for y in range(max(cell.y for cell in top_cells) + 1):
+            for x in range(max(cell.x for cell in top_cells) + 1):
+                candidate = _slope_4286_candidate(top_cells, x, y, orientation)
+                if candidate is None or not reserved.isdisjoint(candidate):
+                    continue
+                heights = [cell.z for cell in candidate]
+                selected.append(
+                    BrickPlacement(
+                        slope,
+                        GridPosition(x, y, min(heights)),
+                        orientation,
+                    )
+                )
+                reserved.update(candidate)
+
+    return tuple(selected), frozenset(reserved)
+
+
+def _top_surface_cells(occupied_cells: Collection[GridPosition]) -> frozenset[GridPosition]:
+    highest: dict[tuple[int, int], GridPosition] = {}
+    for cell in occupied_cells:
+        coordinate = (cell.x, cell.y)
+        existing = highest.get(coordinate)
+        if existing is None or cell.z > existing.z:
+            highest[coordinate] = cell
+    return frozenset(highest.values())
+
+
+def _slope_4286_candidate(
+    top_cells: Collection[GridPosition], x: int, y: int, orientation: int
+) -> tuple[GridPosition, GridPosition, GridPosition] | None:
+    if orientation in (0, 180):
+        positions = ((x, y), (x + 1, y), (x + 2, y))
+    else:
+        positions = ((x, y), (x, y + 1), (x, y + 2))
+    by_position = {(cell.x, cell.y): cell for cell in top_cells}
+    cells = tuple(by_position.get(position) for position in positions)
+    if any(cell is None for cell in cells):
+        return None
+    first, middle, last = cast(tuple[GridPosition, GridPosition, GridPosition], cells)
+    changes = (middle.z - first.z, last.z - middle.z)
+    if orientation in (180, 270):
+        changes = (-changes[0], -changes[1])
+    if changes not in ((1, 2), (2, 1)):
+        return None
+    return first, middle, last
+
+
+def _slope_4286_vertices(
+    placements: Collection[BrickPlacement],
+) -> tuple[tuple[tuple[float, float, float], ...], ...]:
+    """Return simple outer triangular-prism geometry for the one supported slope."""
+    slopes = []
+    for placement in placements:
+        if placement.brick_type.shape != "slope_33_3x1":
+            continue
+        base = placement.position
+        local_vertices = (
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0, 0.0),
+            (3.0, 0.0, 3.0),
+            (0.0, 1.0, 0.0),
+            (3.0, 1.0, 0.0),
+            (3.0, 1.0, 3.0),
+        )
+        vertices = []
+        for length, width, height in local_vertices:
+            if placement.orientation_degrees == 0:
+                horizontal = (base.x + length, base.y + width)
+            elif placement.orientation_degrees == 90:
+                horizontal = (base.x + width, base.y + length)
+            elif placement.orientation_degrees == 180:
+                horizontal = (base.x + 3.0 - length, base.y + width)
+            else:
+                horizontal = (base.x + width, base.y + 3.0 - length)
+            vertices.append((horizontal[0], horizontal[1], base.z + height))
+        slopes.append(tuple(vertices))
+    return tuple(slopes)
 
 
 def _model_dimensions(placements: tuple[BrickPlacement, ...]) -> ModelDimensions:
