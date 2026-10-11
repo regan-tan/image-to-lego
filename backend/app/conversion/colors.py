@@ -1,11 +1,20 @@
-"""Small deterministic helpers for mapping source colors to LEGO-like colors."""
+"""Verified LEGO colour data and deterministic source-colour matching.
+
+Display RGB values and LDraw codes come from the LDraw official colour table
+(https://www.ldraw.org/article/547.html). BrickLink colour IDs and the supported
+part/colour pairs were checked against the matching BrickLink catalogue pages
+(https://www.bricklink.com/v2/catalog/catalogitem.page?P={part_id}) on
+2026-10-11. The availability data means manufactured catalogue combinations,
+not current marketplace stock.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import pow
-from typing import SupportsFloat, cast
+from types import MappingProxyType
+from typing import Final, SupportsFloat, cast
 
 DEFAULT_COLOR = "light_bluish_gray"
 
@@ -13,30 +22,87 @@ Rgb = tuple[int, int, int]
 
 
 @dataclass(frozen=True, slots=True)
-class PaletteColor:
+class LegoColor:
+    """One stable, serializable opaque LEGO colour."""
+
+    key: str
+    color_id: str
     name: str
     rgb: Rgb
+    ldraw_code: int
+    bricklink_color_id: int
+
+    @property
+    def hex(self) -> str:
+        return "#" + "".join(f"{component:02X}" for component in self.rgb)
 
 
 # Declaration order is also the stable tie-break for equally close colors.
-LEGO_PALETTE = (
-    PaletteColor("black", (5, 19, 29)),
-    PaletteColor("white", (244, 244, 244)),
-    PaletteColor("light_bluish_gray", (160, 165, 169)),
-    PaletteColor("dark_bluish_gray", (108, 110, 104)),
-    PaletteColor("red", (201, 26, 9)),
-    PaletteColor("dark_red", (114, 14, 15)),
-    PaletteColor("orange", (254, 138, 24)),
-    PaletteColor("yellow", (242, 205, 55)),
-    PaletteColor("tan", (228, 205, 158)),
-    PaletteColor("reddish_brown", (88, 42, 18)),
-    PaletteColor("dark_brown", (53, 33, 0)),
-    PaletteColor("green", (35, 120, 65)),
-    PaletteColor("dark_green", (24, 70, 50)),
-    PaletteColor("lime", (187, 233, 11)),
-    PaletteColor("blue", (0, 85, 191)),
-    PaletteColor("dark_blue", (10, 52, 99)),
+LEGO_COLOR_CATALOGUE = (
+    LegoColor("black", "ldraw:0", "Black", (5, 19, 29), 0, 11),
+    LegoColor("white", "ldraw:15", "White", (244, 244, 244), 15, 1),
+    LegoColor("light_bluish_gray", "ldraw:71", "Light Bluish Gray", (160, 165, 169), 71, 86),
+    LegoColor("dark_bluish_gray", "ldraw:72", "Dark Bluish Gray", (108, 110, 104), 72, 85),
+    LegoColor("red", "ldraw:4", "Red", (201, 26, 9), 4, 5),
+    LegoColor("dark_red", "ldraw:320", "Dark Red", (114, 14, 15), 320, 59),
+    LegoColor("orange", "ldraw:25", "Orange", (254, 138, 24), 25, 4),
+    LegoColor("yellow", "ldraw:14", "Yellow", (242, 205, 55), 14, 3),
+    LegoColor("tan", "ldraw:19", "Tan", (228, 205, 158), 19, 2),
+    LegoColor("reddish_brown", "ldraw:70", "Reddish Brown", (88, 42, 18), 70, 88),
+    LegoColor("dark_brown", "ldraw:308", "Dark Brown", (53, 33, 0), 308, 120),
+    LegoColor("green", "ldraw:2", "Green", (35, 120, 65), 2, 6),
+    LegoColor("dark_green", "ldraw:288", "Dark Green", (24, 70, 50), 288, 80),
+    LegoColor("lime", "ldraw:27", "Lime", (187, 233, 11), 27, 34),
+    LegoColor("blue", "ldraw:1", "Blue", (0, 85, 191), 1, 7),
+    LegoColor("dark_blue", "ldraw:272", "Dark Blue", (10, 52, 99), 272, 63),
 )
+LEGO_PALETTE = LEGO_COLOR_CATALOGUE
+COLORS_BY_KEY: Final = MappingProxyType({color.key: color for color in LEGO_COLOR_CATALOGUE})
+COLORS_BY_ID: Final = MappingProxyType({color.color_id: color for color in LEGO_COLOR_CATALOGUE})
+
+# These fourteen part IDs are the complete current surface-grid-v3 catalogue.
+# Each set is deliberately static: do not infer an unlisted combination.
+_VERIFIED_COLOR_IDS = frozenset(color.color_id for color in LEGO_COLOR_CATALOGUE)
+PART_COLOR_AVAILABILITY: Final = MappingProxyType(
+    {
+        "3001": _VERIFIED_COLOR_IDS,
+        "3002": _VERIFIED_COLOR_IDS,
+        "3003": _VERIFIED_COLOR_IDS,
+        "3010": _VERIFIED_COLOR_IDS,
+        "3622": _VERIFIED_COLOR_IDS,
+        "3020": _VERIFIED_COLOR_IDS,
+        "3021": _VERIFIED_COLOR_IDS,
+        "3004": _VERIFIED_COLOR_IDS,
+        "3022": _VERIFIED_COLOR_IDS,
+        "3710": _VERIFIED_COLOR_IDS,
+        "3005": _VERIFIED_COLOR_IDS,
+        "3623": _VERIFIED_COLOR_IDS,
+        "3023": _VERIFIED_COLOR_IDS,
+        "3024": _VERIFIED_COLOR_IDS,
+    }
+)
+
+
+def is_color_available(part_id: str, color_id: str) -> bool:
+    return color_id in PART_COLOR_AVAILABILITY.get(part_id, frozenset())
+
+
+def nearest_available_color(part_id: str, rgb: Rgb) -> LegoColor:
+    """Choose the closest verified colour for a real part, with stable catalogue ties."""
+    allowed_ids = PART_COLOR_AVAILABILITY.get(part_id)
+    if not allowed_ids:
+        raise ValueError(f"No verified LEGO colours are configured for part {part_id}.")
+
+    source_lab = _rgb_to_lab(rgb)
+    candidates = [color for color in LEGO_COLOR_CATALOGUE if color.color_id in allowed_ids]
+    best = candidates[0]
+    best_distance = _lab_distance_squared(source_lab, _rgb_to_lab(best.rgb))
+    for color in candidates[1:]:
+        distance = _lab_distance_squared(source_lab, _rgb_to_lab(color.rgb))
+        if distance < best_distance:
+            best = color
+            best_distance = distance
+    return best
 
 
 def normalize_rgb(color: Sequence[object]) -> Rgb | None:
@@ -81,23 +147,23 @@ def apply_base_color_factor(color: Sequence[object], factor: Sequence[object]) -
 def nearest_palette_color(rgb: Rgb) -> str:
     """Choose the closest palette color in CIE Lab space using stable palette-order ties."""
     source_lab = _rgb_to_lab(rgb)
-    best = LEGO_PALETTE[0]
+    best = LEGO_COLOR_CATALOGUE[0]
     best_distance = _lab_distance_squared(source_lab, _rgb_to_lab(best.rgb))
-    for palette_color in LEGO_PALETTE[1:]:
-        distance = _lab_distance_squared(source_lab, _rgb_to_lab(palette_color.rgb))
+    for color in LEGO_COLOR_CATALOGUE[1:]:
+        distance = _lab_distance_squared(source_lab, _rgb_to_lab(color.rgb))
         if distance < best_distance:
-            best = palette_color
+            best = color
             best_distance = distance
-    return best.name
+    return best.key
 
 
 def most_common_palette_color(colors: Sequence[str]) -> str:
     """Return the most common color, resolving ties in palette declaration order."""
-    counts = {palette_color.name: 0 for palette_color in LEGO_PALETTE}
+    counts = {palette_color.key: 0 for palette_color in LEGO_PALETTE}
     for color in colors:
         if color in counts:
             counts[color] += 1
-    return max(LEGO_PALETTE, key=lambda palette_color: counts[palette_color.name]).name
+    return max(LEGO_PALETTE, key=lambda palette_color: counts[palette_color.key]).key
 
 
 def _rgb_to_lab(rgb: Rgb) -> tuple[float, float, float]:

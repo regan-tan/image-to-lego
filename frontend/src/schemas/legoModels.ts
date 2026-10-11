@@ -38,6 +38,9 @@ export const legoModelSchema = z.object({
     position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
     orientationDegrees: z.union([z.literal(0), z.literal(90)]),
     color: z.string(),
+    colorId: z.string().optional(),
+    colorName: z.string().optional(),
+    colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   })),
 });
 

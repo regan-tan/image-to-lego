@@ -219,6 +219,9 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 },
                 "orientationDegrees": placement.orientation_degrees,
                 "color": placement.color,
+                "colorId": placement.color_id,
+                "colorName": placement.color_name,
+                "colorHex": placement.color_hex,
             }
             for placement in model.placements
         ],
