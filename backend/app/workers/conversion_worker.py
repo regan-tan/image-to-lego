@@ -9,7 +9,15 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.servicebus.aio import ServiceBusClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.conversion import Axis, ConversionError, ConversionSettings, LegoModel, convert_glb
+from app.conversion import (
+    BUILDABILITY_ANALYSIS_VERSION,
+    Axis,
+    ConversionError,
+    ConversionSettings,
+    LegoModel,
+    analyze_buildability,
+    convert_glb,
+)
 from app.conversion.core import MAX_INPUT_BYTES
 from app.core.config import Settings, get_settings
 from app.domain.artifacts import ArtifactStatus
@@ -167,6 +175,7 @@ class ConversionJobProcessor:
 
 
 def serialize_lego_model(model: LegoModel) -> bytes:
+    buildability = analyze_buildability(model.placements)
     payload = {
         "partCount": model.part_count,
         "dimensions": {
@@ -200,6 +209,17 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "actualParts": model.metadata.fidelity.actual_parts,
                 "partCountDelta": model.metadata.fidelity.part_count_delta,
                 "partCountErrorRatio": model.metadata.fidelity.part_count_error_ratio,
+            },
+            "buildability": {
+                "version": BUILDABILITY_ANALYSIS_VERSION,
+                "evaluatedPlacements": buildability.evaluated_placement_count,
+                "unevaluatedPlacements": buildability.unevaluated_placement_count,
+                "connectionEdges": len(buildability.edges),
+                "connectedComponents": buildability.connected_component_count,
+                "largestComponentSize": buildability.largest_connected_component_size,
+                "largestComponentRatio": buildability.largest_connected_component_ratio,
+                "isolatedPlacements": buildability.isolated_placement_count,
+                "unsupportedPlacements": buildability.unsupported_placement_count,
             },
         },
         "placements": [
