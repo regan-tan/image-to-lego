@@ -17,6 +17,7 @@ from app.conversion.core import (
     convert_glb,
     pack_occupied_cells,
 )
+from app.conversion.part_catalogue import LEGO_PART_CATALOGUE
 
 
 def glb_from_mesh(mesh: trimesh.Trimesh) -> bytes:
@@ -199,16 +200,35 @@ def test_only_supported_bricks_and_orientations_are_emitted() -> None:
     assert {placement.color for placement in model.placements} == {"light_bluish_gray"}
 
 
+def test_real_part_catalogue_has_the_supported_valid_shapes() -> None:
+    assert len(LEGO_PART_CATALOGUE) == 14
+    assert len({part.part_id for part in LEGO_PART_CATALOGUE}) == len(LEGO_PART_CATALOGUE)
+    assert {(part.family, part.width_studs, part.length_studs) for part in LEGO_PART_CATALOGUE} == {
+        (family, width, length)
+        for family in ("brick", "plate")
+        for width, length in ((2, 4), (2, 3), (2, 2), (1, 4), (1, 3), (1, 2), (1, 1))
+    }
+    assert all(part.width_studs > 0 and part.length_studs > 0 for part in LEGO_PART_CATALOGUE)
+    assert all(part.height_plates == 3 for part in LEGO_PART_CATALOGUE if part.family == "brick")
+    assert all(part.height_plates == 1 for part in LEGO_PART_CATALOGUE if part.family == "plate")
+
+
+def test_placements_reference_catalogue_parts() -> None:
+    model = convert_glb(box_glb(), ConversionSettings(target_parts=24))
+    assert all(placement.brick_type in LEGO_PART_CATALOGUE for placement in model.placements)
+    assert all(placement.brick_type.part_id for placement in model.placements)
+
+
 def test_packing_keeps_horizontal_geometry_and_uses_a_plate_for_one_layer() -> None:
     occupied_cells = {GridPosition(x, y, 0) for y in range(2) for x in range(4)}
     placements = pack_occupied_cells(occupied_cells)
     assert len(placements) == 1
-    assert placements[0].brick_type.name == "plate_2x4"
+    assert placements[0].brick_type.part_id == "3020"
     assert placements[0].orientation_degrees == 0
 
 
 def test_bricks_and_plates_use_explicit_plate_layer_heights() -> None:
-    catalogue = {brick.name: brick for brick in BRICK_CATALOGUE}
+    catalogue = {brick.catalogue_key: brick for brick in BRICK_CATALOGUE}
 
     assert catalogue["brick_2x4"].dimensions.height_plates == 3
     assert catalogue["plate_2x4"].dimensions.height_plates == 1
@@ -226,7 +246,7 @@ def test_packing_prefers_larger_bricks_then_plates_deterministically() -> None:
     second = pack_occupied_cells(occupied_cells)
 
     assert first == second
-    assert [placement.brick_type.name for placement in first] == ["brick_2x4", "plate_2x4"]
+    assert [placement.brick_type.catalogue_key for placement in first] == ["brick_2x4", "plate_2x4"]
 
 
 def test_target_parts_selects_a_different_resolution_and_approximately_changes_part_count() -> None:
@@ -255,7 +275,7 @@ def test_calibration_expands_past_initial_candidate_range_and_selects_closest_re
 ) -> None:
     evaluated_counts: list[int] = []
     candidate_counts = iter((10, 20, 30, 40, 50, 95, 115))
-    one_by_one_brick = next(brick for brick in BRICK_CATALOGUE if brick.name == "brick_1x1")
+    one_by_one_brick = next(brick for brick in BRICK_CATALOGUE if brick.part_id == "3005")
 
     def fake_surface_cells(*_: object) -> frozenset[GridPosition]:
         return frozenset({GridPosition(0, 0, 0)})

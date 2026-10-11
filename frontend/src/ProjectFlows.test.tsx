@@ -122,6 +122,8 @@ interface FakeConversionResult {
 function legoModelResponse(partCount: number, targetParts: number | null = 300) {
   const placements = Array.from({ length: partCount }, (_, index) => ({
     brickType: "brick_2x2",
+    partId: "3003",
+    partName: "Brick 2 x 2",
     dimensions: { lengthStuds: 2, widthStuds: 2, heightBricks: 1 },
     position: { x: index * 2, y: 0, z: 0 },
     orientationDegrees: index % 2 === 0 ? 0 : 90,
@@ -605,7 +607,8 @@ describe("project flows", () => {
     expect(summary.compareDocumentPosition(complexity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "View full parts list" }));
     expect(await screen.findByRole("table")).toBeInTheDocument();
-    expect(screen.getByRole("cell", { name: "2×2 brick" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "3003" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Brick 2 x 2" })).toBeInTheDocument();
     expect(screen.queryByTestId("lego-model-viewer")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Preview" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Build summary" })).not.toBeInTheDocument();
@@ -688,7 +691,7 @@ describe("project flows", () => {
     expect(csvBlob).toBeInstanceOf(Blob);
     if (!(csvBlob instanceof Blob)) throw new Error("The parts list download did not create a Blob.");
     expect(csvBlob.type).toBe("text/csv");
-    await expect(csvBlob.text()).resolves.toBe("Part,Length Studs,Width Studs,Height Plates,Color,Quantity\r\n2×2 brick,2,2,3,Light Bluish Gray,1");
+    await expect(csvBlob.text()).resolves.toBe("Part ID,Part Name,Color,Quantity\r\n3003,Brick 2 x 2,Light Bluish Gray,1");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
     expect(legoSummary()).toHaveTextContent("2 × 2 studs");
     expect(screen.queryByRole("list", { name: "Progress" })).not.toBeInTheDocument();

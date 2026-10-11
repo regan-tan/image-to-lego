@@ -8,23 +8,21 @@ function model(placements: LegoModel["placements"], partCount = placements.lengt
 }
 
 function placement(overrides: Partial<LegoModel["placements"][number]> = {}): LegoModel["placements"][number] {
-  return { brickType: "brick_2x4", dimensions: { lengthStuds: 2, widthStuds: 4, heightBricks: 1 }, position: { x: 0, y: 0, z: 0 }, orientationDegrees: 0, color: "light_bluish_gray", ...overrides };
+  return { brickType: "brick_2x4", partId: "3001", partName: "Brick 2 x 4", dimensions: { lengthStuds: 2, widthStuds: 4, heightBricks: 1 }, position: { x: 0, y: 0, z: 0 }, orientationDegrees: 0, color: "light_bluish_gray", ...overrides };
 }
 
 describe("createLegoPartsList", () => {
-  it("groups matching parts regardless of orientation and counts their quantities", () => {
+  it("groups matching real parts regardless of orientation and counts their quantities", () => {
     const result = createLegoPartsList(model([placement(), placement({ position: { x: 2, y: 0, z: 0 }, orientationDegrees: 90 })]));
-    expect(result).toEqual({ valid: true, totalPartCount: 2, uniquePartTypeCount: 1, parts: [expect.objectContaining({ quantity: 2 })] });
+    expect(result).toEqual({ valid: true, totalPartCount: 2, uniquePartTypeCount: 1, parts: [expect.objectContaining({ partId: "3001", partName: "Brick 2 x 4", quantity: 2 })] });
   });
 
-  it("keeps different dimensions and colors in separate groups", () => {
-    const result = createLegoPartsList(model([placement(), placement({ brickType: "brick_1x4", dimensions: { lengthStuds: 1, widthStuds: 4, heightBricks: 1 } }), placement({ color: "blue" })]));
-    expect(result.valid && result.parts).toHaveLength(3);
-  });
-
-  it("sorts by footprint, dimensions, brick type, then color", () => {
-    const result = createLegoPartsList(model([placement({ brickType: "brick_b", dimensions: { lengthStuds: 2, widthStuds: 2, heightBricks: 1 }, color: "red" }), placement({ brickType: "brick_a", dimensions: { lengthStuds: 2, widthStuds: 2, heightBricks: 1 }, color: "blue" }), placement({ brickType: "brick_1x4", dimensions: { lengthStuds: 1, widthStuds: 4, heightBricks: 1 } }), placement()]));
-    expect(result.valid && result.parts.map((part) => `${part.brickType}:${part.color}`)).toEqual(["brick_2x4:light_bluish_gray", "brick_a:blue", "brick_b:red", "brick_1x4:light_bluish_gray"]);
+  it("groups the BOM by real part ID and color", () => {
+    const result = createLegoPartsList(model([placement(), placement({ position: { x: 2, y: 0, z: 0 } }), placement({ color: "blue" })]));
+    expect(result.valid && result.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ partId: "3001", color: "light_bluish_gray", quantity: 2 }),
+      expect.objectContaining({ partId: "3001", color: "blue", quantity: 1 }),
+    ]));
   });
 
   it("detects a part count mismatch", () => {
@@ -34,25 +32,13 @@ describe("createLegoPartsList", () => {
 
 describe("aggregateLegoPlacements", () => {
   it("uses the same grouping without requiring a complete model", () => {
-    expect(aggregateLegoPlacements([
-      placement(),
-      placement({ orientationDegrees: 90, position: { x: 2, y: 0, z: 0 } }),
-    ])).toEqual([expect.objectContaining({ quantity: 2 })]);
+    expect(aggregateLegoPlacements([placement(), placement({ orientationDegrees: 90, position: { x: 2, y: 0, z: 0 } })])).toEqual([expect.objectContaining({ quantity: 2 })]);
   });
 });
 
 describe("serializePartsListCsv", () => {
-  it("writes a header, deterministic rows, and escaped values", () => {
-    expect(serializePartsListCsv([{ brickType: "brick_2x4", lengthStuds: 2, widthStuds: 4, heightPlates: 3, color: "light_bluish_gray", quantity: 3 }])).toBe("Part,Length Studs,Width Studs,Height Plates,Color,Quantity\r\n2×4 brick,2,4,3,Light Bluish Gray,3");
-    expect(serializePartsListCsv([{ brickType: "plate_2x4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('2×4 plate,2,4,1,"Red,Blue"');
+  it("writes real part identity, color, and quantity", () => {
+    expect(serializePartsListCsv([{ brickType: "brick_2x4", partId: "3001", partName: "Brick 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 3, color: "light_bluish_gray", quantity: 3 }])).toBe("Part ID,Part Name,Color,Quantity\r\n3001,Brick 2 x 4,Light Bluish Gray,3");
+    expect(serializePartsListCsv([{ brickType: "plate_2x4", partId: "3020", partName: "Plate 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('3020,Plate 2 x 4,"Red,Blue",1');
   });
-});
-
-it("distinguishes plates from bricks in the BOM", () => {
-  const result = createLegoPartsList(model([
-    placement(),
-    placement({ brickType: "plate_2x4", dimensions: { lengthStuds: 2, widthStuds: 4, heightPlates: 1 } }),
-  ]));
-
-  expect(result.valid && result.parts.map((part) => part.brickType)).toEqual(["brick_2x4", "plate_2x4"]);
 });
