@@ -1,11 +1,11 @@
-import type { LegoModel } from "./schemas/legoModels";
+import { heightInPlates, type LegoModel } from "./schemas/legoModels";
 import { legoColorLabel } from "./legoColors";
 
 export interface LegoPartGroup {
   brickType: string;
   lengthStuds: number;
   widthStuds: number;
-  heightBricks: number;
+  heightPlates: number;
   color: string;
   quantity: number;
 }
@@ -20,13 +20,14 @@ export function aggregateLegoPlacements(
   const groups = new Map<string, LegoPartGroup>();
   for (const placement of placements) {
     const { brickType, dimensions, color } = placement;
-    const key = [brickType, dimensions.lengthStuds, dimensions.widthStuds, dimensions.heightBricks, color].join("|");
+    const heightPlates = heightInPlates(dimensions);
+    const key = [brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates, color].join("|");
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += 1;
       continue;
     }
-    groups.set(key, { brickType, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightBricks: dimensions.heightBricks, color, quantity: 1 });
+    groups.set(key, { brickType, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, quantity: 1 });
   }
   return [...groups.values()].sort(compareParts);
 }
@@ -48,7 +49,8 @@ function compareParts(left: LegoPartGroup, right: LegoPartGroup): number {
 }
 
 export function partLabel(part: LegoPartGroup): string {
-  return `${part.lengthStuds}×${part.widthStuds} brick`;
+  const partKind = part.brickType.startsWith("plate_") ? "plate" : "brick";
+  return `${part.lengthStuds}×${part.widthStuds} ${partKind}`;
 }
 
 export function colorLabel(color: string): string {
@@ -56,7 +58,7 @@ export function colorLabel(color: string): string {
 }
 
 export function serializePartsListCsv(parts: LegoPartGroup[]): string {
-  const rows = [["Part", "Length Studs", "Width Studs", "Height Bricks", "Color", "Quantity"], ...parts.map((part) => [partLabel(part), String(part.lengthStuds), String(part.widthStuds), String(part.heightBricks), colorLabel(part.color), String(part.quantity)])];
+  const rows = [["Part", "Length Studs", "Width Studs", "Height Plates", "Color", "Quantity"], ...parts.map((part) => [partLabel(part), String(part.lengthStuds), String(part.widthStuds), String(part.heightPlates), colorLabel(part.color), String(part.quantity)])];
   return rows.map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
 }
 

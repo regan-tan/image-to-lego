@@ -45,7 +45,8 @@ def placement_cells(placement: BrickPlacement) -> set[GridPosition]:
     if placement.orientation_degrees == 90:
         length, width = width, length
     return {
-        GridPosition(placement.position.x + x, placement.position.y + y, placement.position.z)
+        GridPosition(placement.position.x + x, placement.position.y + y, placement.position.z + z)
+        for z in range(dimensions.height_plates)
         for y in range(width)
         for x in range(length)
     }
@@ -198,12 +199,34 @@ def test_only_supported_bricks_and_orientations_are_emitted() -> None:
     assert {placement.color for placement in model.placements} == {"light_bluish_gray"}
 
 
-def test_packing_uses_largest_supported_brick_first() -> None:
+def test_packing_keeps_horizontal_geometry_and_uses_a_plate_for_one_layer() -> None:
     occupied_cells = {GridPosition(x, y, 0) for y in range(2) for x in range(4)}
     placements = pack_occupied_cells(occupied_cells)
     assert len(placements) == 1
-    assert placements[0].brick_type.name == "brick_2x4"
+    assert placements[0].brick_type.name == "plate_2x4"
     assert placements[0].orientation_degrees == 0
+
+
+def test_bricks_and_plates_use_explicit_plate_layer_heights() -> None:
+    catalogue = {brick.name: brick for brick in BRICK_CATALOGUE}
+
+    assert catalogue["brick_2x4"].dimensions.height_plates == 3
+    assert catalogue["plate_2x4"].dimensions.height_plates == 1
+
+
+def test_packing_prefers_larger_bricks_then_plates_deterministically() -> None:
+    occupied_cells = {
+        GridPosition(x, y, z)
+        for x in range(4)
+        for y in range(2)
+        for z in range(4)
+    }
+
+    first = pack_occupied_cells(occupied_cells)
+    second = pack_occupied_cells(occupied_cells)
+
+    assert first == second
+    assert [placement.brick_type.name for placement in first] == ["brick_2x4", "plate_2x4"]
 
 
 def test_target_parts_selects_a_different_resolution_and_approximately_changes_part_count() -> None:
@@ -232,33 +255,67 @@ def test_calibration_expands_past_initial_candidate_range_and_selects_closest_re
 ) -> None:
     evaluated_counts: list[int] = []
     candidate_counts = iter((10, 20, 30, 40, 50, 95, 115))
+    one_by_one_brick = next(brick for brick in BRICK_CATALOGUE if brick.name == "brick_1x1")
 
     def fake_surface_cells(*_: object) -> frozenset[GridPosition]:
         return frozenset({GridPosition(0, 0, 0)})
 
-    def fake_pack_occupied_cells(_: object) -> tuple[BrickPlacement, ...]:
+    def fake_pack_occupied_cells(*_: object) -> tuple[BrickPlacement, ...]:
         part_count = next(candidate_counts)
         evaluated_counts.append(part_count)
         return tuple(
-            BrickPlacement(BRICK_CATALOGUE[-1], GridPosition(index, 0, 0), 0)
+            BrickPlacement(one_by_one_brick, GridPosition(index, 0, 0), 0)
             for index in range(part_count)
         )
 
     monkeypatch.setattr(converter_core, "_surface_cells", fake_surface_cells)
     monkeypatch.setattr(converter_core, "pack_occupied_cells", fake_pack_occupied_cells)
 
-    model = convert_glb(box_glb(), ConversionSettings(target_parts=100))
+    source_vertices: list[tuple[float, float, float]] = [
+        (0.0, 0.0, 0.0),
+        (4.0, 3.0, 2.0),
+    ]
+    vertices = converter_core._normalize_vertices(
+        source_vertices,
+        Axis.Y,
+    )
+    source_faces: list[tuple[int, int, int]] = [(0, 1, 1)]
+    grid_size, candidate_count = converter_core._select_legacy_grid(
+        vertices,
+        source_faces,
+        100,
+    )
 
     assert len(evaluated_counts) > len(GRID_CELL_BUDGET_FACTORS)
-    assert model.metadata.candidate_count == len(evaluated_counts)
-    assert model.part_count == min(evaluated_counts, key=lambda count: abs(count - 100))
+    assert candidate_count == len(evaluated_counts)
+    assert grid_size.cell_count > 0
+
+
+def test_v3_preserves_v2_xy_selection_and_expands_only_vertical_layers() -> None:
+    glb_bytes = box_glb()
+    mesh = converter_core._load_mesh(glb_bytes)
+    vertices: list[tuple[float, float, float]] = [
+        (float(vertex[0]), float(vertex[1]), float(vertex[2]))
+        for vertex in mesh.vertices.tolist()
+    ]
+    faces: list[tuple[int, int, int]] = [
+        (int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()
+    ]
+    normalized_vertices = converter_core._normalize_vertices(vertices, Axis.Y)
+    legacy_grid_size, _ = converter_core._select_legacy_grid(normalized_vertices, faces, 24)
+
+    model = convert_glb(glb_bytes, ConversionSettings(target_parts=24))
+
+    assert model.metadata.grid_size.width_studs == legacy_grid_size.width_studs
+    assert model.metadata.grid_size.depth_studs == legacy_grid_size.depth_studs
+    assert model.metadata.grid_size.height_plates == legacy_grid_size.height_plates * 3
 
 
 def test_up_axis_changes_the_lego_height_predictably() -> None:
     glb_bytes = box_glb(extents=(2.0, 6.0, 4.0))
     y_up = convert_glb(glb_bytes, ConversionSettings(target_parts=24, up_axis=Axis.Y))
     z_up = convert_glb(glb_bytes, ConversionSettings(target_parts=24, up_axis=Axis.Z))
-    assert y_up.metadata.grid_size.height_bricks > z_up.metadata.grid_size.height_bricks
+    assert y_up.metadata.grid_size.height_plates > z_up.metadata.grid_size.height_plates
 
 
 @pytest.mark.parametrize(

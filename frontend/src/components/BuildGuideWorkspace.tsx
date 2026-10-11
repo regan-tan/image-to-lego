@@ -56,7 +56,7 @@ export function BuildGuideWorkspace({
             <h4>Parts needed this step</h4>
             <ul>
               {step.parts.map((part) => (
-                <li key={`${part.brickType}-${part.lengthStuds}-${part.widthStuds}-${part.heightBricks}-${part.color}`}>
+                <li key={`${part.brickType}-${part.lengthStuds}-${part.widthStuds}-${part.heightPlates}-${part.color}`}>
                   <span className="color-swatch" style={{ backgroundColor: legoColorHex(part.color) }} aria-hidden="true" />
                   <span className="build-guide__part-description">
                     <strong>{partLabel(part)}</strong>

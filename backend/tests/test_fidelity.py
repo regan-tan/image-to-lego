@@ -93,6 +93,6 @@ def test_orientation_changes_the_lego_box_footprint() -> None:
     rotated = BrickPlacement(brick, GridPosition(0, 0, 0), 90)
 
     assert converter_core._placement_boxes((unrotated,)) == (
-        (0.0, 0.0, 0.0, 4.0, 2.0, 1.0),
+        (0.0, 0.0, 0.0, 4.0, 2.0, 3.0),
     )
-    assert converter_core._placement_boxes((rotated,)) == ((0.0, 0.0, 0.0, 2.0, 4.0, 1.0),)
+    assert converter_core._placement_boxes((rotated,)) == ((0.0, 0.0, 0.0, 2.0, 4.0, 3.0),)

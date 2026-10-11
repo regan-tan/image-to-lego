@@ -16,7 +16,7 @@ import {
 } from "../legoBuildComplexity";
 import type { LegoPartsListResult } from "../legoPartsList";
 import type { Conversion, ConversionStatus } from "../schemas/conversions";
-import type { LegoModel } from "../schemas/legoModels";
+import { heightInPlates, type LegoModel } from "../schemas/legoModels";
 import type { ProjectDetail } from "../schemas/projects";
 import {
   checkImageFileBasics,
@@ -443,7 +443,7 @@ function LegoSummary({ model }: { model: LegoModel }) {
   return (
     <section className="lego-result" aria-labelledby="lego-result-title">
       <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
-      <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {dimensions.heightBricks} bricks tall · {complexityLabel} target</p>
+      <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {heightInPlates(dimensions)} plates tall · {complexityLabel} target</p>
     </section>
   );
 }

@@ -3,7 +3,19 @@ import { z } from "zod";
 const dimensionsSchema = z.object({
   widthStuds: z.number(),
   depthStuds: z.number(),
-  heightBricks: z.number(),
+  heightBricks: z.number().optional(),
+  heightPlates: z.number().optional(),
+}).refine((dimensions) => dimensions.heightBricks !== undefined || dimensions.heightPlates !== undefined, {
+  message: "A LEGO model height must use bricks or plates.",
+});
+
+const partDimensionsSchema = z.object({
+  lengthStuds: z.number(),
+  widthStuds: z.number(),
+  heightBricks: z.number().optional(),
+  heightPlates: z.number().optional(),
+}).refine((dimensions) => dimensions.heightBricks !== undefined || dimensions.heightPlates !== undefined, {
+  message: "A LEGO part height must use bricks or plates.",
 });
 
 export const legoModelSchema = z.object({
@@ -20,7 +32,7 @@ export const legoModelSchema = z.object({
   }),
   placements: z.array(z.object({
     brickType: z.string(),
-    dimensions: z.object({ lengthStuds: z.number(), widthStuds: z.number(), heightBricks: z.number() }),
+    dimensions: partDimensionsSchema,
     position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
     orientationDegrees: z.union([z.literal(0), z.literal(90)]),
     color: z.string(),
@@ -28,3 +40,7 @@ export const legoModelSchema = z.object({
 });
 
 export type LegoModel = z.infer<typeof legoModelSchema>;
+
+export function heightInPlates(dimensions: { heightBricks?: number; heightPlates?: number }): number {
+  return dimensions.heightPlates ?? (dimensions.heightBricks ?? 0) * 3;
+}

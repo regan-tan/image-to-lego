@@ -81,6 +81,14 @@ describe("deriveLegoBuildSteps", () => {
 
     expect(steps[1]?.placements).toEqual([tallBrick]);
   });
+
+  it("uses plate-layer z positions for plate build steps", () => {
+    const plate = placement(1, { brickType: "plate_2x4", dimensions: { lengthStuds: 2, widthStuds: 4, heightPlates: 1 } });
+    const steps = deriveLegoBuildSteps(model([placement(0), plate, placement(2)]));
+
+    expect(steps.map((step) => step.layerZ)).toEqual([0, 1, 2]);
+    expect(steps[1]?.placements).toEqual([plate]);
+  });
 });
 
 describe("classifyPlacementForBuildStep", () => {

@@ -79,5 +79,5 @@ function PartsListRow({ part }: { part: LegoPartGroup }) {
 }
 
 function partKey(part: LegoPartGroup): string {
-  return `${part.brickType}-${part.lengthStuds}-${part.widthStuds}-${part.heightBricks}-${part.color}`;
+  return `${part.brickType}-${part.lengthStuds}-${part.widthStuds}-${part.heightPlates}-${part.color}`;
 }
