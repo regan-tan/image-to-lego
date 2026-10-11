@@ -25,10 +25,11 @@ from app.conversion.fidelity import FidelityMetrics, evaluate_fidelity
 
 logger = logging.getLogger(__name__)
 
-ALGORITHM_VERSION = "surface-grid-v2"
+ALGORITHM_VERSION = "surface-grid-v3"
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
-BRICK_HEIGHT_MM = 9.6
+PLATE_HEIGHT_MM = 3.2
+BRICK_HEIGHT_PLATES = 3
 
 # These bounds keep one conversion's memory use and packing work predictable.
 MAX_INPUT_BYTES = 16 * 1024 * 1024
@@ -66,18 +67,18 @@ class GridPosition:
 class GridSize:
     width_studs: int
     depth_studs: int
-    height_bricks: int
+    height_plates: int
 
     @property
     def cell_count(self) -> int:
-        return self.width_studs * self.depth_studs * self.height_bricks
+        return self.width_studs * self.depth_studs * self.height_plates
 
 
 @dataclass(frozen=True, slots=True)
 class BrickDimensions:
     length_studs: int
     width_studs: int
-    height_bricks: int = 1
+    height_plates: int = BRICK_HEIGHT_PLATES
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +93,28 @@ BRICK_CATALOGUE = (
     BrickType("brick_2x2", BrickDimensions(2, 2)),
     BrickType("brick_1x4", BrickDimensions(4, 1)),
     BrickType("brick_1x3", BrickDimensions(3, 1)),
+    BrickType("plate_2x4", BrickDimensions(4, 2, 1)),
+    BrickType("plate_2x3", BrickDimensions(3, 2, 1)),
     BrickType("brick_1x2", BrickDimensions(2, 1)),
+    BrickType("plate_2x2", BrickDimensions(2, 2, 1)),
+    BrickType("plate_1x4", BrickDimensions(4, 1, 1)),
     BrickType("brick_1x1", BrickDimensions(1, 1)),
+    BrickType("plate_1x3", BrickDimensions(3, 1, 1)),
+    BrickType("plate_1x2", BrickDimensions(2, 1, 1)),
+    BrickType("plate_1x1", BrickDimensions(1, 1, 1)),
+)
+
+LEGACY_BRICK_CATALOGUE = tuple(
+    BrickType(
+        brick_type.name,
+        BrickDimensions(
+            brick_type.dimensions.length_studs,
+            brick_type.dimensions.width_studs,
+            1,
+        ),
+    )
+    for brick_type in BRICK_CATALOGUE
+    if brick_type.name.startswith("brick_")
 )
 
 
@@ -109,7 +130,7 @@ class BrickPlacement:
 class ModelDimensions:
     width_studs: int
     depth_studs: int
-    height_bricks: int
+    height_plates: int
     width_mm: float
     depth_mm: float
     height_mm: float
@@ -136,7 +157,7 @@ class LegoModel:
 
 
 def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
-    """Convert GLB bytes into a deterministic one-layer-brick surface model."""
+    """Convert GLB bytes into a deterministic surface model on a plate-height grid."""
     _validate_settings(settings)
     if len(glb_bytes) > MAX_INPUT_BYTES:
         raise ConversionError("GLB input exceeds the configured size limit.")
@@ -148,45 +169,22 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
     normalized_vertices = _normalize_vertices(vertices, settings.up_axis)
 
-    best: tuple[int, int, tuple[BrickPlacement, ...], GridSize, int] | None = None
-    candidate_factors = list(GRID_CELL_BUDGET_FACTORS)
-    evaluated_grid_sizes: set[GridSize] = set()
-    candidate_count = 0
-    factor_index = 0
-    while factor_index < len(candidate_factors):
-        factor = candidate_factors[factor_index]
-        grid_size = _candidate_grid_size(normalized_vertices, settings.target_parts, factor)
-        if grid_size is None:
-            break
-        if grid_size in evaluated_grid_sizes:
-            if factor_index == len(candidate_factors) - 1:
-                candidate_factors.append(factor * 2)
-            factor_index += 1
-            continue
-
-        evaluated_grid_sizes.add(grid_size)
-        occupied_cells = _surface_cells(normalized_vertices, faces, grid_size)
-        placements = pack_occupied_cells(occupied_cells)
-        candidate_count += 1
-        candidate = (
-            abs(len(placements) - settings.target_parts),
-            grid_size.cell_count,
-            placements,
-            grid_size,
-            len(occupied_cells),
-        )
-        if best is None or candidate[:2] < best[:2]:
-            best = candidate
-        if len(placements) >= settings.target_parts:
-            break
-        if factor_index == len(candidate_factors) - 1:
-            candidate_factors.append(factor * 2)
-        factor_index += 1
-
-    if best is None:
+    legacy_grid_size, candidate_count = _select_legacy_grid(
+        normalized_vertices,
+        faces,
+        settings.target_parts,
+    )
+    grid_size = GridSize(
+        legacy_grid_size.width_studs,
+        legacy_grid_size.depth_studs,
+        legacy_grid_size.height_plates * BRICK_HEIGHT_PLATES,
+    )
+    if grid_size.cell_count > MAX_GRID_CELLS:
         raise ConversionError("Target parts would exceed the configured grid safety limit.")
 
-    _, _, placements, grid_size, occupied_cell_count = best
+    occupied_cells = _surface_cells(normalized_vertices, faces, grid_size)
+    placements = pack_occupied_cells(occupied_cells)
+    occupied_cell_count = len(occupied_cells)
     placements = _color_placements(placements, normalized_vertices, faces, mesh, grid_size)
     dimensions = _model_dimensions(placements)
     scaled_vertices = _scale_vertices_to_grid(normalized_vertices, grid_size)
@@ -213,7 +211,10 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     )
 
 
-def pack_occupied_cells(occupied_cells: Collection[GridPosition]) -> tuple[BrickPlacement, ...]:
+def pack_occupied_cells(
+    occupied_cells: Collection[GridPosition],
+    catalogue: tuple[BrickType, ...] = BRICK_CATALOGUE,
+) -> tuple[BrickPlacement, ...]:
     """Cover occupied grid cells with the fixed catalogue in deterministic largest-first order."""
     remaining = set(occupied_cells)
     if not remaining:
@@ -231,11 +232,51 @@ def pack_occupied_cells(occupied_cells: Collection[GridPosition]) -> tuple[Brick
                 position = GridPosition(x, y, z)
                 if position not in remaining:
                     continue
-                placement = _first_fitting_brick(position, remaining)
+                placement = _first_fitting_brick(position, remaining, catalogue)
                 placements.append(placement)
                 remaining.difference_update(_placement_cells(placement))
 
     return tuple(placements)
+
+
+def _select_legacy_grid(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int]],
+    target_parts: int,
+) -> tuple[GridSize, int]:
+    """Select the v2 horizontal resolution before expanding vertical layers to plates."""
+    best: tuple[int, int, GridSize] | None = None
+    candidate_factors = list(GRID_CELL_BUDGET_FACTORS)
+    evaluated_grid_sizes: set[GridSize] = set()
+    candidate_count = 0
+    factor_index = 0
+    while factor_index < len(candidate_factors):
+        factor = candidate_factors[factor_index]
+        grid_size = _legacy_candidate_grid_size(vertices, target_parts, factor)
+        if grid_size is None:
+            break
+        if grid_size in evaluated_grid_sizes:
+            if factor_index == len(candidate_factors) - 1:
+                candidate_factors.append(factor * 2)
+            factor_index += 1
+            continue
+
+        evaluated_grid_sizes.add(grid_size)
+        occupied_cells = _surface_cells(vertices, faces, grid_size)
+        placements = pack_occupied_cells(occupied_cells, LEGACY_BRICK_CATALOGUE)
+        candidate_count += 1
+        candidate = (abs(len(placements) - target_parts), grid_size.cell_count, grid_size)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+        if len(placements) >= target_parts:
+            break
+        if factor_index == len(candidate_factors) - 1:
+            candidate_factors.append(factor * 2)
+        factor_index += 1
+
+    if best is None:
+        raise ConversionError("Target parts would exceed the configured grid safety limit.")
+    return best[2], candidate_count
 
 
 def _validate_settings(settings: ConversionSettings) -> None:
@@ -333,7 +374,7 @@ def _color_placements(
 def _point_to_grid_cell(
     point: tuple[float, float, float], maximum: tuple[float, float, float], grid_size: GridSize
 ) -> GridPosition:
-    scales = (grid_size.width_studs - 1, grid_size.depth_studs - 1, grid_size.height_bricks - 1)
+    scales = (grid_size.width_studs - 1, grid_size.depth_studs - 1, grid_size.height_plates - 1)
     coordinates = [round(point[index] / maximum[index] * scales[index]) for index in range(3)]
     return GridPosition(*coordinates)
 
@@ -479,14 +520,14 @@ def _to_lego_axes(vertex: tuple[float, float, float], up_axis: Axis) -> tuple[fl
     return x, y, z
 
 
-def _candidate_grid_size(
+def _legacy_candidate_grid_size(
     vertices: list[tuple[float, float, float]], target_parts: int, factor: float
 ) -> GridSize | None:
     maximum = tuple(max(vertex[index] for vertex in vertices) for index in range(3))
     proportions = (
         maximum[0] / STUD_WIDTH_MM,
         maximum[1] / STUD_WIDTH_MM,
-        maximum[2] / BRICK_HEIGHT_MM,
+        maximum[2] / (PLATE_HEIGHT_MM * BRICK_HEIGHT_PLATES),
     )
     proportion_volume = prod(proportions)
     grid_size = _grid_size_for_budget(proportions, proportion_volume, target_parts * factor)
@@ -526,7 +567,7 @@ def _surface_cells(
         or cell.z < 0
         or cell.x >= grid_size.width_studs
         or cell.y >= grid_size.depth_studs
-        or cell.z >= grid_size.height_bricks
+        or cell.z >= grid_size.height_plates
         for cell in cells
     ):
         raise ConversionError("Surface voxelization produced cells outside the requested grid.")
@@ -541,14 +582,18 @@ def _scale_vertices_to_grid(
         (
             vertex[0] / maximum[0] * (grid_size.width_studs - 1),
             vertex[1] / maximum[1] * (grid_size.depth_studs - 1),
-            vertex[2] / maximum[2] * (grid_size.height_bricks - 1),
+            vertex[2] / maximum[2] * (grid_size.height_plates - 1),
         )
         for vertex in vertices
     ]
 
 
-def _first_fitting_brick(position: GridPosition, remaining: set[GridPosition]) -> BrickPlacement:
-    for brick_type in BRICK_CATALOGUE:
+def _first_fitting_brick(
+    position: GridPosition,
+    remaining: set[GridPosition],
+    catalogue: tuple[BrickType, ...],
+) -> BrickPlacement:
+    for brick_type in catalogue:
         orientations = (
             (0,)
             if brick_type.dimensions.length_studs == brick_type.dimensions.width_studs
@@ -568,7 +613,8 @@ def _placement_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
     if placement.orientation_degrees == 90:
         length, width = width, length
     return frozenset(
-        GridPosition(placement.position.x + x, placement.position.y + y, placement.position.z)
+        GridPosition(placement.position.x + x, placement.position.y + y, placement.position.z + z)
+        for z in range(dimensions.height_plates)
         for y in range(width)
         for x in range(length)
     )
@@ -591,7 +637,7 @@ def _placement_boxes(
                 float(placement.position.z),
                 float(placement.position.x + length),
                 float(placement.position.y + width),
-                float(placement.position.z + dimensions.height_bricks),
+                float(placement.position.z + dimensions.height_plates),
             )
         )
     return tuple(boxes)
@@ -605,13 +651,14 @@ def _model_dimensions(placements: tuple[BrickPlacement, ...]) -> ModelDimensions
         cells = _placement_cells(placement)
         maximum_x = max(maximum_x, max(cell.x for cell in cells) + 1)
         maximum_y = max(maximum_y, max(cell.y for cell in cells) + 1)
-        maximum_z = max(maximum_z, placement.position.z + 1)
+        placement_top = placement.position.z + placement.brick_type.dimensions.height_plates
+        maximum_z = max(maximum_z, placement_top)
 
     return ModelDimensions(
         width_studs=maximum_x,
         depth_studs=maximum_y,
-        height_bricks=maximum_z,
+        height_plates=maximum_z,
         width_mm=maximum_x * STUD_WIDTH_MM,
         depth_mm=maximum_y * STUD_WIDTH_MM,
-        height_mm=maximum_z * BRICK_HEIGHT_MM,
+        height_mm=maximum_z * PLATE_HEIGHT_MM,
     )

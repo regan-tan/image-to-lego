@@ -43,7 +43,16 @@ describe("aggregateLegoPlacements", () => {
 
 describe("serializePartsListCsv", () => {
   it("writes a header, deterministic rows, and escaped values", () => {
-    expect(serializePartsListCsv([{ brickType: "brick_2x4", lengthStuds: 2, widthStuds: 4, heightBricks: 1, color: "light_bluish_gray", quantity: 3 }])).toBe("Part,Length Studs,Width Studs,Height Bricks,Color,Quantity\r\n2×4 brick,2,4,1,Light Bluish Gray,3");
-    expect(serializePartsListCsv([{ brickType: "brick_2x4", lengthStuds: 2, widthStuds: 4, heightBricks: 1, color: "red,blue", quantity: 1 }])).toContain('"Red,Blue"');
+    expect(serializePartsListCsv([{ brickType: "brick_2x4", lengthStuds: 2, widthStuds: 4, heightPlates: 3, color: "light_bluish_gray", quantity: 3 }])).toBe("Part,Length Studs,Width Studs,Height Plates,Color,Quantity\r\n2×4 brick,2,4,3,Light Bluish Gray,3");
+    expect(serializePartsListCsv([{ brickType: "plate_2x4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('2×4 plate,2,4,1,"Red,Blue"');
   });
+});
+
+it("distinguishes plates from bricks in the BOM", () => {
+  const result = createLegoPartsList(model([
+    placement(),
+    placement({ brickType: "plate_2x4", dimensions: { lengthStuds: 2, widthStuds: 4, heightPlates: 1 } }),
+  ]));
+
+  expect(result.valid && result.parts.map((part) => part.brickType)).toEqual(["brick_2x4", "plate_2x4"]);
 });

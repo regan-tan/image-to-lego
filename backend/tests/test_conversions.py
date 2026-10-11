@@ -310,6 +310,8 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     output = json.loads(blob.uploads[0][1])
     assert output["partCount"] == len(output["placements"])
     assert output["placements"][0]["brickType"]
+    assert "heightPlates" in output["dimensions"]
+    assert "heightBricks" not in output["dimensions"]
 
 
 def test_lego_model_json_is_stable() -> None:

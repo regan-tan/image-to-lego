@@ -172,7 +172,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
         "dimensions": {
             "widthStuds": model.dimensions.width_studs,
             "depthStuds": model.dimensions.depth_studs,
-            "heightBricks": model.dimensions.height_bricks,
+            "heightPlates": model.dimensions.height_plates,
             "widthMm": model.dimensions.width_mm,
             "depthMm": model.dimensions.depth_mm,
             "heightMm": model.dimensions.height_mm,
@@ -185,7 +185,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             "gridSize": {
                 "widthStuds": model.metadata.grid_size.width_studs,
                 "depthStuds": model.metadata.grid_size.depth_studs,
-                "heightBricks": model.metadata.grid_size.height_bricks,
+                "heightPlates": model.metadata.grid_size.height_plates,
             },
             "candidateCount": model.metadata.candidate_count,
             "occupancyMode": model.metadata.occupancy_mode,
@@ -208,7 +208,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "dimensions": {
                     "lengthStuds": placement.brick_type.dimensions.length_studs,
                     "widthStuds": placement.brick_type.dimensions.width_studs,
-                    "heightBricks": placement.brick_type.dimensions.height_bricks,
+                    "heightPlates": placement.brick_type.dimensions.height_plates,
                 },
                 "position": {
                     "x": placement.position.x,

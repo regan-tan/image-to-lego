@@ -688,7 +688,7 @@ describe("project flows", () => {
     expect(csvBlob).toBeInstanceOf(Blob);
     if (!(csvBlob instanceof Blob)) throw new Error("The parts list download did not create a Blob.");
     expect(csvBlob.type).toBe("text/csv");
-    await expect(csvBlob.text()).resolves.toBe("Part,Length Studs,Width Studs,Height Bricks,Color,Quantity\r\n2×2 brick,2,2,1,Light Bluish Gray,1");
+    await expect(csvBlob.text()).resolves.toBe("Part,Length Studs,Width Studs,Height Plates,Color,Quantity\r\n2×2 brick,2,2,3,Light Bluish Gray,1");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
     expect(legoSummary()).toHaveTextContent("2 × 2 studs");
     expect(screen.queryByRole("list", { name: "Progress" })).not.toBeInTheDocument();
