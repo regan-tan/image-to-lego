@@ -313,11 +313,16 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
 
 
 def test_lego_model_json_is_stable() -> None:
-    model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
+    source = box_glb()
+    settings = ConversionSettings(target_parts=24, up_axis=Axis.Y)
+    model = convert_glb(source, settings)
+    repeated_model = convert_glb(source, settings)
     first = serialize_lego_model(model)
-    second = serialize_lego_model(model)
+    second = serialize_lego_model(repeated_model)
     assert first == second
+    assert model.metadata.fidelity == repeated_model.metadata.fidelity
     assert json.loads(first)["metadata"]["algorithmVersion"] == model.metadata.algorithm_version
+    assert json.loads(first)["metadata"]["fidelity"]["meanIoU"] == model.metadata.fidelity.mean_iou
 
 
 @pytest.mark.asyncio

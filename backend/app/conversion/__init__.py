@@ -16,6 +16,7 @@ from app.conversion.core import (
     convert_glb,
     pack_occupied_cells,
 )
+from app.conversion.fidelity import FidelityMetrics
 
 __all__ = [
     "ALGORITHM_VERSION",
@@ -26,6 +27,7 @@ __all__ = [
     "ConversionError",
     "ConversionSettings",
     "DEFAULT_COLOR",
+    "FidelityMetrics",
     "GridPosition",
     "GridSize",
     "LegoModel",

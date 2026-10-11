@@ -75,6 +75,23 @@ def test_conversion_is_deterministic() -> None:
     assert convert_glb(glb_bytes, settings) == convert_glb(glb_bytes, settings)
 
 
+def test_fidelity_metadata_does_not_change_placement_representation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    glb_bytes = box_glb()
+    settings = ConversionSettings(target_parts=24)
+    baseline = convert_glb(glb_bytes, settings)
+    monkeypatch.setattr(
+        converter_core,
+        "evaluate_fidelity",
+        lambda *args, **kwargs: baseline.metadata.fidelity,
+    )
+    measured = convert_glb(glb_bytes, settings)
+
+    assert measured.placements == baseline.placements
+    assert measured.dimensions == baseline.dimensions
+
+
 def test_source_vertex_colors_change_only_placement_colors() -> None:
     mesh = trimesh.creation.box(extents=(4.0, 3.0, 2.0))
     mesh.visual.vertex_colors = [

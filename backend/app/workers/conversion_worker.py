@@ -189,6 +189,18 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             },
             "candidateCount": model.metadata.candidate_count,
             "occupancyMode": model.metadata.occupancy_mode,
+            "fidelity": {
+                "metricsVersion": model.metadata.fidelity.metrics_version,
+                "rasterResolution": model.metadata.fidelity.raster_resolution,
+                "frontIoU": model.metadata.fidelity.front_iou,
+                "sideIoU": model.metadata.fidelity.side_iou,
+                "topIoU": model.metadata.fidelity.top_iou,
+                "meanIoU": model.metadata.fidelity.mean_iou,
+                "targetParts": model.metadata.fidelity.target_parts,
+                "actualParts": model.metadata.fidelity.actual_parts,
+                "partCountDelta": model.metadata.fidelity.part_count_delta,
+                "partCountErrorRatio": model.metadata.fidelity.part_count_error_ratio,
+            },
         },
         "placements": [
             {
