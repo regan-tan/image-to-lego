@@ -89,6 +89,10 @@ def test_catalogue_generation_is_byte_deterministic(tmp_path: Path) -> None:
             lambda records: records[0].update({"partId": "9999"}),
             "Color availability references unknown part IDs: 3001.",
         ),
+        (
+            lambda records: records[-1].__setitem__("slopeProfile", "unknown"),
+            "Part 4286: slope_33 parts must use rise_33_3.",
+        ),
     ],
 )
 def test_invalid_catalogue_source_fails_with_a_useful_message(

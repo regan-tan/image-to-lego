@@ -10,6 +10,7 @@ from typing import Final, cast
 
 BRICK_HEIGHT_PLATES = 3
 PLATE_HEIGHT_PLATES = 1
+SLOPE_33_FAMILY = "slope_33"
 _GENERATED_CATALOGUE_PATH = Path(__file__).with_name("generated_part_catalogue.json")
 
 
@@ -31,6 +32,7 @@ class LegoPart:
     length_studs: int
     height_plates: int
     shape: str = "rectangular"
+    slope_profile: str | None = None
     geometry_asset: str | None = None
     ldraw_id: str | None = None
     bricklink_id: str | None = None
@@ -43,7 +45,8 @@ class LegoPart:
 
     @property
     def catalogue_key(self) -> str:
-        return f"{self.family}_{self.width_studs}x{self.length_studs}"
+        display_family = self.family.split("_", maxsplit=1)[0]
+        return f"{display_family}_{self.width_studs}x{self.length_studs}"
 
 
 def _load_generated_catalogue() -> tuple[LegoPart, ...]:
@@ -65,6 +68,7 @@ def _load_generated_catalogue() -> tuple[LegoPart, ...]:
                 length_studs=cast(int, record["lengthStuds"]),
                 height_plates=cast(int, record["heightPlates"]),
                 shape=cast(str, record["shape"]),
+                slope_profile=cast(str | None, record["slopeProfile"]),
                 geometry_asset=cast(str | None, record["geometryAsset"]),
                 ldraw_id=cast(str | None, record["ldrawId"]),
                 bricklink_id=cast(str | None, record["bricklinkId"]),

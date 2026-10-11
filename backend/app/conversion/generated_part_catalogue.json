@@ -11,6 +11,7 @@
     "name": "Brick 2 x 4",
     "partId": "3001",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -25,6 +26,7 @@
     "name": "Brick 2 x 3",
     "partId": "3002",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -39,6 +41,7 @@
     "name": "Brick 2 x 2",
     "partId": "3003",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -53,6 +56,7 @@
     "name": "Brick 1 x 2",
     "partId": "3004",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -67,6 +71,7 @@
     "name": "Brick 1 x 1",
     "partId": "3005",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -81,6 +86,7 @@
     "name": "Brick 1 x 4",
     "partId": "3010",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -95,6 +101,7 @@
     "name": "Plate 2 x 4",
     "partId": "3020",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -109,6 +116,7 @@
     "name": "Plate 2 x 3",
     "partId": "3021",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -123,6 +131,7 @@
     "name": "Plate 2 x 2",
     "partId": "3022",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 2
   },
   {
@@ -137,6 +146,7 @@
     "name": "Plate 1 x 2",
     "partId": "3023",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -151,6 +161,7 @@
     "name": "Plate 1 x 1",
     "partId": "3024",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -165,6 +176,7 @@
     "name": "Brick 1 x 3",
     "partId": "3622",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -179,6 +191,7 @@
     "name": "Plate 1 x 3",
     "partId": "3623",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
@@ -193,11 +206,12 @@
     "name": "Plate 1 x 4",
     "partId": "3710",
     "shape": "rectangular",
+    "slopeProfile": null,
     "widthStuds": 1
   },
   {
     "bricklinkId": "4286",
-    "family": "slope",
+    "family": "slope_33",
     "fitterEnabled": true,
     "fitterOrder": 14,
     "geometryAsset": "4286",
@@ -207,6 +221,7 @@
     "name": "Slope 33 3 x 1",
     "partId": "4286",
     "shape": "slope_33_3x1",
+    "slopeProfile": "rise_33_3",
     "widthStuds": 1
   }
 ]

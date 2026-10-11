@@ -15,6 +15,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_PATH = REPOSITORY_ROOT / "lego_catalogue" / "parts.json"
 DEFAULT_OUTPUT_PATH = REPOSITORY_ROOT / "backend" / "app" / "conversion" / "generated_part_catalogue.json"
 DEFAULT_ASSET_DIRECTORY = REPOSITORY_ROOT / "backend" / "app" / "conversion" / "part_geometry_assets"
+SLOPE_33_FAMILY = "slope_33"
+SLOPE_33_PROFILE = "rise_33_3"
+SLOPE_33_LENGTH_STUDS = 3
+SLOPE_33_HEIGHT_PLATES = 3
 
 class CatalogueValidationError(ValueError):
     """The human-maintained catalogue source is not safe to generate."""
@@ -107,6 +111,7 @@ def validate_records(
         width_studs = _positive_integer(record, "widthStuds", part_id)
         length_studs = _positive_integer(record, "lengthStuds", part_id)
         height_plates = _positive_integer(record, "heightPlates", part_id)
+        slope_profile = _optional_string(record, "slopeProfile", part_id)
         ldraw_id = _optional_string(record, "ldrawId", part_id)
         bricklink_id = _optional_string(record, "bricklinkId", part_id)
         geometry_asset = _optional_string(record, "geometryAsset", part_id)
@@ -117,6 +122,19 @@ def validate_records(
             ldraw_ids.add(ldraw_id)
         if geometry_asset is not None and not (asset_directory / f"{geometry_asset}.json").is_file():
             _error(f"Part {part_id}: geometry asset {geometry_asset}.json does not exist.")
+        if family == SLOPE_33_FAMILY:
+            if slope_profile != SLOPE_33_PROFILE:
+                _error(f"Part {part_id}: slope_33 parts must use {SLOPE_33_PROFILE}.")
+            if (
+                length_studs != SLOPE_33_LENGTH_STUDS
+                or height_plates != SLOPE_33_HEIGHT_PLATES
+            ):
+                _error(
+                    f"Part {part_id}: {SLOPE_33_PROFILE} requires "
+                    f"{SLOPE_33_LENGTH_STUDS} studs by {SLOPE_33_HEIGHT_PLATES} plates."
+                )
+        elif slope_profile is not None:
+            _error(f"Part {part_id}: only slope families may define slopeProfile.")
 
         fitter_enabled = record.get("fitterEnabled")
         if not isinstance(fitter_enabled, bool):
@@ -139,6 +157,7 @@ def validate_records(
             "widthStuds": width_studs,
             "lengthStuds": length_studs,
             "heightPlates": height_plates,
+            "slopeProfile": slope_profile,
             "ldrawId": ldraw_id,
             "bricklinkId": bricklink_id,
             "geometryAsset": geometry_asset,

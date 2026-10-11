@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 import trimesh
 from PIL import Image
@@ -242,7 +244,7 @@ def test_real_part_catalogue_has_the_supported_valid_shapes() -> None:
     )
     assert slope_details == (
         "Slope 33 3 x 1",
-        "slope",
+        "slope_33",
         1,
         3,
         3,
@@ -287,7 +289,7 @@ def test_packing_prefers_larger_bricks_then_plates_deterministically() -> None:
     assert [placement.brick_type.catalogue_key for placement in first] == ["brick_2x4", "plate_2x4"]
 
 
-def test_4286_selects_rising_and_falling_runs_in_all_four_orientations() -> None:
+def test_slope_33_family_selects_rising_and_falling_runs_in_all_four_orientations() -> None:
     runs = {
         0: (GridPosition(0, 0, 1), GridPosition(1, 0, 2), GridPosition(2, 0, 4)),
         90: (GridPosition(0, 0, 1), GridPosition(0, 1, 3), GridPosition(0, 2, 4)),
@@ -296,14 +298,14 @@ def test_4286_selects_rising_and_falling_runs_in_all_four_orientations() -> None
     }
 
     for orientation, cells in runs.items():
-        slopes, reserved = converter_core._place_4286_slopes(set(cells))
+        slopes, reserved = converter_core._place_supported_slopes(set(cells))
         assert len(slopes) == 1
         assert slopes[0].brick_type.part_id == "4286"
         assert slopes[0].orientation_degrees == orientation
         assert reserved == set(cells)
 
 
-def test_4286_rejects_non_monotonic_and_wrong_height_runs() -> None:
+def test_slope_33_family_rejects_non_monotonic_and_wrong_height_runs() -> None:
     non_monotonic = {
         GridPosition(0, 0, 1),
         GridPosition(1, 0, 3),
@@ -315,11 +317,11 @@ def test_4286_rejects_non_monotonic_and_wrong_height_runs() -> None:
         GridPosition(2, 0, 3),
     }
 
-    assert converter_core._place_4286_slopes(non_monotonic) == ((), frozenset())
-    assert converter_core._place_4286_slopes(wrong_height) == ((), frozenset())
+    assert converter_core._place_supported_slopes(non_monotonic) == ((), frozenset())
+    assert converter_core._place_supported_slopes(wrong_height) == ((), frozenset())
 
 
-def test_4286_reserves_overlapping_runs_before_rectangular_packing() -> None:
+def test_slope_33_family_reserves_runs_before_rectangular_packing() -> None:
     occupied_cells = {
         GridPosition(0, 0, 1),
         GridPosition(1, 0, 2),
@@ -328,7 +330,7 @@ def test_4286_reserves_overlapping_runs_before_rectangular_packing() -> None:
         GridPosition(4, 0, 7),
     }
 
-    slopes, reserved = converter_core._place_4286_slopes(occupied_cells)
+    slopes, reserved = converter_core._place_supported_slopes(occupied_cells)
     rectangles = pack_occupied_cells(occupied_cells - reserved)
 
     assert len(slopes) == 1
@@ -337,13 +339,51 @@ def test_4286_reserves_overlapping_runs_before_rectangular_packing() -> None:
     )
 
 
+def test_slope_33_family_supports_its_catalogue_width_and_has_no_overlap() -> None:
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    two_wide_slope = replace(slope, part_id="test-slope", width_studs=2)
+    occupied_cells = {
+        GridPosition(x, y, height) for y in range(2) for x, height in enumerate((1, 2, 4))
+    }
+
+    slopes, reserved = converter_core._place_slope_33_family(occupied_cells, (two_wide_slope,))
+    rectangles = pack_occupied_cells(occupied_cells - reserved) if occupied_cells - reserved else ()
+
+    slope_details = [
+        (placement.brick_type.part_id, placement.orientation_degrees) for placement in slopes
+    ]
+    assert slope_details == [("test-slope", 0)]
+    assert all_placement_cells(slopes + rectangles)
+
+
+def test_slope_33_family_uses_the_catalogue_candidate_order_deterministically() -> None:
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    first_candidate = replace(slope, part_id="first-slope")
+    second_candidate = replace(slope, part_id="second-slope")
+    occupied_cells = {
+        GridPosition(0, 0, 1),
+        GridPosition(1, 0, 2),
+        GridPosition(2, 0, 4),
+    }
+
+    first, _ = converter_core._place_slope_33_family(
+        occupied_cells, (first_candidate, second_candidate)
+    )
+    second, _ = converter_core._place_slope_33_family(
+        occupied_cells, (first_candidate, second_candidate)
+    )
+
+    assert first == second
+    assert [placement.brick_type.part_id for placement in first] == ["first-slope"]
+
+
 def test_4286_geometry_places_the_high_end_for_all_orientations() -> None:
     slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
     placements = tuple(
         BrickPlacement(slope, GridPosition(10, 20, 30), orientation)
         for orientation in (0, 90, 180, 270)
     )
-    vertices = converter_core._slope_4286_vertices(placements)
+    vertices = converter_core._slope_vertices(placements)
 
     assert vertices[0][2] == (13.0, 20.0, 33.0)
     assert vertices[1][2] == (10.0, 23.0, 33.0)
