@@ -318,6 +318,7 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert output["placements"][0]["colorHex"].startswith("#")
     assert "heightPlates" in output["dimensions"]
     assert "heightBricks" not in output["dimensions"]
+    assert output["metadata"]["buildability"]["version"] == "stud-connectivity-v1"
 
 
 def test_lego_model_json_is_stable() -> None:
@@ -331,6 +332,7 @@ def test_lego_model_json_is_stable() -> None:
     assert model.metadata.fidelity == repeated_model.metadata.fidelity
     assert json.loads(first)["metadata"]["algorithmVersion"] == model.metadata.algorithm_version
     assert json.loads(first)["metadata"]["fidelity"]["meanIoU"] == model.metadata.fidelity.mean_iou
+    assert json.loads(first)["metadata"]["buildability"]["evaluatedPlacements"] >= 0
 
 
 def test_slope_placement_serializes_with_its_explicit_shape() -> None:

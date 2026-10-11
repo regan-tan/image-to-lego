@@ -189,8 +189,12 @@ fresh, then fails it as unconfirmed rather than risking a duplicate paid request
 Completed LEGO-model JSON includes engineering-only fidelity metadata. It records binary orthographic
 silhouette IoU for front (XZ), side (YZ), and top (XY) views, plus their mean and the target-versus-
 actual part-count error. Each IoU is in the range 0..1; higher values mean closer projected geometric
-overlap. These measurements do not assess physical buildability, structural stability, color accuracy,
-or overall perceptual similarity.
+overlap. It also includes optional `metadata.buildability` using `stud-connectivity-v1`. This diagnostic
+evaluates vertical stud-to-underside connections only for rectangular `brick` and `plate` families;
+slopes are reported as unevaluated. A placement is reported unsupported when its bottom is above the
+model's minimum placement z plane and it has no evaluated placement connected directly below it. The
+diagnostic does not assess structural stability, collision, clutch force, center of mass, insertion
+accessibility, color accuracy, or overall perceptual similarity.
 
 ## Repository layout
 
