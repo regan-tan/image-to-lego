@@ -185,6 +185,12 @@ the just-created job is marked failed and the API returns 503. A crash between a
 persistence of its request ID is treated conservatively: the worker waits while the submission claim is
 fresh, then fails it as unconfirmed rather than risking a duplicate paid request.
 
+Completed LEGO-model JSON includes engineering-only fidelity metadata. It records binary orthographic
+silhouette IoU for front (XZ), side (YZ), and top (XY) views, plus their mean and the target-versus-
+actual part-count error. Each IoU is in the range 0..1; higher values mean closer projected geometric
+overlap. These measurements do not assess physical buildability, structural stability, color accuracy,
+or overall perceptual similarity.
+
 ## Repository layout
 
 ```text

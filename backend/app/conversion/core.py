@@ -21,6 +21,7 @@ from app.conversion.colors import (
     nearest_palette_color,
     normalize_rgb,
 )
+from app.conversion.fidelity import FidelityMetrics, evaluate_fidelity
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,7 @@ class AlgorithmMetadata:
     grid_size: GridSize
     candidate_count: int
     occupancy_mode: str
+    fidelity: FidelityMetrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +189,7 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     _, _, placements, grid_size, occupied_cell_count = best
     placements = _color_placements(placements, normalized_vertices, faces, mesh, grid_size)
     dimensions = _model_dimensions(placements)
+    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, grid_size)
     metadata = AlgorithmMetadata(
         algorithm_version=ALGORITHM_VERSION,
         source_sha256=sha256(glb_bytes).hexdigest(),
@@ -195,6 +198,12 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         grid_size=grid_size,
         candidate_count=candidate_count,
         occupancy_mode=OCCUPANCY_MODE,
+        fidelity=evaluate_fidelity(
+            scaled_vertices,
+            faces,
+            _placement_boxes(placements),
+            target_parts=settings.target_parts,
+        ),
     )
     return LegoModel(
         placements=placements,
@@ -502,15 +511,7 @@ def _surface_cells(
     faces: list[tuple[int, int, int]],
     grid_size: GridSize,
 ) -> frozenset[GridPosition]:
-    maximum = tuple(max(vertex[index] for vertex in vertices) for index in range(3))
-    scaled_vertices = [
-        (
-            vertex[0] / maximum[0] * (grid_size.width_studs - 1),
-            vertex[1] / maximum[1] * (grid_size.depth_studs - 1),
-            vertex[2] / maximum[2] * (grid_size.height_bricks - 1),
-        )
-        for vertex in vertices
-    ]
+    scaled_vertices = _scale_vertices_to_grid(vertices, grid_size)
     mesh = trimesh.Trimesh(vertices=scaled_vertices, faces=faces, process=False, validate=False)
     voxel_grid = mesh.voxelized(pitch=1.0)
     cells = frozenset(
@@ -530,6 +531,20 @@ def _surface_cells(
     ):
         raise ConversionError("Surface voxelization produced cells outside the requested grid.")
     return cells
+
+
+def _scale_vertices_to_grid(
+    vertices: list[tuple[float, float, float]], grid_size: GridSize
+) -> list[tuple[float, float, float]]:
+    maximum = tuple(max(vertex[index] for vertex in vertices) for index in range(3))
+    return [
+        (
+            vertex[0] / maximum[0] * (grid_size.width_studs - 1),
+            vertex[1] / maximum[1] * (grid_size.depth_studs - 1),
+            vertex[2] / maximum[2] * (grid_size.height_bricks - 1),
+        )
+        for vertex in vertices
+    ]
 
 
 def _first_fitting_brick(position: GridPosition, remaining: set[GridPosition]) -> BrickPlacement:
@@ -557,6 +572,29 @@ def _placement_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
         for y in range(width)
         for x in range(length)
     )
+
+
+def _placement_boxes(
+    placements: tuple[BrickPlacement, ...],
+) -> tuple[tuple[float, float, float, float, float, float], ...]:
+    boxes = []
+    for placement in placements:
+        dimensions = placement.brick_type.dimensions
+        length = dimensions.length_studs
+        width = dimensions.width_studs
+        if placement.orientation_degrees == 90:
+            length, width = width, length
+        boxes.append(
+            (
+                float(placement.position.x),
+                float(placement.position.y),
+                float(placement.position.z),
+                float(placement.position.x + length),
+                float(placement.position.y + width),
+                float(placement.position.z + dimensions.height_bricks),
+            )
+        )
+    return tuple(boxes)
 
 
 def _model_dimensions(placements: tuple[BrickPlacement, ...]) -> ModelDimensions:
