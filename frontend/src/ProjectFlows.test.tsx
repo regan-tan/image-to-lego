@@ -23,7 +23,9 @@ vi.mock("./components/ModelViewer", () => ({
   default: ({ url }: { url: string }) => <div data-testid="model-viewer" data-url={url} />,
 }));
 vi.mock("./components/LegoModelViewer", () => ({
-  default: () => <div data-testid="lego-model-viewer" />,
+  default: ({ currentLayerZ }: { currentLayerZ?: number }) => (
+    <div data-testid="lego-model-viewer" data-current-layer={currentLayerZ} />
+  ),
 }));
 
 const downloadMock = vi.hoisted(() => ({ startBrowserDownload: vi.fn() }));
@@ -107,6 +109,7 @@ interface FakeApiOptions {
   delayedLegoArtifactId?: string;
   invalidLegoArtifactId?: string;
   legoTargetPartsByArtifact?: Record<string, number | null>;
+  legoModelsByArtifact?: Record<string, ReturnType<typeof legoModelResponse>>;
 }
 
 interface FakeConversionResult {
@@ -140,6 +143,32 @@ function legoModelResponse(partCount: number, targetParts: number | null = 300) 
   };
 }
 
+function layeredLegoModelResponse() {
+  const response = legoModelResponse(4);
+  return {
+    ...response,
+    dimensions: { widthStuds: 6, depthStuds: 4, heightBricks: 6, widthMm: 48, depthMm: 32, heightMm: 57.6 },
+    placements: [
+      { ...response.placements[0]!, position: { x: 0, y: 0, z: 0 }, color: "red" },
+      { ...response.placements[1]!, position: { x: 0, y: 0, z: 2 }, color: "blue" },
+      { ...response.placements[2]!, position: { x: 2, y: 0, z: 2 }, color: "yellow" },
+      { ...response.placements[3]!, position: { x: 0, y: 0, z: 5 }, color: "green" },
+    ],
+  };
+}
+
+function replacementLayeredLegoModelResponse() {
+  const response = legoModelResponse(2, 100);
+  return {
+    ...response,
+    dimensions: { ...response.dimensions, heightBricks: 2, heightMm: 19.2 },
+    placements: [
+      { ...response.placements[0]!, position: { x: 0, y: 0, z: 0 }, color: "black" },
+      { ...response.placements[1]!, position: { x: 0, y: 0, z: 1 }, color: "white" },
+    ],
+  };
+}
+
 /** A tiny in-memory stand-in for the backend that changes state the way the real API does. */
 function installFakeApi({
   project = null,
@@ -150,6 +179,7 @@ function installFakeApi({
   delayedLegoArtifactId,
   invalidLegoArtifactId,
   legoTargetPartsByArtifact = {},
+  legoModelsByArtifact = {},
 }: FakeApiOptions = {}) {
   let current = project;
   let blobFailuresLeft = blobUploadFailures;
@@ -182,7 +212,10 @@ function installFakeApi({
       const targetParts = Object.hasOwn(legoTargetPartsByArtifact, artifactId)
         ? legoTargetPartsByArtifact[artifactId]
         : 300;
-      return jsonResponse(legoModelResponse(artifactId === LEGO_ARTIFACT_ID ? 1 : 2, targetParts));
+      return jsonResponse(
+        legoModelsByArtifact[artifactId]
+          ?? legoModelResponse(artifactId === LEGO_ARTIFACT_ID ? 1 : 2, targetParts),
+      );
     }
     if (url === UPLOAD_URL) {
       requests.push({ method, path: "blob", init });
@@ -268,12 +301,16 @@ function installFakeApi({
     readUrlRequests: (artifactId: string) => requests.filter(
       (request) => request.path === `/api/v1/artifacts/${artifactId}/read-url`,
     ),
-    resolveDelayedLegoModel: () => resolveDelayedLegoModel?.(jsonResponse(legoModelResponse(
-      2,
-      delayedLegoArtifactId && Object.hasOwn(legoTargetPartsByArtifact, delayedLegoArtifactId)
-        ? legoTargetPartsByArtifact[delayedLegoArtifactId]
-        : 300,
-    ))),
+    resolveDelayedLegoModel: () => resolveDelayedLegoModel?.(jsonResponse(
+      delayedLegoArtifactId && legoModelsByArtifact[delayedLegoArtifactId]
+        ? legoModelsByArtifact[delayedLegoArtifactId]
+        : legoModelResponse(
+          2,
+          delayedLegoArtifactId && Object.hasOwn(legoTargetPartsByArtifact, delayedLegoArtifactId)
+            ? legoTargetPartsByArtifact[delayedLegoArtifactId]
+            : 300,
+        ),
+    )),
   };
 }
 
@@ -551,10 +588,11 @@ describe("project flows", () => {
     expect(await screen.findByRole("heading", { name: "Your 3D model is ready" })).toBeInTheDocument();
     expect(screen.getByText("Next, you’ll be able to turn it into a LEGO build with a parts list and building steps.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "LEGO model" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build guide" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
     expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Your LEGO model is ready" })).toBeInTheDocument();
-    expect(screen.getByText("Explore the LEGO model, review its parts list, or convert it again.")).toBeInTheDocument();
+    expect(screen.getByText("Use the model, parts list, or build guide to review your build.")).toBeInTheDocument();
     expect(screen.queryByText("Next, you’ll be able to turn it into a LEGO build with a parts list and building steps.")).not.toBeInTheDocument();
     expect(screen.getByTestId("lego-model-viewer")).toBeInTheDocument();
     const completedBuildView = screen.getByRole("group", { name: "Completed build view" });
@@ -568,11 +606,21 @@ describe("project flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "View full parts list" }));
     expect(await screen.findByRole("table")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "2×2 brick" })).toBeInTheDocument();
+    expect(screen.queryByTestId("lego-model-viewer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Build summary" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("build-guide-viewer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("parts-list-model-reference")).not.toBeInTheDocument();
     expect(api.posts("/api/v1/conversions")).toHaveLength(1);
     fireEvent.click(within(completedBuildView).getByRole("button", { name: "LEGO model" }));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText("LEGO model ready", { selector: ".badge" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Progress" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
+    expect(screen.getByText("Step 1 of 1")).toBeInTheDocument();
+    expect(api.posts("/api/v1/conversions")).toHaveLength(1);
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "LEGO model" }));
 
     fireEvent.click(screen.getByRole("button", { name: "3D model" }));
     expect(await screen.findByTestId("model-viewer")).toBeInTheDocument();
@@ -620,7 +668,7 @@ describe("project flows", () => {
 
     expect(await screen.findByRole("heading", { name: "Build summary" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Your LEGO model is ready" })).toBeInTheDocument();
-    expect(screen.getByText("Explore the LEGO model, review its parts list, or convert it again.")).toBeInTheDocument();
+    expect(screen.getByText("Use the model, parts list, or build guide to review your build.")).toBeInTheDocument();
     expect(api.readUrlRequests(LEGO_ARTIFACT_ID)).toHaveLength(1);
     expect(api.posts("/api/v1/conversions")).toHaveLength(0);
     expect(screen.getByText("LEGO model ready", { selector: ".badge" })).toBeInTheDocument();
@@ -632,6 +680,8 @@ describe("project flows", () => {
     expect(screen.getByText("1 unique part types")).toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("group", { name: "Completed build view" })).getByRole("button", { name: "Parts list" }));
     expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByTestId("lego-model-viewer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("parts-list-model-reference")).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("group", { name: "Completed build view" })).getByRole("button", { name: "LEGO model" }));
     fireEvent.click(screen.getByRole("button", { name: "Download parts list (.csv)" }));
     const csvBlob = vi.mocked(URL.createObjectURL).mock.calls.at(-1)?.[0];
@@ -642,6 +692,60 @@ describe("project flows", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
     expect(legoSummary()).toHaveTextContent("2 × 2 studs");
     expect(screen.queryByRole("list", { name: "Progress" })).not.toBeInTheDocument();
+  });
+
+  it("navigates a rehydrated build guide without starting conversion work", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+        latestLegoModel: { artifactId: LEGO_ARTIFACT_ID },
+      }),
+      legoModelsByArtifact: { [LEGO_ARTIFACT_ID]: layeredLegoModelResponse() },
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    const completedBuildView = await screen.findByRole("group", { name: "Completed build view" });
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
+
+    expect(screen.getByRole("heading", { name: "Build guide" })).toBeInTheDocument();
+    expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("1 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByText("Layer 1")).toBeInTheDocument();
+    expect(screen.getByText("Red")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    const buildGuideViewer = screen.getByTestId("build-guide-viewer");
+    expect(buildGuideViewer).toBeInTheDocument();
+    expect(within(buildGuideViewer).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "0");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+    expect(screen.getByText("3 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByText("Blue")).toBeInTheDocument();
+    expect(screen.getByText("Yellow")).toBeInTheDocument();
+    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "2");
+    expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Parts list" }));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByTestId("lego-model-viewer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Build summary" })).not.toBeInTheDocument();
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Build summary" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Step 3 of 3")).toBeInTheDocument();
+    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "5");
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+    expect(api.posts("/api/v1/conversions")).toHaveLength(0);
   });
 
   it.each([
@@ -744,6 +848,8 @@ describe("project flows", () => {
     expect(screen.getByRole("heading", { name: "Parts list" })).toBeInTheDocument();
     expect(conversionRequestBody(api.posts("/api/v1/conversions")[1]?.init).targetParts).toBe(600);
     expect(idempotencyKey(api.posts("/api/v1/conversions")[1]?.init)).not.toBe(idempotencyKey(firstAttempt?.init));
+    fireEvent.click(within(screen.getByRole("group", { name: "Completed build view" })).getByRole("button", { name: "Build guide" }));
+    expect(screen.getByText("Step 1 of 1")).toBeInTheDocument();
   });
 
   it("preserves the last LEGO model when a replacement conversion fails", async () => {
@@ -773,7 +879,9 @@ describe("project flows", () => {
     expect(complexityRadio("Detailed")).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "View full parts list" }));
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByText("1 total parts")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parts list" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "Completed build view" })).getByRole("button", { name: "Build guide" }));
+    expect(screen.getByText("Step 1 of 1")).toBeInTheDocument();
   });
 
   it("replaces the LEGO model only after the replacement artifact loads", async () => {
@@ -814,8 +922,46 @@ describe("project flows", () => {
     expect(within(screen.getByRole("group", { name: "Completed build view" })).getByRole("button", { name: "LEGO model" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "View full parts list" }));
     expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(screen.getByText("2 total parts")).toBeInTheDocument();
-    expect(screen.getByText("1 unique part types")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parts list" })).toBeInTheDocument();
+    expect(screen.getByText(/1 unique part types/)).toBeInTheDocument();
+  });
+
+  it("preserves the current guide until a validated replacement resets it", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+        latestLegoModel: { artifactId: LEGO_ARTIFACT_ID },
+      }),
+      conversionResults: [
+        { jobId: REPLACEMENT_JOB_ID, status: "succeeded", outputArtifactId: REPLACEMENT_LEGO_ARTIFACT_ID },
+      ],
+      delayedLegoArtifactId: REPLACEMENT_LEGO_ARTIFACT_ID,
+      legoModelsByArtifact: {
+        [LEGO_ARTIFACT_ID]: layeredLegoModelResponse(),
+        [REPLACEMENT_LEGO_ARTIFACT_ID]: replacementLayeredLegoModelResponse(),
+      },
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    const completedBuildView = await screen.findByRole("group", { name: "Completed build view" });
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "LEGO model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
+    expect(await screen.findByText("Loading LEGO model...")).toBeInTheDocument();
+    fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
+    expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
+
+    api.resolveDelayedLegoModel();
+
+    expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 parts built")).toBeInTheDocument();
+    expect(screen.getByText("Black")).toBeInTheDocument();
+    expect(screen.queryByText("Red")).not.toBeInTheDocument();
   });
 
   it("shows the uploaded photo through a short-lived read link", async () => {

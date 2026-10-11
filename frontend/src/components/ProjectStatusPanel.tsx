@@ -51,6 +51,7 @@ interface ProjectStatusPanelProps {
   onViewFullPartsList: () => void;
   buildComplexity: BuildComplexity;
   onBuildComplexityChange: (complexity: BuildComplexity) => void;
+  isVisible: boolean;
 }
 
 interface GenerationRequest {
@@ -76,6 +77,7 @@ export function ProjectStatusPanel({
   onViewFullPartsList,
   buildComplexity,
   onBuildComplexityChange,
+  isVisible,
 }: ProjectStatusPanelProps) {
   const queryClient = useQueryClient();
   const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
@@ -124,6 +126,20 @@ export function ProjectStatusPanel({
     ),
     onSuccess: setConversionJob,
   });
+
+  const legoResult = activeConversion?.status === "succeeded" && activeConversion.outputArtifactId ? (
+    <LegoResult
+      accessToken={accessToken}
+      userId={userId}
+      artifactId={activeConversion.outputArtifactId}
+      onLoaded={onLegoModelLoaded}
+      isVisible={isVisible}
+    />
+  ) : null;
+
+  if (!isVisible) {
+    return <>{legoResult}</>;
+  }
 
   function handleGenerate() {
     const sourceImage = project.sourceImage;
@@ -206,7 +222,9 @@ export function ProjectStatusPanel({
     : undefined;
 
   return (
-    <aside className={`side-panel${legoModel ? " side-panel--completed" : ""}`} aria-labelledby="panel-title">
+    <>
+      {legoResult}
+      <aside className={`side-panel${legoModel ? " side-panel--completed" : ""}`} aria-labelledby="panel-title">
       {project.status === "photo_ready" ? (
         <>
           <PanelIntro
@@ -274,7 +292,7 @@ export function ProjectStatusPanel({
           <PanelIntro
             title={legoModel ? "Your LEGO model is ready" : "Your 3D model is ready"}
             text={legoModel
-              ? "Explore the LEGO model, review its parts list, or convert it again."
+              ? "Use the model, parts list, or build guide to review your build."
               : "Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."}
           />
           {legoModel ? <LegoSummary model={legoModel} /> : null}
@@ -335,14 +353,6 @@ export function ProjectStatusPanel({
               <button type="button" className="button button--secondary" onClick={handleConvert}>Try conversion again</button>
             </div>
           ) : null}
-          {activeConversion?.status === "succeeded" && activeConversion.outputArtifactId ? (
-            <LegoResult
-              accessToken={accessToken}
-              userId={userId}
-              artifactId={activeConversion.outputArtifactId}
-              onLoaded={onLegoModelLoaded}
-            />
-          ) : null}
           {legoModel && partsList ? (
             <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} />
           ) : null}
@@ -384,8 +394,16 @@ export function ProjectStatusPanel({
         </>
       ) : null}
 
-      {project.sourceImage ? <PhotoDetails sourceImage={project.sourceImage} /> : null}
-    </aside>
+      {project.sourceImage ? (
+        legoModel ? (
+          <details className="project-details">
+            <summary>Project details</summary>
+            <PhotoDetails sourceImage={project.sourceImage} />
+          </details>
+        ) : <PhotoDetails sourceImage={project.sourceImage} />
+      ) : null}
+      </aside>
+    </>
   );
 }
 
@@ -394,11 +412,13 @@ function LegoResult({
   userId,
   artifactId,
   onLoaded,
+  isVisible,
 }: {
   accessToken: string;
   userId: string;
   artifactId: string;
   onLoaded: (model: LegoModel) => void;
+  isVisible: boolean;
 }) {
   const legoModel = useQuery({
     queryKey: ["lego-model", userId, artifactId],
@@ -409,6 +429,7 @@ function LegoResult({
       onLoaded(legoModel.data);
     }
   }, [legoModel.data, onLoaded]);
+  if (!isVisible) return null;
   if (legoModel.isPending) return <p className="status status--pending" role="status">Loading LEGO model...</p>;
   if (legoModel.isError || !legoModel.data) {
     return <p className="form-error" role="alert">The LEGO model could not be loaded safely. Please try again.</p>;
