@@ -1,1 +1,3 @@
 part_geometry/ldraw_source/** -text -whitespace
+backend/app/conversion/part_geometry_assets/*.json text eol=lf
+backend/app/conversion/generated_part_catalogue.json text eol=lf

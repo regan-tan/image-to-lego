@@ -1,11 +1,16 @@
-"""The fixed real LEGO parts supported by the surface-grid-v3 converter."""
+"""Runtime loading for the checked-in canonical LEGO part catalogue."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from json import JSONDecodeError, loads
+from pathlib import Path
+from types import MappingProxyType
+from typing import Final, cast
 
 BRICK_HEIGHT_PLATES = 3
 PLATE_HEIGHT_PLATES = 1
+_GENERATED_CATALOGUE_PATH = Path(__file__).with_name("generated_part_catalogue.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +22,7 @@ class BrickDimensions:
 
 @dataclass(frozen=True, slots=True)
 class LegoPart:
-    """A rectangular manufactured part used by the deterministic surface fitter."""
+    """One canonical LEGO part, including its current fitter eligibility."""
 
     part_id: str
     name: str
@@ -28,6 +33,9 @@ class LegoPart:
     shape: str = "rectangular"
     geometry_asset: str | None = None
     ldraw_id: str | None = None
+    bricklink_id: str | None = None
+    fitter_enabled: bool = False
+    fitter_order: int | None = None
 
     @property
     def dimensions(self) -> BrickDimensions:
@@ -38,43 +46,46 @@ class LegoPart:
         return f"{self.family}_{self.width_studs}x{self.length_studs}"
 
 
-# Ordering is part of the deterministic fitter's largest-first tie breaking.
-LEGO_PART_CATALOGUE = (
-    LegoPart(
-        "3001",
-        "Brick 2 x 4",
-        "brick",
-        2,
-        4,
-        BRICK_HEIGHT_PLATES,
-        geometry_asset="3001",
-        ldraw_id="3001",
-    ),
-    LegoPart("3002", "Brick 2 x 3", "brick", 2, 3, BRICK_HEIGHT_PLATES),
-    LegoPart("3003", "Brick 2 x 2", "brick", 2, 2, BRICK_HEIGHT_PLATES),
-    LegoPart("3010", "Brick 1 x 4", "brick", 1, 4, BRICK_HEIGHT_PLATES),
-    LegoPart("3622", "Brick 1 x 3", "brick", 1, 3, BRICK_HEIGHT_PLATES),
-    LegoPart("3020", "Plate 2 x 4", "plate", 2, 4, PLATE_HEIGHT_PLATES),
-    LegoPart("3021", "Plate 2 x 3", "plate", 2, 3, PLATE_HEIGHT_PLATES),
-    LegoPart("3004", "Brick 1 x 2", "brick", 1, 2, BRICK_HEIGHT_PLATES),
-    LegoPart("3022", "Plate 2 x 2", "plate", 2, 2, PLATE_HEIGHT_PLATES),
-    LegoPart("3710", "Plate 1 x 4", "plate", 1, 4, PLATE_HEIGHT_PLATES),
-    LegoPart("3005", "Brick 1 x 1", "brick", 1, 1, BRICK_HEIGHT_PLATES),
-    LegoPart("3623", "Plate 1 x 3", "plate", 1, 3, PLATE_HEIGHT_PLATES),
-    LegoPart("3023", "Plate 1 x 2", "plate", 1, 2, PLATE_HEIGHT_PLATES),
-    LegoPart("3024", "Plate 1 x 1", "plate", 1, 1, PLATE_HEIGHT_PLATES),
-    LegoPart(
-        "4286",
-        "Slope 33 3 x 1",
-        "slope",
-        1,
-        3,
-        BRICK_HEIGHT_PLATES,
-        "slope_33_3x1",
-        "4286",
-        "4286",
-    ),
+def _load_generated_catalogue() -> tuple[LegoPart, ...]:
+    try:
+        payload = loads(_GENERATED_CATALOGUE_PATH.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError) as error:
+        raise RuntimeError("The generated LEGO catalogue could not be loaded.") from error
+    if not isinstance(payload, list) or not all(isinstance(record, dict) for record in payload):
+        raise RuntimeError("The generated LEGO catalogue has an invalid structure.")
+
+    parts: list[LegoPart] = []
+    for record in payload:
+        parts.append(
+            LegoPart(
+                part_id=cast(str, record["partId"]),
+                name=cast(str, record["name"]),
+                family=cast(str, record["family"]),
+                width_studs=cast(int, record["widthStuds"]),
+                length_studs=cast(int, record["lengthStuds"]),
+                height_plates=cast(int, record["heightPlates"]),
+                shape=cast(str, record["shape"]),
+                geometry_asset=cast(str | None, record["geometryAsset"]),
+                ldraw_id=cast(str | None, record["ldrawId"]),
+                bricklink_id=cast(str | None, record["bricklinkId"]),
+                fitter_enabled=cast(bool, record["fitterEnabled"]),
+                fitter_order=cast(int | None, record["fitterOrder"]),
+            )
+        )
+    return tuple(parts)
+
+
+ALL_PARTS: Final = _load_generated_catalogue()
+FITTER_PARTS: Final = tuple(
+    sorted(
+        (part for part in ALL_PARTS if part.fitter_enabled),
+        key=lambda part: cast(int, part.fitter_order),
+    )
 )
+PART_BY_ID: Final = MappingProxyType({part.part_id: part for part in ALL_PARTS})
+
+# Compatibility aliases for existing converter code and downstream imports.
+LEGO_PART_CATALOGUE = FITTER_PARTS
 
 
 def legacy_grid_catalogue() -> tuple[LegoPart, ...]:
@@ -88,6 +99,6 @@ def legacy_grid_catalogue() -> tuple[LegoPart, ...]:
             length_studs=part.length_studs,
             height_plates=PLATE_HEIGHT_PLATES,
         )
-        for part in LEGO_PART_CATALOGUE
+        for part in FITTER_PARTS
         if part.family == "brick"
     )
