@@ -78,6 +78,23 @@ def test_conversion_is_deterministic() -> None:
     assert convert_glb(glb_bytes, settings) == convert_glb(glb_bytes, settings)
 
 
+def test_slope_conversion_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    slope_shell = frozenset(
+        {
+            GridPosition(0, 0, 1),
+            GridPosition(1, 0, 2),
+            GridPosition(2, 0, 4),
+        }
+    )
+    monkeypatch.setattr(converter_core, "_surface_cells", lambda *_: slope_shell)
+
+    first = convert_glb(box_glb(), ConversionSettings(target_parts=24))
+    second = convert_glb(box_glb(), ConversionSettings(target_parts=24))
+
+    assert first == second
+    assert [placement.brick_type.part_id for placement in first.placements] == ["4286"]
+
+
 def test_fidelity_metadata_does_not_change_placement_representation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -197,14 +214,17 @@ def test_placements_have_no_overlap_and_exactly_cover_reported_surface_cells() -
 def test_only_supported_bricks_and_orientations_are_emitted() -> None:
     model = convert_glb(box_glb(), ConversionSettings(target_parts=24))
     assert {placement.brick_type for placement in model.placements}.issubset(set(BRICK_CATALOGUE))
-    assert {placement.orientation_degrees for placement in model.placements}.issubset({0, 90})
+    assert {placement.orientation_degrees for placement in model.placements}.issubset(
+        {0, 90, 180, 270}
+    )
     assert {placement.color for placement in model.placements} == {"light_bluish_gray"}
 
 
 def test_real_part_catalogue_has_the_supported_valid_shapes() -> None:
-    assert len(LEGO_PART_CATALOGUE) == 14
+    assert len(LEGO_PART_CATALOGUE) == 15
     assert len({part.part_id for part in LEGO_PART_CATALOGUE}) == len(LEGO_PART_CATALOGUE)
-    assert {(part.family, part.width_studs, part.length_studs) for part in LEGO_PART_CATALOGUE} == {
+    rectangular_parts = [part for part in LEGO_PART_CATALOGUE if part.shape == "rectangular"]
+    assert {(part.family, part.width_studs, part.length_studs) for part in rectangular_parts} == {
         (family, width, length)
         for family in ("brick", "plate")
         for width, length in ((2, 4), (2, 3), (2, 2), (1, 4), (1, 3), (1, 2), (1, 1))
@@ -212,6 +232,22 @@ def test_real_part_catalogue_has_the_supported_valid_shapes() -> None:
     assert all(part.width_studs > 0 and part.length_studs > 0 for part in LEGO_PART_CATALOGUE)
     assert all(part.height_plates == 3 for part in LEGO_PART_CATALOGUE if part.family == "brick")
     assert all(part.height_plates == 1 for part in LEGO_PART_CATALOGUE if part.family == "plate")
+    slope = next(part for part in LEGO_PART_CATALOGUE if part.part_id == "4286")
+    slope_details = (
+        slope.name,
+        slope.family,
+        slope.width_studs,
+        slope.length_studs,
+        slope.height_plates,
+    )
+    assert slope_details == (
+        "Slope 33 3 x 1",
+        "slope",
+        1,
+        3,
+        3,
+    )
+    assert slope.shape == "slope_33_3x1"
 
 
 def test_placements_reference_catalogue_parts() -> None:
@@ -249,6 +285,70 @@ def test_packing_prefers_larger_bricks_then_plates_deterministically() -> None:
 
     assert first == second
     assert [placement.brick_type.catalogue_key for placement in first] == ["brick_2x4", "plate_2x4"]
+
+
+def test_4286_selects_rising_and_falling_runs_in_all_four_orientations() -> None:
+    runs = {
+        0: (GridPosition(0, 0, 1), GridPosition(1, 0, 2), GridPosition(2, 0, 4)),
+        90: (GridPosition(0, 0, 1), GridPosition(0, 1, 3), GridPosition(0, 2, 4)),
+        180: (GridPosition(0, 0, 4), GridPosition(1, 0, 3), GridPosition(2, 0, 1)),
+        270: (GridPosition(0, 0, 4), GridPosition(0, 1, 2), GridPosition(0, 2, 1)),
+    }
+
+    for orientation, cells in runs.items():
+        slopes, reserved = converter_core._place_4286_slopes(set(cells))
+        assert len(slopes) == 1
+        assert slopes[0].brick_type.part_id == "4286"
+        assert slopes[0].orientation_degrees == orientation
+        assert reserved == set(cells)
+
+
+def test_4286_rejects_non_monotonic_and_wrong_height_runs() -> None:
+    non_monotonic = {
+        GridPosition(0, 0, 1),
+        GridPosition(1, 0, 3),
+        GridPosition(2, 0, 2),
+    }
+    wrong_height = {
+        GridPosition(0, 0, 1),
+        GridPosition(1, 0, 2),
+        GridPosition(2, 0, 3),
+    }
+
+    assert converter_core._place_4286_slopes(non_monotonic) == ((), frozenset())
+    assert converter_core._place_4286_slopes(wrong_height) == ((), frozenset())
+
+
+def test_4286_reserves_overlapping_runs_before_rectangular_packing() -> None:
+    occupied_cells = {
+        GridPosition(0, 0, 1),
+        GridPosition(1, 0, 2),
+        GridPosition(2, 0, 4),
+        GridPosition(3, 0, 5),
+        GridPosition(4, 0, 7),
+    }
+
+    slopes, reserved = converter_core._place_4286_slopes(occupied_cells)
+    rectangles = pack_occupied_cells(occupied_cells - reserved)
+
+    assert len(slopes) == 1
+    assert all(
+        not converter_core._placement_cells(placement) & reserved for placement in rectangles
+    )
+
+
+def test_4286_geometry_places_the_high_end_for_all_orientations() -> None:
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    placements = tuple(
+        BrickPlacement(slope, GridPosition(10, 20, 30), orientation)
+        for orientation in (0, 90, 180, 270)
+    )
+    vertices = converter_core._slope_4286_vertices(placements)
+
+    assert vertices[0][2] == (13.0, 20.0, 33.0)
+    assert vertices[1][2] == (10.0, 23.0, 33.0)
+    assert vertices[2][2] == (10.0, 20.0, 33.0)
+    assert vertices[3][2] == (10.0, 20.0, 33.0)
 
 
 def test_target_parts_selects_a_different_resolution_and_approximately_changes_part_count() -> None:

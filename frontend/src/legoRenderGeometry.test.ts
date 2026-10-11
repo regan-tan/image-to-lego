@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { placementRenderGeometry } from "./legoRenderGeometry";
+import { placementRenderGeometry, slopeRenderGeometry } from "./legoRenderGeometry";
 import { legoModelSchema, type LegoModel } from "./schemas/legoModels";
 
 const model = {
@@ -39,5 +39,28 @@ describe("placementRenderGeometry", () => {
     const rendered = placementRenderGeometry(plate, plateModel);
     expect(rendered.size).toEqual([4, 0.4, 2]);
     expect(rendered.center).toEqual([0, expect.closeTo(-0.2), -1]);
+  });
+
+  it.each([
+    [0, [2, -1]],
+    [90, [-1, 2]],
+    [180, [-1, -1]],
+    [270, [-1, -1]],
+  ] as const)("places the 4286 high end at %i degrees", (orientationDegrees, expectedHighEnd) => {
+    const placement: LegoModel["placements"][number] = {
+      brickType: "slope_1x3",
+      partId: "4286",
+      partName: "Slope 33 3 x 1",
+      shape: "slope_33_3x1",
+      dimensions: { lengthStuds: 3, widthStuds: 1, heightPlates: 3 },
+      position: { x: 3, y: 2, z: 0 },
+      orientationDegrees,
+      color: "red",
+    };
+
+    const rendered = slopeRenderGeometry(placement, model);
+
+    expect([rendered.vertices[6], rendered.vertices[8]]).toEqual(expectedHighEnd);
+    expect(rendered.vertices[7]).toBeCloseTo(-0.6);
   });
 });

@@ -48,6 +48,10 @@ def test_nearest_available_color_is_deterministic_and_verified() -> None:
     assert is_color_available("3001", first.color_id)
 
 
+def test_4286_supports_every_current_palette_color() -> None:
+    assert all(is_color_available("4286", color.color_id) for color in LEGO_PALETTE)
+
+
 def test_normalize_rgb_supports_rgba_and_ignores_transparent_samples() -> None:
     assert normalize_rgb((1.0, 0.5, 0.0, 1.0)) == (255, 128, 0)
     assert normalize_rgb((12, 34, 56, 0)) is None

@@ -25,6 +25,26 @@ describe("createLegoPartsList", () => {
     ]));
   });
 
+  it("includes a slope under its canonical part ID and color", () => {
+    const slope = placement({
+      brickType: "slope_1x3",
+      partId: "4286",
+      partName: "Slope 33 3 x 1",
+      shape: "slope_33_3x1",
+      dimensions: { lengthStuds: 3, widthStuds: 1, heightPlates: 3 },
+      color: "red",
+      colorId: "ldraw:4",
+      colorName: "Red",
+    });
+
+    expect(createLegoPartsList(model([slope]))).toEqual({
+      valid: true,
+      totalPartCount: 1,
+      uniquePartTypeCount: 1,
+      parts: [expect.objectContaining({ partId: "4286", partName: "Slope 33 3 x 1", colorId: "ldraw:4", quantity: 1 })],
+    });
+  });
+
   it("detects a part count mismatch", () => {
     expect(createLegoPartsList(model([placement()], 2))).toEqual({ valid: false });
   });

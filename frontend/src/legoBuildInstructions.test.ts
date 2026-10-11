@@ -89,6 +89,24 @@ describe("deriveLegoBuildSteps", () => {
     expect(steps.map((step) => step.layerZ)).toEqual([0, 1, 2]);
     expect(steps[1]?.placements).toEqual([plate]);
   });
+
+  it("keeps a directional slope in its base-layer build step", () => {
+    const slope = placement(2, {
+      brickType: "slope_1x3",
+      partId: "4286",
+      partName: "Slope 33 3 x 1",
+      shape: "slope_33_3x1",
+      dimensions: { lengthStuds: 3, widthStuds: 1, heightPlates: 3 },
+      orientationDegrees: 270,
+    });
+
+    const steps = deriveLegoBuildSteps(model([placement(0), slope]));
+
+    expect(steps[1]?.placements).toEqual([slope]);
+    expect(steps[1]?.parts[0]).toEqual(
+      expect.objectContaining({ partId: "4286", partName: "Slope 33 3 x 1" }),
+    );
+  });
 });
 
 describe("classifyPlacementForBuildStep", () => {
