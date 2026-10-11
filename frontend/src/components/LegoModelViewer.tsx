@@ -30,7 +30,7 @@ export default function LegoModelViewer({ model, currentLayerZ }: LegoModelViewe
               <mesh key={`${placement.brickType}-${index}`} position={brick.center} castShadow receiveShadow>
                 <boxGeometry args={brick.size} />
                 <meshStandardMaterial
-                  color={legoColorHex(placement.color)}
+                  color={placement.colorHex ?? legoColorHex(placement.color)}
                   roughness={0.72}
                   transparent={opacity < 1}
                   opacity={opacity}

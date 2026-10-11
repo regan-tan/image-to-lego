@@ -312,6 +312,9 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert output["placements"][0]["brickType"]
     assert output["placements"][0]["partId"]
     assert output["placements"][0]["partName"]
+    assert output["placements"][0]["colorId"]
+    assert output["placements"][0]["colorName"]
+    assert output["placements"][0]["colorHex"].startswith("#")
     assert "heightPlates" in output["dimensions"]
     assert "heightBricks" not in output["dimensions"]
 

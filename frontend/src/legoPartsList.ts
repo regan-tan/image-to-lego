@@ -9,6 +9,9 @@ export interface LegoPartGroup {
   widthStuds: number;
   heightPlates: number;
   color: string;
+  colorId?: string;
+  colorName?: string;
+  colorHex?: string;
   quantity: number;
 }
 
@@ -21,15 +24,15 @@ export function aggregateLegoPlacements(
 ): LegoPartGroup[] {
   const groups = new Map<string, LegoPartGroup>();
   for (const placement of placements) {
-    const { brickType, partId, partName, dimensions, color } = placement;
+    const { brickType, partId, partName, dimensions, color, colorId, colorName, colorHex } = placement;
     const heightPlates = heightInPlates(dimensions);
-    const key = [partId ?? brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates, color].join("|");
+    const key = [partId ?? brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates, colorId ?? color].join("|");
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += 1;
       continue;
     }
-    groups.set(key, { brickType, partId, partName, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, quantity: 1 });
+    groups.set(key, { brickType, partId, partName, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, colorId, colorName, colorHex, quantity: 1 });
   }
   return [...groups.values()].sort(compareParts);
 }
@@ -61,7 +64,7 @@ export function colorLabel(color: string): string {
 }
 
 export function serializePartsListCsv(parts: LegoPartGroup[]): string {
-  const rows = [["Part ID", "Part Name", "Color", "Quantity"], ...parts.map((part) => [part.partId ?? "", partLabel(part), colorLabel(part.color), String(part.quantity)])];
+  const rows = [["Part ID", "Part Name", "Color", "Color ID", "Quantity"], ...parts.map((part) => [part.partId ?? "", partLabel(part), part.colorName ?? colorLabel(part.color), part.colorId ?? "", String(part.quantity)])];
   return rows.map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
 }
 

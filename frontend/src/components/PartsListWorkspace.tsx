@@ -42,7 +42,7 @@ export function PartsListWorkspace({ partsList }: { partsList: LegoPartsListResu
       </div>
       <div className="parts-list__table-wrap">
         <table className="parts-list__table">
-          <thead><tr><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Quantity</th></tr></thead>
+          <thead><tr><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Quantity</th></tr></thead>
           <tbody>{partsList.parts.map((part) => <PartsListRow key={partKey(part)} part={part} />)}</tbody>
         </table>
       </div>
@@ -70,14 +70,15 @@ function PartsListRow({ part }: { part: LegoPartGroup }) {
       <td data-label="Part ID">{part.partId ?? "Legacy part"}</td>
       <td data-label="Part name">{partLabel(part)}</td>
       <td data-label="Color">
-        <span className="color-swatch" style={{ backgroundColor: legoColorHex(part.color) }} aria-hidden="true" />
-        {colorLabel(part.color)}
+        <span className="color-swatch" style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }} aria-hidden="true" />
+        {part.colorName ?? colorLabel(part.color)}
       </td>
+      <td data-label="Color ID">{part.colorId ?? "Legacy color"}</td>
       <td data-label="Quantity">{part.quantity}</td>
     </tr>
   );
 }
 
 function partKey(part: LegoPartGroup): string {
-  return `${part.partId ?? part.brickType}-${part.color}`;
+  return `${part.partId ?? part.brickType}-${part.colorId ?? part.color}`;
 }

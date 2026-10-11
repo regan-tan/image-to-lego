@@ -3,6 +3,7 @@ import trimesh
 from PIL import Image
 
 import app.conversion.core as converter_core
+from app.conversion.colors import is_color_available
 from app.conversion.core import (
     ALGORITHM_VERSION,
     BRICK_CATALOGUE,
@@ -217,6 +218,12 @@ def test_placements_reference_catalogue_parts() -> None:
     model = convert_glb(box_glb(), ConversionSettings(target_parts=24))
     assert all(placement.brick_type in LEGO_PART_CATALOGUE for placement in model.placements)
     assert all(placement.brick_type.part_id for placement in model.placements)
+    assert all(placement.color_id is not None for placement in model.placements)
+    assert all(
+        placement.color_id is not None
+        and is_color_available(placement.brick_type.part_id, placement.color_id)
+        for placement in model.placements
+    )
 
 
 def test_packing_keeps_horizontal_geometry_and_uses_a_plate_for_one_layer() -> None:
@@ -235,12 +242,7 @@ def test_bricks_and_plates_use_explicit_plate_layer_heights() -> None:
 
 
 def test_packing_prefers_larger_bricks_then_plates_deterministically() -> None:
-    occupied_cells = {
-        GridPosition(x, y, z)
-        for x in range(4)
-        for y in range(2)
-        for z in range(4)
-    }
+    occupied_cells = {GridPosition(x, y, z) for x in range(4) for y in range(2) for z in range(4)}
 
     first = pack_occupied_cells(occupied_cells)
     second = pack_occupied_cells(occupied_cells)
@@ -315,8 +317,7 @@ def test_v3_preserves_v2_xy_selection_and_expands_only_vertical_layers() -> None
     glb_bytes = box_glb()
     mesh = converter_core._load_mesh(glb_bytes)
     vertices: list[tuple[float, float, float]] = [
-        (float(vertex[0]), float(vertex[1]), float(vertex[2]))
-        for vertex in mesh.vertices.tolist()
+        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
     ]
     faces: list[tuple[int, int, int]] = [
         (int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()

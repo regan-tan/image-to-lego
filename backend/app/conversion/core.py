@@ -15,9 +15,11 @@ from typing import Any, cast
 import trimesh
 
 from app.conversion.colors import (
+    COLORS_BY_KEY,
     DEFAULT_COLOR,
     apply_base_color_factor,
     most_common_palette_color,
+    nearest_available_color,
     nearest_palette_color,
     normalize_rgb,
 )
@@ -90,6 +92,9 @@ class BrickPlacement:
     position: GridPosition
     orientation_degrees: int
     color: str = DEFAULT_COLOR
+    color_id: str | None = None
+    color_name: str | None = None
+    color_hex: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,10 +292,6 @@ def _color_placements(
     grid_size: GridSize,
 ) -> tuple[BrickPlacement, ...]:
     face_colors, color_source = _face_colors(mesh, len(faces))
-    if not any(face_colors):
-        _log_color_samples("fallback", 0, len(placements))
-        return placements
-
     cell_colors: dict[GridPosition, list[str]] = defaultdict(list)
     all_colors: list[str] = []
     maximum = (
@@ -325,12 +326,22 @@ def _color_placements(
         else:
             color = fallback
             fallback_count += 1
+        try:
+            verified_color = nearest_available_color(
+                placement.brick_type.part_id,
+                COLORS_BY_KEY[color].rgb,
+            )
+        except ValueError as error:
+            raise ConversionError(str(error)) from error
         colored.append(
             BrickPlacement(
                 brick_type=placement.brick_type,
                 position=placement.position,
                 orientation_degrees=placement.orientation_degrees,
-                color=color,
+                color=verified_color.key,
+                color_id=verified_color.color_id,
+                color_name=verified_color.name,
+                color_hex=verified_color.hex,
             )
         )
     _log_color_samples(color_source, len(all_colors), fallback_count)
