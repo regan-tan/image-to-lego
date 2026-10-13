@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 SURFACE_GRID_V3 = "surface-grid-v3"
 SURFACE_GRID_V4 = "surface-grid-v4"
-ALGORITHM_VERSION = SURFACE_GRID_V3
+ALGORITHM_VERSION = SURFACE_GRID_V4
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
 PLATE_HEIGHT_MM = 3.2
@@ -74,7 +74,7 @@ class ConversionError(ValueError):
 class ConversionSettings:
     target_parts: int
     up_axis: Axis = Axis.Y
-    algorithm_version: str = SURFACE_GRID_V3
+    algorithm_version: str = ALGORITHM_VERSION
 
 
 @dataclass(frozen=True, slots=True, order=True)

@@ -25,7 +25,7 @@ class CreateConversionRequest(BaseModel):
     target_parts: int = Field(alias="targetParts")
     up_axis: Literal["x", "y", "z"] = Field(alias="upAxis")
     algorithm_version: Literal["surface-grid-v3", "surface-grid-v4"] = Field(
-        default="surface-grid-v3",
+        default="surface-grid-v4",
         alias="algorithmVersion",
     )
 

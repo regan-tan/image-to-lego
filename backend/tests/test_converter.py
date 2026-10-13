@@ -393,12 +393,27 @@ def test_4286_geometry_places_the_high_end_for_all_orientations() -> None:
     assert vertices[3][2] == (10.0, 20.0, 33.0)
 
 
-def test_target_parts_selects_a_different_resolution_and_approximately_changes_part_count() -> None:
+def test_target_parts_selects_a_finer_resolution_by_default() -> None:
     glb_bytes = box_glb()
     low_detail = convert_glb(glb_bytes, ConversionSettings(target_parts=8))
     high_detail = convert_glb(glb_bytes, ConversionSettings(target_parts=80))
+
     assert low_detail.metadata.grid_size != high_detail.metadata.grid_size
+    assert high_detail.metadata.grid_size.cell_count > low_detail.metadata.grid_size.cell_count
     assert high_detail.part_count > low_detail.part_count
+
+
+def test_v3_target_parts_approximately_changes_part_count() -> None:
+    glb_bytes = box_glb()
+    low_detail = convert_glb(
+        glb_bytes,
+        ConversionSettings(target_parts=8, algorithm_version=converter_core.SURFACE_GRID_V3),
+    )
+    high_detail = convert_glb(
+        glb_bytes,
+        ConversionSettings(target_parts=80, algorithm_version=converter_core.SURFACE_GRID_V3),
+    )
+
     assert abs(high_detail.part_count - 80) < abs(low_detail.part_count - 80)
 
 

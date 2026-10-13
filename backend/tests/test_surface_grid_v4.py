@@ -36,11 +36,11 @@ def _required(cells: set[core.GridPosition]) -> set[tuple[str, int, int]]:
     }
 
 
-def test_v3_is_the_default_algorithm_version() -> None:
+def test_v4_is_the_default_algorithm_version() -> None:
     settings = core.ConversionSettings(target_parts=8)
 
-    assert settings.algorithm_version == core.SURFACE_GRID_V3
-    assert core.ALGORITHM_VERSION == core.SURFACE_GRID_V3
+    assert settings.algorithm_version == core.SURFACE_GRID_V4
+    assert core.ALGORITHM_VERSION == core.SURFACE_GRID_V4
 
 
 @pytest.mark.parametrize(
@@ -78,7 +78,7 @@ def test_projection_hull_keeps_locked_slope_cells_out_of_rectangular_target() ->
     assert ("top", 1, 0) in required
 
 
-def test_explicit_v4_dispatches_without_replacing_v3(
+def test_default_and_explicit_algorithm_versions_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     v3_model = object()
@@ -86,7 +86,14 @@ def test_explicit_v4_dispatches_without_replacing_v3(
     monkeypatch.setattr(core, "_convert_surface_grid_v3", lambda *_: v3_model)
     monkeypatch.setattr(core, "_convert_surface_grid_v4", lambda *_: v4_model)
 
-    assert core.convert_glb(b"source", core.ConversionSettings(target_parts=8)) is v3_model
+    assert core.convert_glb(b"source", core.ConversionSettings(target_parts=8)) is v4_model
+    assert (
+        core.convert_glb(
+            b"source",
+            core.ConversionSettings(target_parts=8, algorithm_version=core.SURFACE_GRID_V3),
+        )
+        is v3_model
+    )
     assert (
         core.convert_glb(
             b"source",
