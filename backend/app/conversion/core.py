@@ -34,7 +34,9 @@ from app.conversion.part_catalogue import (
 
 logger = logging.getLogger(__name__)
 
-ALGORITHM_VERSION = "surface-grid-v4"
+SURFACE_GRID_V3 = "surface-grid-v3"
+SURFACE_GRID_V4 = "surface-grid-v4"
+ALGORITHM_VERSION = SURFACE_GRID_V3
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
 PLATE_HEIGHT_MM = 3.2
@@ -72,6 +74,7 @@ class ConversionError(ValueError):
 class ConversionSettings:
     target_parts: int
     up_axis: Axis = Axis.Y
+    algorithm_version: str = SURFACE_GRID_V3
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -148,6 +151,15 @@ class SourceOccupancy:
 
 def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     """Convert GLB bytes into a deterministic surface model on a plate-height grid."""
+    if settings.algorithm_version == SURFACE_GRID_V3:
+        return _convert_surface_grid_v3(glb_bytes, settings)
+    if settings.algorithm_version == SURFACE_GRID_V4:
+        return _convert_surface_grid_v4(glb_bytes, settings)
+    raise ConversionError("The requested conversion algorithm is not supported.")
+
+
+def _convert_surface_grid_v3(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
+    """Preserve the established surface-grid-v3 conversion path unchanged."""
     _validate_settings(settings)
     if len(glb_bytes) > MAX_INPUT_BYTES:
         raise ConversionError("GLB input exceeds the configured size limit.")
@@ -183,12 +195,91 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     dimensions = _model_dimensions(placements)
     scaled_vertices = _scale_vertices_to_grid(normalized_vertices, grid_size)
     metadata = AlgorithmMetadata(
-        algorithm_version=ALGORITHM_VERSION,
+        algorithm_version=SURFACE_GRID_V3,
         source_sha256=sha256(glb_bytes).hexdigest(),
         target_parts=settings.target_parts,
         occupied_cell_count=occupied_cell_count,
         grid_size=grid_size,
         candidate_count=candidate_count,
+        occupancy_mode=OCCUPANCY_MODE,
+        fidelity=evaluate_fidelity(
+            scaled_vertices,
+            faces,
+            _placement_boxes(placements),
+            slope_vertices=_slope_vertices(placements),
+            target_parts=settings.target_parts,
+        ),
+    )
+    return LegoModel(
+        placements=placements,
+        part_count=len(placements),
+        dimensions=dimensions,
+        metadata=metadata,
+    )
+
+
+def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
+    """Use the validated structural CP-SAT formulation over the v3 projection hull."""
+    from app.conversion.surface_grid_v4 import projection_hull_target, solve_surface_grid_v4
+
+    baseline = _convert_surface_grid_v3(
+        glb_bytes,
+        ConversionSettings(target_parts=settings.target_parts, up_axis=settings.up_axis),
+    )
+    mesh = _load_mesh(glb_bytes)
+    vertices = [
+        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
+    ]
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
+    normalized_vertices = _normalize_vertices(vertices, settings.up_axis)
+    source_occupancy = _source_occupancy(normalized_vertices, faces, baseline.metadata.grid_size)
+    locked_slopes, locked_slope_cells = _place_supported_slopes(source_occupancy.surface_cells)
+    baseline_slopes = tuple(
+        placement
+        for placement in baseline.placements
+        if placement.brick_type.shape != "rectangular"
+    )
+    if _placement_geometry(locked_slopes) != _placement_geometry(baseline_slopes):
+        raise ConversionError("Locked slopes did not reproduce surface-grid-v3 placements.")
+
+    exterior_cells = frozenset(
+        cell
+        for placement in baseline.placements
+        if placement.brick_type.shape == "rectangular"
+        for cell in _placement_cells(placement)
+    )
+    target_cells, required_pixels = projection_hull_target(
+        exterior_cells,
+        locked_slope_cells,
+        baseline.metadata.grid_size,
+    )
+    packing = solve_surface_grid_v4(
+        target_cells,
+        required_pixels,
+        locked_slope_cells,
+        BRICK_CATALOGUE,
+    )
+    colored_rectangles = _color_placements(
+        packing.placements,
+        normalized_vertices,
+        faces,
+        mesh,
+        baseline.metadata.grid_size,
+    )
+    placements = baseline_slopes + colored_rectangles
+    dimensions = _model_dimensions(placements)
+    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
+    occupied_cell_count = len(
+        {cell for placement in colored_rectangles for cell in _placement_cells(placement)}
+        | set(locked_slope_cells)
+    )
+    metadata = AlgorithmMetadata(
+        algorithm_version=SURFACE_GRID_V4,
+        source_sha256=sha256(glb_bytes).hexdigest(),
+        target_parts=settings.target_parts,
+        occupied_cell_count=occupied_cell_count,
+        grid_size=baseline.metadata.grid_size,
+        candidate_count=packing.candidate_count,
         occupancy_mode=OCCUPANCY_MODE,
         fidelity=evaluate_fidelity(
             scaled_vertices,
@@ -279,6 +370,8 @@ def _validate_settings(settings: ConversionSettings) -> None:
         raise ConversionError("Target parts must be greater than zero.")
     if settings.target_parts > MAX_TARGET_PARTS:
         raise ConversionError("Target parts exceeds the configured safety limit.")
+    if settings.algorithm_version not in {SURFACE_GRID_V3, SURFACE_GRID_V4}:
+        raise ConversionError("The requested conversion algorithm is not supported.")
 
 
 def _load_mesh(glb_bytes: bytes) -> trimesh.Trimesh:
@@ -682,6 +775,15 @@ def _placement_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
         for z in range(dimensions.height_plates)
         for y in range(width)
         for x in range(length)
+    )
+
+
+def _placement_geometry(
+    placements: Collection[BrickPlacement],
+) -> tuple[tuple[str, GridPosition, int], ...]:
+    return tuple(
+        (placement.brick_type.part_id, placement.position, placement.orientation_degrees)
+        for placement in placements
     )
 
 

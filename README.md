@@ -118,7 +118,9 @@ publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is s
 ## Implemented conversion flow
 
 `POST /api/v1/conversions` requires an `Idempotency-Key`, a project ID, a ready
-`reconstructed_model` artifact ID, `targetParts`, and `upAxis`. Exact replays return the existing
+`reconstructed_model` artifact ID, `targetParts`, and `upAxis`. It may also specify
+`algorithmVersion`; this currently defaults to `surface-grid-v3`, while the opt-in
+`surface-grid-v4` CP-SAT converter remains under evaluation. Exact replays return the existing
 conversion job without publishing a second message; a reused key with different input returns 409.
 The conversion worker verifies the private GLB's SHA-256, calls the deterministic converter, and
 stores stable JSON at `projects/{projectId}/conversions/{jobId}/lego-model.json`. It creates one

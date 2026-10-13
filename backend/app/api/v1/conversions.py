@@ -24,6 +24,10 @@ class CreateConversionRequest(BaseModel):
     source_artifact_id: UUID = Field(alias="sourceArtifactId")
     target_parts: int = Field(alias="targetParts")
     up_axis: Literal["x", "y", "z"] = Field(alias="upAxis")
+    algorithm_version: Literal["surface-grid-v3", "surface-grid-v4"] = Field(
+        default="surface-grid-v3",
+        alias="algorithmVersion",
+    )
 
 
 class ConversionResponse(BaseModel):
@@ -78,6 +82,7 @@ async def create_conversion(
                 source_artifact_id=request.source_artifact_id,
                 target_parts=request.target_parts,
                 up_axis=request.up_axis,
+                algorithm_version=request.algorithm_version,
             ),
             idempotency_key=idempotency_key,
         )
