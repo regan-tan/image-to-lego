@@ -14,6 +14,8 @@ from app.conversion.core import BrickPlacement, BrickType, ConversionError, Grid
 
 # These are deterministic-work budgets, not wall-clock SLAs. Runtime can vary by machine.
 STAGE_ONE_MAX_DETERMINISTIC_TIME = 20.0
+DETAILED_STAGE_ONE_MAX_DETERMINISTIC_TIME = 40.0
+DETAILED_TARGET_PARTS = 600
 STAGE_TWO_MAX_DETERMINISTIC_TIME = 7.25
 SOLVER_RANDOM_SEED = 0
 SOLVER_WORKERS = 1
@@ -61,6 +63,8 @@ def solve_surface_grid_v4(
     required_pixels: Collection[ProjectionPixel],
     locked_slope_cells: Collection[GridPosition],
     catalogue: tuple[BrickType, ...],
+    *,
+    target_parts: int,
 ) -> V4PackingResult:
     """Select non-overlapping, direct-support-connected rectangles inside A.
 
@@ -96,7 +100,7 @@ def solve_surface_grid_v4(
     )
     stage_one_model.model.maximize(sum(stage_one_model.coverage))
     stage_one_solver, stage_one = _solve(
-        stage_one_model.model, STAGE_ONE_MAX_DETERMINISTIC_TIME
+        stage_one_model.model, _stage_one_deterministic_budget(target_parts)
     )
     if not _has_usable_incumbent(stage_one):
         raise V4SolveFailure("surface-grid-v4 stage one did not provide a usable incumbent.")
@@ -134,6 +138,12 @@ def solve_surface_grid_v4(
         achieved_coverage=achieved_coverage + len(required & fixed_pixels),
         candidate_count=len(candidates),
     )
+
+
+def _stage_one_deterministic_budget(target_parts: int) -> float:
+    if target_parts >= DETAILED_TARGET_PARTS:
+        return DETAILED_STAGE_ONE_MAX_DETERMINISTIC_TIME
+    return STAGE_ONE_MAX_DETERMINISTIC_TIME
 
 
 def _empty_packing_result(
