@@ -16,6 +16,7 @@ class ConversionRequest:
     source_artifact_id: UUID
     target_parts: int
     up_axis: str
+    algorithm_version: str
 
 
 class ConversionInitiationService:
@@ -59,6 +60,7 @@ class ConversionInitiationService:
             source_artifact_id=request.source_artifact_id,
             target_parts=request.target_parts,
             up_axis=request.up_axis,
+            algorithm_version=request.algorithm_version,
             idempotency_key=normalized_key,
         )
         if created.rejection is ConversionInitiationRejection.NOT_FOUND:

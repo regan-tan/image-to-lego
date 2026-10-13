@@ -6,7 +6,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.conversion import ALGORITHM_VERSION
 from app.core.database import set_database_owner
 from app.domain.artifacts import Artifact, ArtifactStatus
 from app.domain.jobs import ConversionJob, Job, JobStatus, JobType, WorkerConversionJob
@@ -28,6 +27,7 @@ class SqlAlchemyConversionRepository:
         source_artifact_id: UUID,
         target_parts: int,
         up_axis: str,
+        algorithm_version: str,
         idempotency_key: str,
     ) -> ConversionInitiation:
         async with self._session.begin():
@@ -77,6 +77,7 @@ class SqlAlchemyConversionRepository:
                     existing.source_artifact_id != source_artifact_id
                     or existing.target_parts != target_parts
                     or existing.up_axis != up_axis
+                    or existing.algorithm_version != algorithm_version
                 ):
                     return ConversionInitiation(
                         rejection=ConversionInitiationRejection.IDEMPOTENCY_CONFLICT
@@ -112,6 +113,7 @@ class SqlAlchemyConversionRepository:
                     existing.source_artifact_id != source_artifact_id
                     or existing.target_parts != target_parts
                     or existing.up_axis != up_axis
+                    or existing.algorithm_version != algorithm_version
                 ):
                     return ConversionInitiation(
                         rejection=ConversionInitiationRejection.IDEMPOTENCY_CONFLICT
@@ -134,7 +136,7 @@ class SqlAlchemyConversionRepository:
                     "source_artifact_id": source_artifact_id,
                     "target_parts": target_parts,
                     "up_axis": up_axis,
-                    "algorithm_version": ALGORITHM_VERSION,
+                    "algorithm_version": algorithm_version,
                 },
             )
             return ConversionInitiation(
@@ -144,6 +146,7 @@ class SqlAlchemyConversionRepository:
                     target_parts=target_parts,
                     up_axis=up_axis,
                     output_artifact_id=None,
+                    algorithm_version=algorithm_version,
                 ),
                 created=True,
             )
@@ -326,7 +329,7 @@ class SqlAlchemyConversionRepository:
 _CONVERSION_JOB_SELECT = """
     select j.id, j.project_id, j.type, j.status, j.idempotency_key, j.provider_job_id,
            j.error_code, j.error_message, j.created_at, j.updated_at,
-           r.source_artifact_id, r.target_parts, r.up_axis, p.owner_id,
+           r.source_artifact_id, r.target_parts, r.up_axis, r.algorithm_version, p.owner_id,
            source.id as source_id, source.project_id as source_project_id,
            source.kind as source_kind, source.blob_name as source_blob_name,
            source.mime_type as source_mime_type, source.size_bytes as source_size_bytes,
@@ -364,6 +367,7 @@ def _conversion_from_row(row: RowMapping) -> ConversionJob:
         target_parts=cast(int, row["target_parts"]),
         up_axis=cast(str, row["up_axis"]),
         output_artifact_id=cast(UUID | None, row["output_artifact_id"]),
+        algorithm_version=cast(str, row["algorithm_version"]),
     )
 
 

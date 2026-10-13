@@ -29,6 +29,7 @@ class ConversionRepository(Protocol):
         source_artifact_id: UUID,
         target_parts: int,
         up_axis: str,
+        algorithm_version: str,
         idempotency_key: str,
     ) -> ConversionInitiation: ...
 

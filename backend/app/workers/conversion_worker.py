@@ -64,6 +64,7 @@ class ConversionJobProcessor:
                 ConversionSettings(
                     target_parts=worker_job.conversion.target_parts,
                     up_axis=Axis(worker_job.conversion.up_axis),
+                    algorithm_version=worker_job.conversion.algorithm_version,
                 ),
             )
         except ConversionError:
