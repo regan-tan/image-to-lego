@@ -4,6 +4,7 @@ import pytest
 import trimesh
 from ortools.sat.python import cp_model
 
+import app.conversion.surface_grid_v4 as surface_grid_v4
 from app.conversion import core
 from app.conversion.buildability import analyze_buildability
 from app.conversion.surface_grid_v4 import (
@@ -133,21 +134,15 @@ def test_stage_two_preserves_stage_one_coverage_and_is_deterministic() -> None:
     assert first.stage_two.objective_value is not None
 
 
-def test_stage_two_failure_uses_the_valid_stage_one_incumbent(
+def test_stage_one_optimal_solution_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = 0
-
     class FakeSolver:
         def boolean_value(self, variable: cp_model.IntVar) -> bool:
             return variable.Index() == 0
 
     def fake_solve(*_: object) -> tuple[FakeSolver, SolverStage]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return FakeSolver(), SolverStage("FEASIBLE", 3, 0.0, False)
-        return FakeSolver(), SolverStage("UNKNOWN", None, 0.0, False)
+        return FakeSolver(), SolverStage("OPTIMAL", 3, 0.0, True)
 
     monkeypatch.setattr("app.conversion.surface_grid_v4._solve", fake_solve)
 
@@ -159,24 +154,202 @@ def test_stage_two_failure_uses_the_valid_stage_one_incumbent(
     )
 
     assert len(result.placements) == 1
-    assert result.stage_two.objective_value is None
+    assert result.stage_one.status == "OPTIMAL"
 
 
-def test_stage_one_without_an_incumbent_fails_explicitly(
+def test_stage_one_feasible_solution_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_solve(*_: object) -> tuple[object, SolverStage]:
-        return object(), SolverStage("UNKNOWN", None, 0.0, False)
+    class FakeSolver:
+        def boolean_value(self, variable: cp_model.IntVar) -> bool:
+            return variable.Index() == 0
+
+    def fake_solve(*_: object) -> tuple[FakeSolver, SolverStage]:
+        return FakeSolver(), SolverStage("FEASIBLE", 3, 0.0, False)
 
     monkeypatch.setattr("app.conversion.surface_grid_v4._solve", fake_solve)
 
-    with pytest.raises(V4SolveFailure, match="stage one"):
+    result = solve_surface_grid_v4(
+        {core.GridPosition(0, 0, 0)},
+        _required({core.GridPosition(0, 0, 0)}),
+        (),
+        (_one_by_one_plate(),),
+    )
+
+    assert len(result.placements) == 1
+    assert result.stage_one.status == "FEASIBLE"
+
+
+@pytest.mark.parametrize(
+    "stage_one",
+    (SolverStage("UNKNOWN", None, 0.0, False), SolverStage("INFEASIBLE", None, 0.0, False)),
+)
+def test_stage_one_without_a_usable_incumbent_fails_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+    stage_one: SolverStage,
+) -> None:
+    def fake_solve(*_: object) -> tuple[object, SolverStage]:
+        return object(), stage_one
+
+    monkeypatch.setattr("app.conversion.surface_grid_v4._solve", fake_solve)
+
+    with pytest.raises(V4SolveFailure, match="usable incumbent"):
         solve_surface_grid_v4(
             {core.GridPosition(0, 0, 0)},
             _required({core.GridPosition(0, 0, 0)}),
             (),
             (_one_by_one_plate(),),
         )
+
+
+@pytest.mark.parametrize(
+    ("stage_two", "expected_x"),
+    [
+        (SolverStage("OPTIMAL", 1, 0.0, True), 1),
+        (SolverStage("FEASIBLE", 1, 0.0, False), 1),
+        (SolverStage("UNKNOWN", None, 0.0, False), 0),
+    ],
+)
+def test_stage_two_uses_a_usable_solution_or_falls_back_to_stage_one(
+    monkeypatch: pytest.MonkeyPatch,
+    stage_two: SolverStage,
+    expected_x: int,
+) -> None:
+    calls = 0
+
+    class FakeSolver:
+        def __init__(self, selected_id: int) -> None:
+            self.selected_id = selected_id
+
+        def boolean_value(self, variable: cp_model.IntVar) -> bool:
+            return variable.Index() == self.selected_id
+
+    def fake_solve(*_: object) -> tuple[FakeSolver, SolverStage]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeSolver(0), SolverStage("OPTIMAL", 1, 0.0, True)
+        return FakeSolver(1), stage_two
+
+    monkeypatch.setattr("app.conversion.surface_grid_v4._solve", fake_solve)
+
+    result = solve_surface_grid_v4(
+        {core.GridPosition(0, 0, 0), core.GridPosition(1, 0, 0)},
+        {("side", 0, 0)},
+        (),
+        (_one_by_one_plate(),),
+    )
+
+    assert result.placements[0].position.x == expected_x
+
+
+def test_solver_uses_deterministic_work_budgets_without_a_wall_clock_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeParameters:
+        def __init__(self) -> None:
+            self.max_deterministic_time = float("inf")
+            self.num_search_workers = 0
+            self.random_seed = 0
+            self._max_time_in_seconds = float("inf")
+            self.max_time_in_seconds_was_set = False
+
+        @property
+        def max_time_in_seconds(self) -> float:
+            return self._max_time_in_seconds
+
+        @max_time_in_seconds.setter
+        def max_time_in_seconds(self, value: float) -> None:
+            self.max_time_in_seconds_was_set = True
+            self._max_time_in_seconds = value
+
+    class FakeSolver:
+        def __init__(self) -> None:
+            self.parameters = FakeParameters()
+            self.objective_value = 1.0
+
+        def solve(self, model: cp_model.CpModel) -> int:
+            return int(cp_model.OPTIMAL)
+
+        def status_name(self, status: int) -> str:
+            return "OPTIMAL"
+
+    solvers: list[FakeSolver] = []
+
+    def new_solver() -> FakeSolver:
+        solver = FakeSolver()
+        solvers.append(solver)
+        return solver
+
+    monkeypatch.setattr("app.conversion.surface_grid_v4.cp_model.CpSolver", new_solver)
+
+    surface_grid_v4._solve(
+        cp_model.CpModel(), surface_grid_v4.STAGE_ONE_MAX_DETERMINISTIC_TIME
+    )
+    surface_grid_v4._solve(
+        cp_model.CpModel(), surface_grid_v4.STAGE_TWO_MAX_DETERMINISTIC_TIME
+    )
+
+    assert [solver.parameters.max_deterministic_time for solver in solvers] == [20.0, 7.25]
+    assert all(not solver.parameters.max_time_in_seconds_was_set for solver in solvers)
+    assert all(solver.parameters.num_search_workers == 1 for solver in solvers)
+    assert all(solver.parameters.random_seed == 0 for solver in solvers)
+
+
+def test_empty_rectangular_volume_with_required_coverage_fails_explicitly() -> None:
+    with pytest.raises(V4SolveFailure, match="no rectangular candidate volume"):
+        solve_surface_grid_v4(
+            (),
+            {("front", 0, 0)},
+            (),
+            (_one_by_one_plate(),),
+        )
+
+
+def test_empty_rectangular_candidates_with_required_coverage_fail_explicitly() -> None:
+    with pytest.raises(V4SolveFailure, match="no rectangular candidates"):
+        solve_surface_grid_v4(
+            {core.GridPosition(0, 0, 0)},
+            {("front", 0, 0)},
+            (),
+            (),
+        )
+
+
+def test_locked_slope_only_conversion_skips_rectangular_solving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slope_shell = frozenset(
+        {
+            core.GridPosition(0, 0, 1),
+            core.GridPosition(1, 0, 2),
+            core.GridPosition(2, 0, 4),
+        }
+    )
+    monkeypatch.setattr(core, "_surface_cells", lambda *_: slope_shell)
+
+    def fail_if_solver_runs(*_: object) -> object:
+        pytest.fail("Slope-only conversion should not invoke CP-SAT.")
+
+    monkeypatch.setattr(surface_grid_v4, "_solve", fail_if_solver_runs)
+
+    source = trimesh.creation.box(extents=(4.0, 3.0, 2.0)).export(file_type="glb")
+    assert isinstance(source, bytes)
+    model = core.convert_glb(
+        source,
+        core.ConversionSettings(target_parts=24, algorithm_version=core.SURFACE_GRID_V4),
+    )
+
+    actual_placements = [
+        (placement.brick_type.part_id, placement.position) for placement in model.placements
+    ]
+    assert actual_placements == [("4286", core.GridPosition(0, 0, 1))]
+    buildability = analyze_buildability(model.placements)
+    assert buildability.evaluated_placement_count == 0
+    assert buildability.unevaluated_placement_count == 1
+    serialized = serialize_lego_model(model)
+    assert b'"partId":"4286"' in serialized
+    assert b'"fidelity"' in serialized
 
 
 def test_v4_real_path_serializes_the_canonical_output() -> None:
