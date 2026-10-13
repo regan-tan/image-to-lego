@@ -12,8 +12,9 @@ from ortools.sat.python import cp_model
 from app.conversion.buildability import analyze_buildability
 from app.conversion.core import BrickPlacement, BrickType, ConversionError, GridPosition, GridSize
 
-STAGE_ONE_MAX_SECONDS = 60.0
-STAGE_TWO_MAX_SECONDS = 20.0
+# These are deterministic-work budgets, not wall-clock SLAs. Runtime can vary by machine.
+STAGE_ONE_MAX_DETERMINISTIC_TIME = 20.0
+STAGE_TWO_MAX_DETERMINISTIC_TIME = 7.25
 SOLVER_RANDOM_SEED = 0
 SOLVER_WORKERS = 1
 
@@ -39,7 +40,7 @@ class V4PackingResult:
 
 
 class V4SolveFailure(ConversionError):
-    """Stage one ended without a structurally valid CP-SAT incumbent."""
+    """surface-grid-v4 could not produce a structurally valid CP-SAT result."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +69,21 @@ def solve_surface_grid_v4(
     coverage but cannot be occupied by new rectangular placements.
     """
     target = frozenset(target_cells)
-    if not target:
-        raise V4SolveFailure("surface-grid-v4 has no rectangular candidate volume.")
-
-    candidates = _support_reachable_candidates(_enumerate_candidates(target, catalogue), target)
     required = frozenset(required_pixels)
     fixed_pixels = _pixels_for_cells(locked_slope_cells)
     variable_pixels = tuple(sorted(required - fixed_pixels, key=_pixel_order))
+    if not target:
+        if not variable_pixels:
+            return _empty_packing_result(required, fixed_pixels, candidate_count=0)
+        raise V4SolveFailure("surface-grid-v4 has no rectangular candidate volume.")
+
+    candidates = _support_reachable_candidates(_enumerate_candidates(target, catalogue), target)
+    if not variable_pixels:
+        return _empty_packing_result(required, fixed_pixels, candidate_count=len(candidates))
+
+    if not candidates:
+        raise V4SolveFailure("surface-grid-v4 has no rectangular candidates for required coverage.")
+
     candidate_ids_by_cell = _candidate_ids_by_cell(target, candidates)
     cells_by_pixel = _cells_by_pixel(target)
 
@@ -86,9 +95,11 @@ def solve_surface_grid_v4(
         cells_by_pixel,
     )
     stage_one_model.model.maximize(sum(stage_one_model.coverage))
-    stage_one_solver, stage_one = _solve(stage_one_model.model, STAGE_ONE_MAX_SECONDS)
-    if stage_one.objective_value is None:
-        raise V4SolveFailure("surface-grid-v4 stage one did not find a feasible solution.")
+    stage_one_solver, stage_one = _solve(
+        stage_one_model.model, STAGE_ONE_MAX_DETERMINISTIC_TIME
+    )
+    if not _has_usable_incumbent(stage_one):
+        raise V4SolveFailure("surface-grid-v4 stage one did not provide a usable incumbent.")
 
     stage_one_ids = _selected_ids(stage_one_solver, stage_one_model.selected)
     achieved_coverage = stage_one.objective_value
@@ -104,10 +115,12 @@ def solve_surface_grid_v4(
     stage_two_model.model.add(sum(stage_two_model.coverage) == achieved_coverage)
     stage_two_model.model.minimize(sum(stage_two_model.selected))
     _add_hint(stage_two_model, stage_one_ids)
-    stage_two_solver, stage_two = _solve(stage_two_model.model, STAGE_TWO_MAX_SECONDS)
+    stage_two_solver, stage_two = _solve(
+        stage_two_model.model, STAGE_TWO_MAX_DETERMINISTIC_TIME
+    )
 
     selected_ids = stage_one_ids
-    if stage_two.objective_value is not None:
+    if _has_usable_incumbent(stage_two):
         selected_ids = _selected_ids(stage_two_solver, stage_two_model.selected)
         if _coverage_score(selected_ids, candidates, variable_pixels) != achieved_coverage:
             raise V4SolveFailure("Stage two changed the stage-one projection coverage.")
@@ -120,6 +133,27 @@ def solve_surface_grid_v4(
         stage_two=stage_two,
         achieved_coverage=achieved_coverage + len(required & fixed_pixels),
         candidate_count=len(candidates),
+    )
+
+
+def _empty_packing_result(
+    required: frozenset[ProjectionPixel],
+    fixed_pixels: frozenset[ProjectionPixel],
+    *,
+    candidate_count: int,
+) -> V4PackingResult:
+    skipped_stage = SolverStage(
+        status="NOT_RUN",
+        objective_value=0,
+        runtime_seconds=0.0,
+        is_optimal=False,
+    )
+    return V4PackingResult(
+        placements=(),
+        stage_one=skipped_stage,
+        stage_two=skipped_stage,
+        achieved_coverage=len(required & fixed_pixels),
+        candidate_count=candidate_count,
     )
 
 
@@ -275,10 +309,10 @@ def _cells_by_pixel(
 
 
 def _solve(
-    model: cp_model.CpModel, time_limit_seconds: float
+    model: cp_model.CpModel, deterministic_time_limit: float
 ) -> tuple[cp_model.CpSolver, SolverStage]:
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_seconds
+    solver.parameters.max_deterministic_time = deterministic_time_limit
     solver.parameters.num_search_workers = SOLVER_WORKERS
     solver.parameters.random_seed = SOLVER_RANDOM_SEED
     started = perf_counter()
@@ -291,6 +325,10 @@ def _solve(
         runtime_seconds=runtime_seconds,
         is_optimal=status == cp_model.OPTIMAL,
     )
+
+
+def _has_usable_incumbent(stage: SolverStage) -> bool:
+    return stage.status in {"OPTIMAL", "FEASIBLE"} and stage.objective_value is not None
 
 
 def _add_hint(model: _Model, selected_ids: Collection[int]) -> None:
