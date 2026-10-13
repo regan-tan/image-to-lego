@@ -258,6 +258,7 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
         required_pixels,
         locked_slope_cells,
         BRICK_CATALOGUE,
+        target_parts=settings.target_parts,
     )
     colored_rectangles = _color_placements(
         packing.placements,

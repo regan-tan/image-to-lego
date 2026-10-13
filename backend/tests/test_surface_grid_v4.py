@@ -10,6 +10,7 @@ from app.conversion.buildability import analyze_buildability
 from app.conversion.surface_grid_v4 import (
     SolverStage,
     V4SolveFailure,
+    _stage_one_deterministic_budget,
     projection_hull_target,
     solve_surface_grid_v4,
 )
@@ -40,6 +41,26 @@ def test_v3_is_the_default_algorithm_version() -> None:
 
     assert settings.algorithm_version == core.SURFACE_GRID_V3
     assert core.ALGORITHM_VERSION == core.SURFACE_GRID_V3
+
+
+@pytest.mark.parametrize(
+    ("target_parts", "expected_budget"),
+    (
+        (100, 20.0),
+        (300, 20.0),
+        (599, 20.0),
+        (600, 40.0),
+        (601, 40.0),
+    ),
+)
+def test_stage_one_budget_scales_for_detailed_conversions(
+    target_parts: int, expected_budget: float
+) -> None:
+    assert _stage_one_deterministic_budget(target_parts) == expected_budget
+
+
+def test_stage_two_budget_remains_unchanged() -> None:
+    assert surface_grid_v4.STAGE_TWO_MAX_DETERMINISTIC_TIME == 7.25
 
 
 def test_projection_hull_keeps_locked_slope_cells_out_of_rectangular_target() -> None:
@@ -78,7 +99,9 @@ def test_explicit_v4_dispatches_without_replacing_v3(
 def test_v4_occupancy_prevents_overlapping_placements() -> None:
     cells = {core.GridPosition(0, 0, 0), core.GridPosition(1, 0, 0)}
 
-    result = solve_surface_grid_v4(cells, _required(cells), (), core.BRICK_CATALOGUE)
+    result = solve_surface_grid_v4(
+        cells, _required(cells), (), core.BRICK_CATALOGUE, target_parts=100
+    )
     occupied = [
         cell for placement in result.placements for cell in core._placement_cells(placement)
     ]
@@ -94,6 +117,7 @@ def test_v4_does_not_select_an_unsupported_non_base_placement() -> None:
         {("front", 0, 3)},
         (),
         (_one_by_one_plate(),),
+        target_parts=100,
     )
 
     assert result.placements == ()
@@ -102,7 +126,9 @@ def test_v4_does_not_select_an_unsupported_non_base_placement() -> None:
 def test_v4_selects_directly_supported_placement() -> None:
     cells = {core.GridPosition(0, 0, z) for z in range(4)}
 
-    result = solve_surface_grid_v4(cells, _required(cells), (), core.BRICK_CATALOGUE)
+    result = solve_surface_grid_v4(
+        cells, _required(cells), (), core.BRICK_CATALOGUE, target_parts=100
+    )
 
     assert any(placement.position.z > 0 for placement in result.placements)
     assert analyze_buildability(result.placements).unsupported_placement_count == 0
@@ -116,6 +142,7 @@ def test_v4_projection_coverage_is_exact_or_of_occupied_cells() -> None:
         {("front", 0, 0)},
         (),
         (_one_by_one_plate(),),
+        target_parts=100,
     )
 
     assert result.achieved_coverage == 1
@@ -126,8 +153,12 @@ def test_stage_two_preserves_stage_one_coverage_and_is_deterministic() -> None:
     cells = {core.GridPosition(x, 0, 0) for x in range(2)}
     required = _required(cells)
 
-    first = solve_surface_grid_v4(cells, required, (), core.BRICK_CATALOGUE)
-    second = solve_surface_grid_v4(cells, required, (), core.BRICK_CATALOGUE)
+    first = solve_surface_grid_v4(
+        cells, required, (), core.BRICK_CATALOGUE, target_parts=100
+    )
+    second = solve_surface_grid_v4(
+        cells, required, (), core.BRICK_CATALOGUE, target_parts=100
+    )
 
     assert first.achieved_coverage == len(required)
     assert first.placements == second.placements
@@ -151,6 +182,7 @@ def test_stage_one_optimal_solution_is_accepted(
         _required({core.GridPosition(0, 0, 0)}),
         (),
         (_one_by_one_plate(),),
+        target_parts=100,
     )
 
     assert len(result.placements) == 1
@@ -174,6 +206,7 @@ def test_stage_one_feasible_solution_is_accepted(
         _required({core.GridPosition(0, 0, 0)}),
         (),
         (_one_by_one_plate(),),
+        target_parts=100,
     )
 
     assert len(result.placements) == 1
@@ -199,6 +232,7 @@ def test_stage_one_without_a_usable_incumbent_fails_explicitly(
             _required({core.GridPosition(0, 0, 0)}),
             (),
             (_one_by_one_plate(),),
+            target_parts=100,
         )
 
 
@@ -238,6 +272,7 @@ def test_stage_two_uses_a_usable_solution_or_falls_back_to_stage_one(
         {("side", 0, 0)},
         (),
         (_one_by_one_plate(),),
+        target_parts=100,
     )
 
     assert result.placements[0].position.x == expected_x
@@ -303,6 +338,7 @@ def test_empty_rectangular_volume_with_required_coverage_fails_explicitly() -> N
             {("front", 0, 0)},
             (),
             (_one_by_one_plate(),),
+            target_parts=100,
         )
 
 
@@ -313,6 +349,7 @@ def test_empty_rectangular_candidates_with_required_coverage_fail_explicitly() -
             {("front", 0, 0)},
             (),
             (),
+            target_parts=100,
         )
 
 
