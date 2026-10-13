@@ -41,6 +41,7 @@ def conversion_job(
     target_parts: int = 24,
     up_axis: str = "y",
     output_artifact_id: UUID | None = None,
+    algorithm_version: str = "surface-grid-v4",
 ) -> ConversionJob:
     now = datetime.now(UTC)
     return ConversionJob(
@@ -60,6 +61,7 @@ def conversion_job(
         target_parts=target_parts,
         up_axis=up_axis,
         output_artifact_id=output_artifact_id,
+        algorithm_version=algorithm_version,
     )
 
 
@@ -72,9 +74,11 @@ class FakeConversionRepository:
         self.claims = 0
         self.failures: list[tuple[str, str]] = []
         self.created_outputs: list[dict[str, object]] = []
+        self.create_requests: list[dict[str, object]] = []
         self.succeeded = 0
 
-    async def create_or_get(self, **_: object) -> ConversionInitiation:
+    async def create_or_get(self, **kwargs: object) -> ConversionInitiation:
+        self.create_requests.append(kwargs)
         return self.initiation
 
     async def mark_queue_publish_failed(self, **_: object) -> None:
@@ -170,6 +174,7 @@ def worker_job(
     *,
     status: JobStatus = JobStatus.QUEUED,
     output_artifact_id: UUID | None = None,
+    algorithm_version: str = "surface-grid-v4",
 ) -> WorkerConversionJob:
     source = Artifact(
         id=SOURCE_ID,
@@ -184,7 +189,11 @@ def worker_job(
         created_at=datetime.now(UTC),
     )
     return WorkerConversionJob(
-        conversion=conversion_job(status=status, output_artifact_id=output_artifact_id),
+        conversion=conversion_job(
+            status=status,
+            output_artifact_id=output_artifact_id,
+            algorithm_version=algorithm_version,
+        ),
         owner_id=OWNER_ID,
         source_artifact=source,
     )
@@ -240,6 +249,34 @@ async def test_conversion_create_and_exact_replay_publish_once(
     assert created.status_code == 201
     assert replayed.status_code == 200
     assert len(queue.enqueued) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("algorithm_version", "expected_version"),
+    [
+        (None, "surface-grid-v4"),
+        ("surface-grid-v3", "surface-grid-v3"),
+        ("surface-grid-v4", "surface-grid-v4"),
+    ],
+)
+async def test_conversion_request_persists_requested_algorithm_version(
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
+    algorithm_version: str | None,
+    expected_version: str,
+) -> None:
+    client, repository, _ = api_context
+    body = request_body()
+    if algorithm_version is not None:
+        body["algorithmVersion"] = algorithm_version
+
+    response = await client.post(
+        "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=body
+    )
+    await client.aclose()
+
+    assert response.status_code == 201
+    assert repository.create_requests[0]["algorithm_version"] == expected_version
 
 
 @pytest.mark.asyncio
@@ -319,6 +356,23 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert "heightPlates" in output["dimensions"]
     assert "heightBricks" not in output["dimensions"]
     assert output["metadata"]["buildability"]["version"] == "stud-connectivity-v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("algorithm_version", ["surface-grid-v3", "surface-grid-v4"])
+async def test_worker_uses_persisted_algorithm_version(algorithm_version: str) -> None:
+    content = box_glb()
+    repository = FakeConversionRepository()
+    repository.worker_job = worker_job(content, algorithm_version=algorithm_version)
+    blob = FakeBlobStorage(content)
+
+    await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
+        job_id=repository.worker_job.conversion.job.id,
+        owner_id=OWNER_ID,
+    )
+
+    output = json.loads(blob.uploads[0][1])
+    assert output["metadata"]["algorithmVersion"] == algorithm_version
 
 
 def test_lego_model_json_is_stable() -> None:
