@@ -42,4 +42,13 @@ describe("legoModelSchema", () => {
       expect(legoModelSchema.parse(model).placements[0]?.orientationDegrees).toBe(orientationDegrees);
     }
   });
+
+  it("accepts explicit placement-index instruction steps", () => {
+    const model = {
+      ...legacyModel,
+      instructionSteps: [{ stepNumber: 1, placementIndices: [0] }],
+    };
+
+    expect(legoModelSchema.parse(model).instructionSteps).toEqual(model.instructionSteps);
+  });
 });

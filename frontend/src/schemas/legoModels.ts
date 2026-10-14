@@ -44,6 +44,10 @@ export const legoModelSchema = z.object({
     colorName: z.string().optional(),
     colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   })),
+  instructionSteps: z.array(z.object({
+    stepNumber: z.number().int().positive(),
+    placementIndices: z.array(z.number().int().nonnegative()).min(1),
+  })).optional(),
 });
 
 export type LegoModel = z.infer<typeof legoModelSchema>;

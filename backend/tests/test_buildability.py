@@ -1,8 +1,14 @@
+import pytest
+
 from app.conversion import BrickPlacement, GridPosition
 from app.conversion.buildability import (
     ConnectionEdge,
+    InstructionStep,
+    InstructionStepValidationError,
     analyze_buildability,
+    generate_instruction_steps,
     order_placements_for_instructions,
+    validate_instruction_steps,
 )
 from app.conversion.part_catalogue import PART_BY_ID, LegoPart
 
@@ -228,3 +234,139 @@ def test_instruction_order_is_deterministic() -> None:
     assert order_placements_for_instructions(placements) == order_placements_for_instructions(
         placements
     )
+
+
+def step_by_placement(steps: tuple[InstructionStep, ...]) -> dict[int, int]:
+    return {
+        placement_index: step.step_number
+        for step in steps
+        for placement_index in step.placement_indices
+    }
+
+
+def test_instruction_steps_keep_a_simple_stack_in_separate_steps() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick, z=3), placement(brick))
+
+    steps = generate_instruction_steps(placements)
+
+    assigned_steps = step_by_placement(steps)
+    assert assigned_steps[1] < assigned_steps[0]
+
+
+def test_instruction_steps_keep_every_chain_dependency_in_a_later_step() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick, z=6), placement(brick, z=3), placement(brick))
+
+    steps = generate_instruction_steps(placements)
+
+    assert [step.placement_indices for step in steps] == [(2,), (1,), (0,)]
+
+
+def test_instruction_steps_allow_independent_supports_before_a_shared_upper_piece() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=2, z=3),
+        placement(brick, x=4),
+        placement(brick),
+    )
+
+    steps = generate_instruction_steps(placements)
+
+    assigned_steps = step_by_placement(steps)
+    assert assigned_steps[1] == assigned_steps[2]
+    assert assigned_steps[1] < assigned_steps[0]
+
+
+def test_instruction_steps_batch_independent_ready_pieces_up_to_the_limit() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = tuple(placement(brick, x=index * 10) for index in range(6))
+
+    steps = generate_instruction_steps(placements)
+
+    assert steps == (InstructionStep(1, (0, 1, 2, 3, 4, 5)),)
+
+
+def test_instruction_steps_split_more_than_six_ready_pieces_deterministically() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = tuple(placement(brick, x=index * 10) for index in range(8))
+
+    steps = generate_instruction_steps(placements)
+
+    assert steps == (InstructionStep(1, (0, 1, 2, 3, 4, 5)), InstructionStep(2, (6, 7)))
+
+
+def test_instruction_steps_prefer_spatially_nearby_ready_pieces() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=10),
+        placement(brick, x=2),
+        placement(brick, x=100),
+        placement(brick),
+    )
+
+    steps = generate_instruction_steps(placements)
+
+    assert steps[0].placement_indices == (3, 1, 0, 2)
+
+
+def test_instruction_steps_complete_disconnected_components_deterministically() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=20, z=3),
+        placement(brick, x=20),
+        placement(brick, z=3),
+        placement(brick),
+    )
+
+    steps = generate_instruction_steps(placements)
+
+    assert steps == (InstructionStep(1, (3, 1)), InstructionStep(2, (2, 0)))
+
+
+def test_instruction_steps_keep_unevaluated_slopes_as_presentation_only() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(PART_BY_ID["4286"], z=3), placement(brick))
+
+    steps = generate_instruction_steps(placements)
+
+    assert steps == (InstructionStep(1, (1,)), InstructionStep(2, (0,)))
+    assert analyze_buildability(placements).edges == ()
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        (InstructionStep(1, (0, 0)),),
+        (InstructionStep(1, (0,)),),
+        (InstructionStep(2, (0, 1)),),
+    ],
+)
+def test_instruction_step_validation_rejects_duplicates_missing_and_number_gaps(
+    steps: tuple[InstructionStep, ...],
+) -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick), placement(brick, x=10))
+
+    with pytest.raises(InstructionStepValidationError):
+        validate_instruction_steps(placements, steps)
+
+
+def test_instruction_step_validation_rejects_dependencies_in_one_step() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick), placement(brick, z=3))
+
+    with pytest.raises(InstructionStepValidationError):
+        validate_instruction_steps(placements, (InstructionStep(1, (0, 1)),))
+
+
+def test_instruction_steps_are_deterministic() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=2, z=3),
+        placement(PART_BY_ID["4286"], x=8, z=3),
+        placement(brick, x=4),
+        placement(brick),
+    )
+
+    assert generate_instruction_steps(placements) == generate_instruction_steps(placements)

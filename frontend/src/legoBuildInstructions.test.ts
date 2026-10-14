@@ -41,6 +41,23 @@ describe("deriveLegoBuildSteps", () => {
     expect(steps.map((step) => step.stepNumber)).toEqual([1, 2, 3]);
   });
 
+  it("uses explicit backend instruction steps instead of grouping by z layer", () => {
+    const first = placement(0, { position: { x: 0, y: 0, z: 0 } });
+    const second = placement(0, { position: { x: 2, y: 0, z: 0 } });
+    const third = placement(3, { position: { x: 0, y: 0, z: 3 } });
+    const buildModel = model([first, second, third]);
+    buildModel.instructionSteps = [
+      { stepNumber: 1, placementIndices: [0] },
+      { stepNumber: 2, placementIndices: [1, 2] },
+    ];
+
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(steps.map((step) => step.placementIndices)).toEqual([[0], [1, 2]]);
+    expect(steps[1]?.placements).toEqual([second, third]);
+    expect(steps.map((step) => step.cumulativePartCount)).toEqual([1, 3]);
+  });
+
   it("groups a layer while preserving canonical placement order", () => {
     const first = placement(2, { position: { x: 2, y: 0, z: 2 } });
     const second = placement(0);

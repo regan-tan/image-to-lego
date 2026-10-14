@@ -9,9 +9,16 @@ import type { LegoModel } from "../schemas/legoModels";
 interface LegoModelViewerProps {
   model: LegoModel;
   currentLayerZ?: number;
+  currentPlacementIndices?: number[];
+  previousPlacementIndices?: number[];
 }
 
-export default function LegoModelViewer({ model, currentLayerZ }: LegoModelViewerProps) {
+export default function LegoModelViewer({
+  model,
+  currentLayerZ,
+  currentPlacementIndices,
+  previousPlacementIndices,
+}: LegoModelViewerProps) {
   return (
     <Canvas className="model-viewer" camera={{ position: [9, 8, 11], fov: 38 }} dpr={[1, 2]}>
       <ambientLight intensity={1.1} />
@@ -19,9 +26,18 @@ export default function LegoModelViewer({ model, currentLayerZ }: LegoModelViewe
       <Bounds fit clip observe margin={1.3}>
         <group>
           {model.placements.map((placement, index) => {
-            const buildStage = currentLayerZ === undefined
+            let buildStage = currentLayerZ === undefined
               ? "current"
               : classifyPlacementForBuildStep(placement, currentLayerZ);
+            if (currentPlacementIndices !== undefined && previousPlacementIndices !== undefined) {
+              if (currentPlacementIndices.includes(index)) {
+                buildStage = "current";
+              } else if (previousPlacementIndices.includes(index)) {
+                buildStage = "previous";
+              } else {
+                buildStage = "future";
+              }
+            }
             let opacity = 1;
             if (buildStage === "previous") opacity = 0.28;
             if (buildStage === "future") opacity = 0;

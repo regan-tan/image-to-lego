@@ -715,7 +715,7 @@ describe("project flows", () => {
     expect(screen.getByRole("heading", { name: "Build guide" })).toBeInTheDocument();
     expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
     expect(screen.getByText("1 of 4 parts built")).toBeInTheDocument();
-    expect(screen.getByText("Layer 1")).toBeInTheDocument();
+    expect(screen.getByText("Step 1")).toBeInTheDocument();
     expect(screen.getByText("Red")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
