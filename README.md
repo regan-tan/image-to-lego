@@ -201,10 +201,12 @@ accessibility, color accuracy, or overall perceptual similarity.
 Newly converted models also include top-level `instructionSteps`. Each step holds a sequential
 `stepNumber` and stable `placementIndices` into the canonical `placements` array. The worker batches at
 most six placements per step, always puts an evaluated direct stud support in an earlier step than its
-dependent, and deterministically prefers the current evaluated component. Unevaluated slopes retain
-their canonical presentation order after earlier evaluated placements; this is not a mechanically
-verified attachment rule. These steps do not guarantee collision-free insertion, rotational access,
-temporary gravity stability, optimal assembly motions, or LEGO-official-quality subassemblies.
+dependent, and deterministically keeps the guide in the current local branch where possible. Local
+presentation regions are inferred from evaluated `stud-connectivity-v1` components and direct support
+forks; they are not a new mechanical analysis. Unevaluated slopes are assigned to the nearest evaluated
+region only for presentation and retain no inferred mechanical attachment. These steps do not guarantee
+collision-free insertion, rotational access, temporary gravity stability, optimal assembly motions, or
+LEGO-official-quality subassemblies.
 
 ## Repository layout
 
