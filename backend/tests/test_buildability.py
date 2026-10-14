@@ -324,6 +324,40 @@ def test_instruction_steps_complete_disconnected_components_deterministically() 
     assert steps == (InstructionStep(1, (3, 1)), InstructionStep(2, (2, 0)))
 
 
+def test_instruction_steps_continue_an_active_local_branch_before_a_deferred_branch() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    plate = catalogue_part(family="plate", width=1, length=1)
+    base = placement(brick)
+    branch_bases = tuple(
+        placement(plate, x=index % 4, y=index // 4, z=3) for index in range(7)
+    )
+    branch_extension = placement(plate, z=4)
+
+    steps = generate_instruction_steps((base, *branch_bases, branch_extension))
+
+    assert 1 not in steps[1].placement_indices
+    assert steps[2] == InstructionStep(3, (1,))
+    assert steps[3] == InstructionStep(4, (8,))
+
+
+def test_instruction_steps_finish_a_connected_component_before_starting_another() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    plate = catalogue_part(family="plate", width=1, length=1)
+    first_component_bases = tuple(
+        placement(plate, x=index % 4, y=index // 4) for index in range(6)
+    )
+    first_component_top = placement(brick, z=1)
+    second_component = placement(brick, x=20)
+
+    steps = generate_instruction_steps(
+        (*first_component_bases, first_component_top, second_component)
+    )
+
+    assigned_steps = step_by_placement(steps)
+    assert assigned_steps[6] <= assigned_steps[7]
+    assert steps[0].placement_indices == (0, 1, 2, 3, 4, 5)
+
+
 def test_instruction_steps_keep_unevaluated_slopes_as_presentation_only() -> None:
     brick = catalogue_part(family="brick", width=2, length=4)
     placements = (placement(PART_BY_ID["4286"], z=3), placement(brick))

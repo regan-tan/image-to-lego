@@ -115,11 +115,13 @@ def order_placements_for_instructions(
 def generate_instruction_steps(
     placements: Collection[BrickPlacement],
 ) -> tuple[InstructionStep, ...]:
-    """Batch the canonical order into deterministic, support-safe guide steps.
+    """Batch the canonical order into deterministic, support-safe local guide steps.
 
     A direct ``stud-connectivity-v1`` support edge always crosses a step boundary.
     Unevaluated placements, including slopes, retain presentation ordering only: they do
-    not gain inferred mechanical dependencies.
+    not gain inferred mechanical dependencies. Evaluated regions are local branches of
+    the connectivity graph and are used only to keep the presentation near the active
+    part of the model.
     """
     placement_list = tuple(placements)
     analysis = analyze_buildability(placement_list)
@@ -127,6 +129,12 @@ def generate_instruction_steps(
     canonical_rank = {index: rank for rank, index in enumerate(canonical_indices)}
     prerequisites = _prerequisites_by_placement(placement_list, analysis.edges)
     component_ids = _component_ids_by_placement(placement_list, analysis.edges)
+    region_ids = _subassembly_region_ids_by_placement(
+        placement_list,
+        prerequisites,
+        component_ids,
+        canonical_rank,
+    )
     evaluated_indices = {
         index
         for index, placement in enumerate(placement_list)
@@ -144,6 +152,8 @@ def generate_instruction_steps(
 
     assigned: set[int] = set()
     steps: list[InstructionStep] = []
+    active_region: int | None = None
+    active_component: int | None = None
     while len(assigned) < len(placement_list):
         eligible = [
             index
@@ -157,8 +167,18 @@ def generate_instruction_steps(
                 "No placement is eligible for the next instruction step."
             )
 
-        selected = [eligible.pop(0)]
-        anchor_component = component_ids.get(selected[0])
+        first_index = _first_step_placement(
+            eligible,
+            active_region=active_region,
+            active_component=active_component,
+            region_ids=region_ids,
+            component_ids=component_ids,
+            canonical_rank=canonical_rank,
+        )
+        selected = [first_index]
+        eligible.remove(first_index)
+        active_region = region_ids.get(first_index)
+        active_component = component_ids.get(first_index)
         while eligible and len(selected) < MAX_PLACEMENTS_PER_INSTRUCTION_STEP:
             next_index = min(
                 eligible,
@@ -166,8 +186,10 @@ def generate_instruction_steps(
                     index=index,
                     selected_indices=selected,
                     placement_list=placement_list,
+                    region_ids=region_ids,
                     component_ids=component_ids,
-                    anchor_component=anchor_component,
+                    active_region=active_region,
+                    active_component=active_component,
                     canonical_rank=canonical_rank,
                 ),
             )
@@ -296,21 +318,107 @@ def _component_ids_by_placement(
     return component_ids
 
 
+def _subassembly_region_ids_by_placement(
+    placements: tuple[BrickPlacement, ...],
+    prerequisites: Sequence[frozenset[int]],
+    component_ids: dict[int, int],
+    canonical_rank: dict[int, int],
+) -> dict[int, int]:
+    """Assign local presentation regions without adding mechanical graph edges.
+
+    Each evaluated component is split at direct support forks. A branch inherits its
+    supporter's region until a placement has multiple direct dependents, when each
+    dependent starts its own local region. Unevaluated placements are attached to the
+    nearest evaluated region only for presentation.
+    """
+    dependents = [set[int]() for _ in placements]
+    for index, placement_prerequisites in enumerate(prerequisites):
+        for prerequisite in placement_prerequisites:
+            dependents[prerequisite].add(index)
+
+    region_ids: dict[int, int] = {}
+    next_region_id = 0
+    for index in sorted(component_ids, key=canonical_rank.__getitem__):
+        placement_prerequisites = prerequisites[index]
+        if not placement_prerequisites:
+            region_ids[index] = next_region_id
+            next_region_id += 1
+            continue
+
+        primary_support = min(
+            placement_prerequisites,
+            key=lambda support_index: (
+                _placement_distance(placements[index], placements[support_index]),
+                canonical_rank[support_index],
+            ),
+        )
+        if len(dependents[primary_support]) > 1 and dependents[index]:
+            region_ids[index] = next_region_id
+            next_region_id += 1
+        else:
+            region_ids[index] = region_ids[primary_support]
+
+    evaluated_indices = tuple(sorted(component_ids, key=canonical_rank.__getitem__))
+    for index in range(len(placements)):
+        if index in region_ids or not evaluated_indices:
+            continue
+        nearest_evaluated = min(
+            evaluated_indices,
+            key=lambda evaluated_index: (
+                _placement_distance(placements[index], placements[evaluated_index]),
+                canonical_rank[evaluated_index],
+            ),
+        )
+        region_ids[index] = region_ids[nearest_evaluated]
+        component_ids[index] = component_ids[nearest_evaluated]
+    return region_ids
+
+
+def _first_step_placement(
+    eligible: Sequence[int],
+    *,
+    active_region: int | None,
+    active_component: int | None,
+    region_ids: dict[int, int],
+    component_ids: dict[int, int],
+    canonical_rank: dict[int, int],
+) -> int:
+    """Choose a step anchor, keeping the previous local region when possible."""
+    return min(
+        eligible,
+        key=lambda index: (
+            0 if active_region is not None and region_ids.get(index) == active_region else 1,
+            0
+            if active_component is not None and component_ids.get(index) == active_component
+            else 1,
+            canonical_rank[index],
+        ),
+    )
+
+
 def _step_candidate_key(
     *,
     index: int,
     selected_indices: Sequence[int],
     placement_list: tuple[BrickPlacement, ...],
+    region_ids: dict[int, int],
     component_ids: dict[int, int],
-    anchor_component: int | None,
+    active_region: int | None,
+    active_component: int | None,
     canonical_rank: dict[int, int],
-) -> tuple[int, int, int]:
-    same_component = anchor_component is not None and component_ids.get(index) == anchor_component
+) -> tuple[int, int, int, int]:
+    same_region = active_region is not None and region_ids.get(index) == active_region
+    same_component = active_component is not None and component_ids.get(index) == active_component
     distance = min(
         _placement_distance(placement_list[index], placement_list[selected_index])
         for selected_index in selected_indices
     )
-    return (0 if same_component else 1, distance, canonical_rank[index])
+    return (
+        0 if same_region else 1,
+        0 if same_component else 1,
+        distance,
+        canonical_rank[index],
+    )
 
 
 def _placement_distance(left: BrickPlacement, right: BrickPlacement) -> int:
