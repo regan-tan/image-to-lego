@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass
+from heapq import heappop, heappush
 
 from app.conversion.core import BrickPlacement
 
@@ -33,6 +34,10 @@ class BuildabilityAnalysis:
     largest_connected_component_ratio: float
     isolated_placement_count: int
     unsupported_placement_count: int
+
+
+class BuildInstructionOrderingError(ValueError):
+    """The stud-connectivity graph cannot provide a valid instruction order."""
 
 
 def analyze_buildability(placements: Collection[BrickPlacement]) -> BuildabilityAnalysis:
@@ -79,10 +84,78 @@ def analyze_buildability(placements: Collection[BrickPlacement]) -> Buildability
     )
 
 
+def order_placements_for_instructions(
+    placements: Collection[BrickPlacement],
+) -> tuple[BrickPlacement, ...]:
+    """Return a deterministic support-before-dependent placement order.
+
+    This reuses ``stud-connectivity-v1`` edges for rectangular bricks and plates.
+    It does not verify insertion accessibility, collision-free assembly, or partial-build stability.
+    Unevaluated placements, including slopes, have no invented mechanical edge. They are
+    positioned by the same coordinate-based presentation order after every evaluated
+    placement below their base z level; this is not a verified mechanical dependency.
+    """
+    placement_list = tuple(placements)
+    analysis = analyze_buildability(placement_list)
+    outgoing: list[list[int]] = [[] for _ in placement_list]
+    incoming_counts = [0 for _ in placement_list]
+
+    for edge in analysis.edges:
+        lower = placement_list[edge.lower_placement_index]
+        upper = placement_list[edge.upper_placement_index]
+        if lower.position.z >= upper.position.z:
+            raise BuildInstructionOrderingError(
+                "stud-connectivity-v1 produced a non-upward support dependency."
+            )
+        outgoing[edge.lower_placement_index].append(edge.upper_placement_index)
+        incoming_counts[edge.upper_placement_index] += 1
+
+    ready: list[tuple[tuple[int, int, int, int, int, str, int, int], int]] = []
+    for index, incoming_count in enumerate(incoming_counts):
+        if incoming_count == 0:
+            heappush(ready, (_instruction_order_key(placement_list[index], index), index))
+
+    ordered_indices: list[int] = []
+    while ready:
+        _, index = heappop(ready)
+        ordered_indices.append(index)
+        for dependent_index in outgoing[index]:
+            incoming_counts[dependent_index] -= 1
+            if incoming_counts[dependent_index] == 0:
+                dependent = placement_list[dependent_index]
+                heappush(
+                    ready,
+                    (_instruction_order_key(dependent, dependent_index), dependent_index),
+                )
+
+    if len(ordered_indices) != len(placement_list):
+        raise BuildInstructionOrderingError(
+            "stud-connectivity-v1 produced a cyclic support dependency."
+        )
+    return tuple(placement_list[index] for index in ordered_indices)
+
+
 def _is_connector_supported(placement: BrickPlacement) -> bool:
     return (
         placement.brick_type.shape == "rectangular"
         and placement.brick_type.family in _SUPPORTED_FAMILIES
+    )
+
+
+def _instruction_order_key(
+    placement: BrickPlacement,
+    original_index: int,
+) -> tuple[int, int, int, int, int, str, int, int]:
+    fitter_order = placement.brick_type.fitter_order
+    return (
+        placement.position.z,
+        placement.position.y,
+        placement.position.x,
+        fitter_order is None,
+        fitter_order if fitter_order is not None else 0,
+        placement.brick_type.part_id,
+        placement.orientation_degrees,
+        original_index,
     )
 
 

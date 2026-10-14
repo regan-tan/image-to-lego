@@ -5,6 +5,7 @@ from app.conversion.buildability import (
     BuildabilityAnalysis,
     ConnectionEdge,
     analyze_buildability,
+    order_placements_for_instructions,
 )
 from app.conversion.colors import DEFAULT_COLOR, LEGO_PALETTE, nearest_palette_color, normalize_rgb
 from app.conversion.core import (
@@ -47,5 +48,6 @@ __all__ = [
     "analyze_buildability",
     "nearest_palette_color",
     "normalize_rgb",
+    "order_placements_for_instructions",
     "pack_occupied_cells",
 ]

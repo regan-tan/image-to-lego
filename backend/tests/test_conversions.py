@@ -418,6 +418,29 @@ def test_slope_placement_serializes_with_its_explicit_shape() -> None:
     ]
 
 
+def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_first() -> None:
+    model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
+    output = json.loads(serialize_lego_model(model))
+
+    assert set(output) == {"partCount", "dimensions", "metadata", "placements"}
+    assert set(output["placements"][0]) == {
+        "brickType",
+        "partId",
+        "partName",
+        "shape",
+        "geometryAsset",
+        "dimensions",
+        "position",
+        "orientationDegrees",
+        "color",
+        "colorId",
+        "colorName",
+        "colorHex",
+    }
+    positions = [placement["position"]["z"] for placement in output["placements"]]
+    assert positions == sorted(positions)
+
+
 @pytest.mark.asyncio
 async def test_worker_fails_when_source_sha256_does_not_match() -> None:
     content = box_glb()
