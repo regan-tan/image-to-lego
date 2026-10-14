@@ -1,5 +1,9 @@
 from app.conversion import BrickPlacement, GridPosition
-from app.conversion.buildability import ConnectionEdge, analyze_buildability
+from app.conversion.buildability import (
+    ConnectionEdge,
+    analyze_buildability,
+    order_placements_for_instructions,
+)
 from app.conversion.part_catalogue import PART_BY_ID, LegoPart
 
 
@@ -122,3 +126,105 @@ def test_buildability_graph_output_is_deterministic() -> None:
     )
 
     assert analyze_buildability(placements) == analyze_buildability(placements)
+
+
+def test_instruction_order_places_a_simple_stack_from_lower_to_upper() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    lower = placement(brick)
+    upper = placement(brick, z=3)
+
+    assert order_placements_for_instructions((upper, lower)) == (lower, upper)
+
+
+def test_instruction_order_preserves_a_three_piece_support_chain() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    first = placement(brick)
+    second = placement(brick, z=3)
+    third = placement(brick, z=6)
+
+    assert order_placements_for_instructions((third, second, first)) == (first, second, third)
+
+
+def test_instruction_order_places_every_direct_support_before_a_shared_upper_piece() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    left_support = placement(brick)
+    right_support = placement(brick, x=4)
+    upper = placement(brick, x=2, z=3)
+    placements = (upper, right_support, left_support)
+
+    ordered = order_placements_for_instructions(placements)
+
+    assert ordered.index(left_support) < ordered.index(upper)
+    assert ordered.index(right_support) < ordered.index(upper)
+    assert analyze_buildability(placements).edges == (
+        ConnectionEdge(1, 0, 4),
+        ConnectionEdge(2, 0, 4),
+    )
+
+
+def test_instruction_order_uses_coordinate_tie_breaking_for_independent_pieces() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    first = placement(brick, x=0, y=0)
+    second = placement(brick, x=2, y=0)
+    third = placement(brick, x=0, y=2)
+
+    assert order_placements_for_instructions((third, second, first)) == (first, second, third)
+
+
+def test_instruction_order_handles_disconnected_evaluated_components_deterministically() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    lower = placement(brick)
+    upper = placement(brick, z=3)
+    disconnected = placement(brick, x=10)
+
+    assert order_placements_for_instructions((upper, disconnected, lower)) == (
+        lower,
+        disconnected,
+        upper,
+    )
+
+
+def test_instruction_order_keeps_unevaluated_slopes_without_inventing_support() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    lower = placement(brick)
+    slope = placement(PART_BY_ID["4286"], z=3)
+    placements = (slope, lower)
+
+    ordered = order_placements_for_instructions(placements)
+
+    assert ordered == (lower, slope)
+    assert analyze_buildability(placements).edges == ()
+
+
+def test_instruction_order_contains_every_placement_once_and_respects_all_edges() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=2, z=6),
+        placement(brick, x=4),
+        placement(brick, x=2, z=3),
+        placement(brick),
+        placement(brick, x=10),
+    )
+    ordered = order_placements_for_instructions(placements)
+
+    assert len(ordered) == len(placements)
+    assert set(ordered) == set(placements)
+    for edge in analyze_buildability(placements).edges:
+        lower = placements[edge.lower_placement_index]
+        upper = placements[edge.upper_placement_index]
+        assert lower.position.z < upper.position.z
+        assert ordered.index(lower) < ordered.index(upper)
+
+
+def test_instruction_order_is_deterministic() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (
+        placement(brick, x=2, z=3),
+        placement(PART_BY_ID["4286"], x=8, z=3),
+        placement(brick, x=4),
+        placement(brick),
+    )
+
+    assert order_placements_for_instructions(placements) == order_placements_for_instructions(
+        placements
+    )
