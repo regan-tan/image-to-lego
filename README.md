@@ -198,6 +198,14 @@ model's minimum placement z plane and it has no evaluated placement connected di
 diagnostic does not assess structural stability, collision, clutch force, center of mass, insertion
 accessibility, color accuracy, or overall perceptual similarity.
 
+Newly converted models also include top-level `instructionSteps`. Each step holds a sequential
+`stepNumber` and stable `placementIndices` into the canonical `placements` array. The worker batches at
+most six placements per step, always puts an evaluated direct stud support in an earlier step than its
+dependent, and deterministically prefers the current evaluated component. Unevaluated slopes retain
+their canonical presentation order after earlier evaluated placements; this is not a mechanically
+verified attachment rule. These steps do not guarantee collision-free insertion, rotational access,
+temporary gravity stability, optimal assembly motions, or LEGO-official-quality subassemblies.
+
 ## Repository layout
 
 ```text

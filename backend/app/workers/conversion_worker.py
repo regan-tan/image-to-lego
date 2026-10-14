@@ -17,6 +17,7 @@ from app.conversion import (
     LegoModel,
     analyze_buildability,
     convert_glb,
+    generate_instruction_steps,
     order_placements_for_instructions,
 )
 from app.conversion.core import MAX_INPUT_BYTES
@@ -177,8 +178,9 @@ class ConversionJobProcessor:
 
 
 def serialize_lego_model(model: LegoModel) -> bytes:
-    buildability = analyze_buildability(model.placements)
     ordered_placements = order_placements_for_instructions(model.placements)
+    buildability = analyze_buildability(ordered_placements)
+    instruction_steps = generate_instruction_steps(ordered_placements)
     payload = {
         "partCount": model.part_count,
         "dimensions": {
@@ -249,6 +251,13 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "colorHex": placement.color_hex,
             }
             for placement in ordered_placements
+        ],
+        "instructionSteps": [
+            {
+                "stepNumber": step.step_number,
+                "placementIndices": list(step.placement_indices),
+            }
+            for step in instruction_steps
         ],
     }
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

@@ -28,6 +28,9 @@ export function BuildGuideWorkspace({
 
   const step = steps[currentStepIndex] ?? steps[0];
   if (!step) return null;
+  const previousPlacementIndices = steps
+    .slice(0, currentStepIndex)
+    .flatMap((previousStep) => previousStep.placementIndices);
 
   return (
     <section className="build-guide" aria-labelledby="build-guide-title">
@@ -44,12 +47,17 @@ export function BuildGuideWorkspace({
       />
       <div className="build-guide__workspace">
         <div className="build-guide__viewer baseplate" data-testid="build-guide-viewer">
-          <LegoModelViewer model={model} currentLayerZ={step.layerZ} />
+          <LegoModelViewer
+            model={model}
+            currentLayerZ={step.layerZ}
+            currentPlacementIndices={step.placementIndices}
+            previousPlacementIndices={previousPlacementIndices}
+          />
           <span className="model-stage__hint build-guide__viewer-hint">Drag to rotate · Scroll to zoom</span>
         </div>
         <aside className="build-guide__step-panel" aria-label="Current build step">
           <div className="build-guide__step-status" aria-live="polite" aria-atomic="true">
-            <h3>Layer {step.stepNumber}</h3>
+            <h3>Step {step.stepNumber}</h3>
             <p>Add {step.partCount} {step.partCount === 1 ? "brick" : "bricks"}</p>
           </div>
           <div className="build-guide__parts">
@@ -95,7 +103,7 @@ function BuildGuideHeading() {
   return (
     <div className="build-guide__heading">
       <h2 id="build-guide-title">Build guide</h2>
-      <p>Follow the model layer by layer. Some intermediate layers may need temporary support.</p>
+      <p>Follow the dependency-aware steps. They do not simulate every physical assembly motion.</p>
     </div>
   );
 }

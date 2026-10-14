@@ -422,7 +422,13 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
     model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
     output = json.loads(serialize_lego_model(model))
 
-    assert set(output) == {"partCount", "dimensions", "metadata", "placements"}
+    assert set(output) == {
+        "partCount",
+        "dimensions",
+        "metadata",
+        "placements",
+        "instructionSteps",
+    }
     assert set(output["placements"][0]) == {
         "brickType",
         "partId",
@@ -439,6 +445,9 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
     }
     positions = [placement["position"]["z"] for placement in output["placements"]]
     assert positions == sorted(positions)
+    assert [step["stepNumber"] for step in output["instructionSteps"]] == list(
+        range(1, len(output["instructionSteps"]) + 1)
+    )
 
 
 @pytest.mark.asyncio

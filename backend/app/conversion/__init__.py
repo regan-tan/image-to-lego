@@ -4,8 +4,12 @@ from app.conversion.buildability import (
     BUILDABILITY_ANALYSIS_VERSION,
     BuildabilityAnalysis,
     ConnectionEdge,
+    InstructionStep,
+    InstructionStepValidationError,
     analyze_buildability,
+    generate_instruction_steps,
     order_placements_for_instructions,
+    validate_instruction_steps,
 )
 from app.conversion.colors import DEFAULT_COLOR, LEGO_PALETTE, nearest_palette_color, normalize_rgb
 from app.conversion.core import (
@@ -46,8 +50,12 @@ __all__ = [
     "ModelDimensions",
     "convert_glb",
     "analyze_buildability",
+    "generate_instruction_steps",
+    "InstructionStep",
+    "InstructionStepValidationError",
     "nearest_palette_color",
     "normalize_rgb",
     "order_placements_for_instructions",
     "pack_occupied_cells",
+    "validate_instruction_steps",
 ]
