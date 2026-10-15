@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { BufferAttribute, BufferGeometry } from "three";
 
-import { generatedPartRenderGeometry, placementRenderGeometry } from "./legoRenderGeometry";
+import {
+  generatedPartRenderGeometry,
+  placementRenderGeometry,
+  rectangularStudRenderPositions,
+} from "./legoRenderGeometry";
 import { legoModelSchema, type LegoModel } from "./schemas/legoModels";
 
 const model = {
@@ -107,5 +111,27 @@ describe("placementRenderGeometry", () => {
 
     expect(generatedPartRenderGeometry(placement, model)).toBeNull();
     expect(placementRenderGeometry(placement, model).size).toEqual([3, expect.closeTo(1.2), 2]);
+    expect(rectangularStudRenderPositions(placement, model)).toHaveLength(6);
+  });
+
+  it("adds a top stud for every rectangular fallback footprint cell and none for slopes", () => {
+    const rectangular: LegoModel["placements"][number] = {
+      brickType: "plate_2x3",
+      dimensions: { lengthStuds: 3, widthStuds: 2, heightPlates: 1 },
+      position: { x: 0, y: 0, z: 0 },
+      orientationDegrees: 90,
+      color: "blue",
+    };
+    const slope: LegoModel["placements"][number] = {
+      brickType: "slope_1x3",
+      shape: "slope_33_3x1",
+      dimensions: { lengthStuds: 3, widthStuds: 1, heightPlates: 3 },
+      position: { x: 0, y: 0, z: 0 },
+      orientationDegrees: 0,
+      color: "red",
+    };
+
+    expect(rectangularStudRenderPositions(rectangular, model)).toHaveLength(6);
+    expect(rectangularStudRenderPositions(slope, model)).toEqual([]);
   });
 });

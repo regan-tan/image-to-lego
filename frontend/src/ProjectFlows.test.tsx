@@ -23,8 +23,8 @@ vi.mock("./components/ModelViewer", () => ({
   default: ({ url }: { url: string }) => <div data-testid="model-viewer" data-url={url} />,
 }));
 vi.mock("./components/LegoModelViewer", () => ({
-  default: ({ currentLayerZ }: { currentLayerZ?: number }) => (
-    <div data-testid="lego-model-viewer" data-current-layer={currentLayerZ} />
+  default: ({ placementStages }: { placementStages?: string[] }) => (
+    <div data-testid="lego-model-viewer" data-placement-stages={placementStages?.join(",") ?? "full"} />
   ),
 }));
 
@@ -714,21 +714,21 @@ describe("project flows", () => {
 
     expect(screen.getByRole("heading", { name: "Build guide" })).toBeInTheDocument();
     expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
-    expect(screen.getByText("1 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByText("1 added this step · 1 of 4 parts built")).toBeInTheDocument();
     expect(screen.getByText("Step 1")).toBeInTheDocument();
     expect(screen.getByText("Red")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     const buildGuideViewer = screen.getByTestId("build-guide-viewer");
     expect(buildGuideViewer).toBeInTheDocument();
-    expect(within(buildGuideViewer).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "0");
+    expect(within(buildGuideViewer).getByTestId("lego-model-viewer")).toHaveAttribute("data-placement-stages", "current,future,future,future");
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
-    expect(screen.getByText("3 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByText("2 added this step · 3 of 4 parts built")).toBeInTheDocument();
     expect(screen.getByText("Blue")).toBeInTheDocument();
     expect(screen.getByText("Yellow")).toBeInTheDocument();
-    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "2");
+    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-placement-stages", "previous,current,current,future");
     expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 
@@ -744,8 +744,8 @@ describe("project flows", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Step 3 of 3")).toBeInTheDocument();
-    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-current-layer", "5");
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-placement-stages", "previous,previous,previous,current");
+    expect(screen.getByRole("button", { name: "Build complete" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
     expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
     expect(api.posts("/api/v1/conversions")).toHaveLength(0);
@@ -954,6 +954,7 @@ describe("project flows", () => {
     expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
 
     fireEvent.click(within(completedBuildView).getByRole("button", { name: "LEGO model" }));
+    expect(screen.getByTestId("lego-model-viewer")).toHaveAttribute("data-placement-stages", "full");
     fireEvent.click(screen.getByRole("button", { name: "Convert again" }));
     expect(await screen.findByText("Loading LEGO model...")).toBeInTheDocument();
     fireEvent.click(within(completedBuildView).getByRole("button", { name: "Build guide" }));
@@ -962,7 +963,7 @@ describe("project flows", () => {
     api.resolveDelayedLegoModel();
 
     expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
-    expect(screen.getByText("1 of 2 parts built")).toBeInTheDocument();
+    expect(screen.getByText("1 added this step · 1 of 2 parts built")).toBeInTheDocument();
     expect(screen.getByText("Black")).toBeInTheDocument();
     expect(screen.queryByText("Red")).not.toBeInTheDocument();
   });
