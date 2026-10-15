@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyPlacementForBuildStep, deriveLegoBuildSteps } from "./legoBuildInstructions";
+import { deriveLegoBuildSteps, placementBuildStagesForStep } from "./legoBuildInstructions";
 import type { LegoModel } from "./schemas/legoModels";
 
 type Placement = LegoModel["placements"][number];
@@ -126,12 +126,82 @@ describe("deriveLegoBuildSteps", () => {
   });
 });
 
-describe("classifyPlacementForBuildStep", () => {
-  it.each([
-    [0, 1, "previous"],
-    [1, 1, "current"],
-    [2, 1, "future"],
-  ] as const)("classifies base layer %i at current layer %i as %s", (baseLayer, currentLayer, expected) => {
-    expect(classifyPlacementForBuildStep(placement(baseLayer), currentLayer)).toBe(expected);
+describe("placementBuildStagesForStep", () => {
+  it("keeps earlier placements visible, highlights the current step, and hides future placements", () => {
+    const buildModel = model([placement(0), placement(0), placement(2), placement(4)]);
+    buildModel.instructionSteps = [
+      { stepNumber: 1, placementIndices: [0] },
+      { stepNumber: 2, placementIndices: [1, 2] },
+      { stepNumber: 3, placementIndices: [3] },
+    ];
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(placementBuildStagesForStep(buildModel, steps, 1)).toEqual([
+      "previous",
+      "current",
+      "current",
+      "future",
+    ]);
+    expect(placementBuildStagesForStep(buildModel, steps, 2)).toEqual([
+      "previous",
+      "previous",
+      "previous",
+      "current",
+    ]);
+  });
+
+  it("uses the current step only when grouping its part list", () => {
+    const buildModel = model([
+      placement(0, { partId: "3001", color: "red", colorId: "ldraw:4" }),
+      placement(1, { partId: "3020", color: "black", colorId: "ldraw:0" }),
+      placement(1, { partId: "3020", color: "black", colorId: "ldraw:0" }),
+      placement(2, { partId: "3001", color: "red", colorId: "ldraw:4" }),
+    ]);
+    buildModel.instructionSteps = [
+      { stepNumber: 1, placementIndices: [0] },
+      { stepNumber: 2, placementIndices: [1, 2] },
+      { stepNumber: 3, placementIndices: [3] },
+    ];
+
+    const currentStep = deriveLegoBuildSteps(buildModel)[1];
+
+    expect(currentStep?.parts).toEqual([
+      expect.objectContaining({ partId: "3020", colorId: "ldraw:0", quantity: 2 }),
+    ]);
+    expect(currentStep?.partCount).toBe(2);
+    expect(currentStep?.cumulativePartCount).toBe(3);
+    expect(currentStep?.totalModelPartCount).toBe(4);
+  });
+
+  it("treats slopes and historical z-layer steps like every other placement", () => {
+    const slope = placement(1, {
+      brickType: "slope_1x3",
+      partId: "4286",
+      shape: "slope_33_3x1",
+      dimensions: { lengthStuds: 3, widthStuds: 1, heightPlates: 3 },
+    });
+    const historicalModel = model([placement(0), slope, placement(2)]);
+    const legacySteps = deriveLegoBuildSteps(historicalModel);
+
+    expect(legacySteps.map((step) => step.placementIndices)).toEqual([[0], [1], [2]]);
+    expect(placementBuildStagesForStep(historicalModel, legacySteps, 0)).toEqual([
+      "current",
+      "future",
+      "future",
+    ]);
+    expect(placementBuildStagesForStep(historicalModel, legacySteps, 1)).toEqual([
+      "previous",
+      "current",
+      "future",
+    ]);
+  });
+
+  it("returns the same stages for the same model and selected step", () => {
+    const buildModel = model([placement(0), placement(1), placement(2)]);
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(placementBuildStagesForStep(buildModel, steps, 1)).toEqual(
+      placementBuildStagesForStep(buildModel, steps, 1),
+    );
   });
 });

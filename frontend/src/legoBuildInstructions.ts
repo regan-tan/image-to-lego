@@ -76,11 +76,22 @@ export function deriveLegoBuildSteps(model: LegoModel): LegoBuildStep[] {
   });
 }
 
-export function classifyPlacementForBuildStep(
-  placement: LegoModel["placements"][number],
-  currentLayerZ: number,
-): PlacementBuildStage {
-  if (placement.position.z < currentLayerZ) return "previous";
-  if (placement.position.z > currentLayerZ) return "future";
-  return "current";
+export function placementBuildStagesForStep(
+  model: LegoModel,
+  steps: LegoBuildStep[],
+  currentStepIndex: number,
+): PlacementBuildStage[] {
+  const currentStep = steps[currentStepIndex];
+  if (!currentStep) return model.placements.map(() => "future");
+
+  const previousPlacementIndices = new Set(
+    steps.slice(0, currentStepIndex).flatMap((step) => step.placementIndices),
+  );
+  const currentPlacementIndices = new Set(currentStep.placementIndices);
+
+  return model.placements.map((_, placementIndex) => {
+    if (currentPlacementIndices.has(placementIndex)) return "current";
+    if (previousPlacementIndices.has(placementIndex)) return "previous";
+    return "future";
+  });
 }

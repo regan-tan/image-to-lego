@@ -848,6 +848,17 @@ h1 {
   cursor: grab;
 }
 
+.lego-model-viewer {
+  position: absolute;
+  inset: 0;
+}
+
+.lego-model-viewer__fit {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+}
+
 .model-viewer__loading {
   padding: 0.375rem 0.75rem;
   border-radius: 8px;

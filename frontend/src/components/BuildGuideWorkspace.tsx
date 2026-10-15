@@ -1,4 +1,4 @@
-import type { LegoBuildStep } from "../legoBuildInstructions";
+import { placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
 import { colorLabel, partLabel } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
@@ -26,18 +26,19 @@ export function BuildGuideWorkspace({
     );
   }
 
-  const step = steps[currentStepIndex] ?? steps[0];
+  const selectedStepIndex = Math.max(0, Math.min(currentStepIndex, steps.length - 1));
+  const step = steps[selectedStepIndex];
   if (!step) return null;
-  const previousPlacementIndices = steps
-    .slice(0, currentStepIndex)
-    .flatMap((previousStep) => previousStep.placementIndices);
+  const placementStages = placementBuildStagesForStep(model, steps, selectedStepIndex);
+  const isFirstStep = selectedStepIndex === 0;
+  const isLastStep = selectedStepIndex === steps.length - 1;
 
   return (
     <section className="build-guide" aria-labelledby="build-guide-title">
       <BuildGuideHeading />
       <div className="build-guide__progress-summary">
         <p><strong>Step {step.stepNumber} of {steps.length}</strong></p>
-        <p>{step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
+        <p>{step.partCount} added this step · {step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
       </div>
       <progress
         className="build-guide__progress"
@@ -49,9 +50,7 @@ export function BuildGuideWorkspace({
         <div className="build-guide__viewer baseplate" data-testid="build-guide-viewer">
           <LegoModelViewer
             model={model}
-            currentLayerZ={step.layerZ}
-            currentPlacementIndices={step.placementIndices}
-            previousPlacementIndices={previousPlacementIndices}
+            placementStages={placementStages}
           />
           <span className="model-stage__hint build-guide__viewer-hint">Drag to rotate · Scroll to zoom</span>
         </div>
@@ -64,11 +63,11 @@ export function BuildGuideWorkspace({
             <h4>Parts needed this step</h4>
             <ul>
               {step.parts.map((part) => (
-                <li key={`${part.partId ?? part.brickType}-${part.color}`}>
-                  <span className="color-swatch" style={{ backgroundColor: legoColorHex(part.color) }} aria-hidden="true" />
+                <li key={`${part.partId ?? part.brickType}-${part.colorId ?? part.color}`}>
+                  <span className="color-swatch" style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }} aria-hidden="true" />
                   <span className="build-guide__part-description">
                     <strong>{part.partId ? `${part.partId} — ${partLabel(part)}` : partLabel(part)}</strong>
-                    <span>{colorLabel(part.color)}</span>
+                    <span>{part.colorName ?? colorLabel(part.color)}</span>
                   </span>
                   <strong className="build-guide__part-quantity">×{part.quantity}</strong>
                 </li>
@@ -79,18 +78,18 @@ export function BuildGuideWorkspace({
             <button
               type="button"
               className="button button--secondary"
-              disabled={step.stepNumber === 1}
-              onClick={() => onStepChange(currentStepIndex - 1)}
+              disabled={isFirstStep}
+              onClick={() => onStepChange(selectedStepIndex - 1)}
             >
               Previous
             </button>
             <button
               type="button"
               className="button"
-              disabled={step.stepNumber === steps.length}
-              onClick={() => onStepChange(currentStepIndex + 1)}
+              disabled={isLastStep}
+              onClick={() => onStepChange(selectedStepIndex + 1)}
             >
-              Next
+              {isLastStep ? "Build complete" : "Next"}
             </button>
           </div>
         </aside>

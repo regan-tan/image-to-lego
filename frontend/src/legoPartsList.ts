@@ -26,7 +26,8 @@ export function aggregateLegoPlacements(
   for (const placement of placements) {
     const { brickType, partId, partName, dimensions, color, colorId, colorName, colorHex } = placement;
     const heightPlates = heightInPlates(dimensions);
-    const key = [partId ?? brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates, colorId ?? color].join("|");
+    const partIdentity = partId ?? [brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates].join(":");
+    const key = [partIdentity, colorId ?? color].join("|");
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += 1;

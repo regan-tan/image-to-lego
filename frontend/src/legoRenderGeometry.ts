@@ -3,6 +3,7 @@ import part3001 from "../../backend/app/conversion/part_geometry_assets/3001.jso
 import part4286 from "../../backend/app/conversion/part_geometry_assets/4286.json";
 
 const PLATE_HEIGHT_UNITS = 0.4;
+const STUD_HEIGHT_UNITS = 0.18;
 
 export interface RenderedBrick {
   size: [number, number, number];
@@ -12,6 +13,10 @@ export interface RenderedBrick {
 export interface RenderedPartGeometry {
   vertices: Float32Array;
   indices: Uint32Array;
+}
+
+export interface RenderedStud {
+  center: [number, number, number];
 }
 
 interface PartGeometryAsset {
@@ -79,6 +84,34 @@ export function generatedPartRenderGeometry(
     indices: new Uint32Array(asset.indices),
   };
 }
+
+/**
+ * Returns top-stud centers for the simple rectangular fallback. Detailed part assets already
+ * include their own LEGO geometry, while slopes keep their existing fallback shape unchanged.
+ */
+export function rectangularStudRenderPositions(
+  placement: LegoModel["placements"][number],
+  model: LegoModel,
+): RenderedStud[] {
+  if (placement.shape === "slope_33_3x1" || placement.brickType.startsWith("slope_")) return [];
+
+  const brick = placementRenderGeometry(placement, model);
+  const [length, height, depth] = brick.size;
+  const left = brick.center[0] - length / 2;
+  const front = brick.center[2] - depth / 2;
+  const top = brick.center[1] + height / 2;
+  const studs: RenderedStud[] = [];
+
+  for (let x = 0; x < length; x += 1) {
+    for (let z = 0; z < depth; z += 1) {
+      studs.push({ center: [left + x + 0.5, top + STUD_HEIGHT_UNITS / 2, front + z + 0.5] });
+    }
+  }
+
+  return studs;
+}
+
+export { STUD_HEIGHT_UNITS };
 
 function transformedHorizontalPosition(
   placement: LegoModel["placements"][number],
