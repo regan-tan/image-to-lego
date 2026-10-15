@@ -1,5 +1,6 @@
 import { colorLabel, type LegoPartsListResult, type LegoPartGroup, partLabel, serializePartsListCsv } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
+import { LegoPartThumbnail } from "./LegoPartThumbnail";
 
 interface PartsListSummaryProps {
   partsList: LegoPartsListResult;
@@ -42,7 +43,7 @@ export function PartsListWorkspace({ partsList }: { partsList: LegoPartsListResu
       </div>
       <div className="parts-list__table-wrap">
         <table className="parts-list__table">
-          <thead><tr><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Quantity</th></tr></thead>
+          <thead><tr><th scope="col">Preview</th><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Quantity</th></tr></thead>
           <tbody>{partsList.parts.map((part) => <PartsListRow key={partKey(part)} part={part} />)}</tbody>
         </table>
       </div>
@@ -67,6 +68,7 @@ function PartsListDownloadButton({ parts }: { parts: LegoPartGroup[] }) {
 function PartsListRow({ part }: { part: LegoPartGroup }) {
   return (
     <tr>
+      <td data-label="Preview"><LegoPartThumbnail part={part} /></td>
       <td data-label="Part ID">{part.partId ?? "Legacy part"}</td>
       <td data-label="Part name">{partLabel(part)}</td>
       <td data-label="Color">

@@ -28,6 +28,10 @@ vi.mock("./components/LegoModelViewer", () => ({
   ),
 }));
 
+vi.mock("./components/LegoPartThumbnail", () => ({
+  LegoPartThumbnail: ({ part }: { part: { partId?: string } }) => <div data-testid="lego-part-thumbnail" data-part-id={part.partId} />,
+}));
+
 const downloadMock = vi.hoisted(() => ({ startBrowserDownload: vi.fn() }));
 vi.mock("./browserDownload", () => downloadMock);
 

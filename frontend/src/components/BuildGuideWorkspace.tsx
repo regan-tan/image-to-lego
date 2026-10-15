@@ -2,6 +2,7 @@ import { placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildIns
 import { colorLabel, partLabel } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
+import { LegoPartThumbnail } from "./LegoPartThumbnail";
 import LegoModelViewer from "./LegoModelViewer";
 
 interface BuildGuideWorkspaceProps {
@@ -64,10 +65,10 @@ export function BuildGuideWorkspace({
             <ul>
               {step.parts.map((part) => (
                 <li key={`${part.partId ?? part.brickType}-${part.colorId ?? part.color}`}>
-                  <span className="color-swatch" style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }} aria-hidden="true" />
+                  <LegoPartThumbnail part={part} />
                   <span className="build-guide__part-description">
                     <strong>{part.partId ? `${part.partId} — ${partLabel(part)}` : partLabel(part)}</strong>
-                    <span>{part.colorName ?? colorLabel(part.color)}</span>
+                    <span><span className="color-swatch" style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }} aria-hidden="true" />{part.colorName ?? colorLabel(part.color)}</span>
                   </span>
                   <strong className="build-guide__part-quantity">×{part.quantity}</strong>
                 </li>

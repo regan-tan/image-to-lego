@@ -1209,17 +1209,12 @@ h1 {
 
 .parts-list__table th:first-child,
 .parts-list__table td:first-child {
-  width: 32%;
+  width: 5rem;
 }
 
 .parts-list__table th:nth-child(2),
 .parts-list__table td:nth-child(2) {
-  width: 20%;
-}
-
-.parts-list__table th:nth-child(3),
-.parts-list__table td:nth-child(3) {
-  width: 30%;
+  width: 15%;
 }
 
 .parts-list__table th,
@@ -1256,6 +1251,29 @@ h1 {
 .parts-list__table tr:last-child td {
   border-bottom: 0;
 }
+
+.lego-part-thumbnail {
+  width: 4rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-small);
+}
+
+.lego-part-thumbnail canvas {
+  display: block;
+  pointer-events: none;
+}
+
+.lego-part-thumbnail--unavailable {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
 
 .build-guide {
   display: grid;
@@ -1391,7 +1409,12 @@ h1 {
 }
 
 .build-guide__parts .color-swatch {
-  margin: 0;
+  margin: 0 0.35rem 0 0;
+}
+
+.build-guide__parts .lego-part-thumbnail {
+  width: 3.5rem;
+  height: 2.75rem;
 }
 
 .build-guide__part-description {
