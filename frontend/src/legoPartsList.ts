@@ -5,6 +5,8 @@ export interface LegoPartGroup {
   brickType: string;
   partId?: string;
   partName?: string;
+  shape?: "rectangular" | "slope_33_3x1";
+  geometryAsset?: string;
   lengthStuds: number;
   widthStuds: number;
   heightPlates: number;
@@ -24,7 +26,7 @@ export function aggregateLegoPlacements(
 ): LegoPartGroup[] {
   const groups = new Map<string, LegoPartGroup>();
   for (const placement of placements) {
-    const { brickType, partId, partName, dimensions, color, colorId, colorName, colorHex } = placement;
+    const { brickType, partId, partName, shape, geometryAsset, dimensions, color, colorId, colorName, colorHex } = placement;
     const heightPlates = heightInPlates(dimensions);
     const partIdentity = partId ?? [brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates].join(":");
     const key = [partIdentity, colorId ?? color].join("|");
@@ -33,7 +35,7 @@ export function aggregateLegoPlacements(
       existing.quantity += 1;
       continue;
     }
-    groups.set(key, { brickType, partId, partName, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, colorId, colorName, colorHex, quantity: 1 });
+    groups.set(key, { brickType, partId, partName, shape, geometryAsset, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, colorId, colorName, colorHex, quantity: 1 });
   }
   return [...groups.values()].sort(compareParts);
 }
