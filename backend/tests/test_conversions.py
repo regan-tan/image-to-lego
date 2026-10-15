@@ -356,6 +356,10 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert "heightPlates" in output["dimensions"]
     assert "heightBricks" not in output["dimensions"]
     assert output["metadata"]["buildability"]["version"] == "stud-connectivity-v1"
+    assert (
+        output["metadata"]["verticalInsertionAccessibility"]["version"]
+        == "vertical-insertion-v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -387,6 +391,10 @@ def test_lego_model_json_is_stable() -> None:
     assert json.loads(first)["metadata"]["algorithmVersion"] == model.metadata.algorithm_version
     assert json.loads(first)["metadata"]["fidelity"]["meanIoU"] == model.metadata.fidelity.mean_iou
     assert json.loads(first)["metadata"]["buildability"]["evaluatedPlacements"] >= 0
+    assert (
+        json.loads(first)["metadata"]["verticalInsertionAccessibility"]["evaluatedPlacements"]
+        >= 0
+    )
 
 
 def test_slope_placement_serializes_with_its_explicit_shape() -> None:

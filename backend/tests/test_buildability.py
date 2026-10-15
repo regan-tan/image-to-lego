@@ -2,10 +2,12 @@ import pytest
 
 from app.conversion import BrickPlacement, GridPosition
 from app.conversion.buildability import (
+    BlockedInsertion,
     ConnectionEdge,
     InstructionStep,
     InstructionStepValidationError,
     analyze_buildability,
+    analyze_vertical_insertion_accessibility,
     generate_instruction_steps,
     order_placements_for_instructions,
     validate_instruction_steps,
@@ -404,3 +406,84 @@ def test_instruction_steps_are_deterministic() -> None:
     )
 
     assert generate_instruction_steps(placements) == generate_instruction_steps(placements)
+
+
+def test_vertical_insertion_allows_a_simple_stack_and_support_below() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick), placement(brick, z=3))
+    steps = (InstructionStep(1, (0,)), InstructionStep(2, (1,)))
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.evaluated_placement_count == 2
+    assert analysis.accessible_placement_count == 2
+    assert analysis.blocked_placement_count == 0
+
+
+def test_vertical_insertion_allows_an_empty_footprint_and_side_adjacent_piece() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick, x=4, z=6), placement(brick, z=3))
+    steps = (InstructionStep(1, (0,)), InstructionStep(2, (1,)))
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.accessible_placement_count == 2
+    assert analysis.blocked_insertions == ()
+
+
+def test_vertical_insertion_reports_an_overhead_blocker() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick, z=7), placement(brick, z=3))
+    steps = (InstructionStep(1, (0,)), InstructionStep(2, (1,)))
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.accessible_placement_count == 1
+    assert analysis.blocked_insertions == (BlockedInsertion(1, (0,)),)
+
+
+def test_vertical_insertion_reports_multiple_blockers_in_placement_order() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    target = placement(plate, z=3)
+    first_blocker = placement(plate, z=5)
+    second_blocker = placement(plate, z=7)
+    placements = (target, first_blocker, second_blocker)
+    steps = (InstructionStep(1, (2, 1)), InstructionStep(2, (0,)))
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.blocked_insertions == (BlockedInsertion(0, (1, 2)),)
+
+
+def test_vertical_insertion_ignores_pieces_in_the_same_step() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    placements = (placement(plate, z=5), placement(plate, z=3))
+    steps = (InstructionStep(1, (0, 1)),)
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.accessible_placement_count == 2
+    assert analysis.blocked_insertions == ()
+
+
+def test_vertical_insertion_marks_slopes_unevaluated() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick), placement(PART_BY_ID["4286"], z=3))
+    steps = (InstructionStep(1, (0,)), InstructionStep(2, (1,)))
+
+    analysis = analyze_vertical_insertion_accessibility(placements, steps)
+
+    assert analysis.evaluated_placement_count == 1
+    assert analysis.unevaluated_placement_count == 1
+    assert analysis.accessible_placement_count == 1
+    assert analysis.blocked_insertions == ()
+
+
+def test_vertical_insertion_analysis_is_deterministic() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick, z=7), placement(brick, z=3), placement(brick, x=10))
+    steps = (InstructionStep(1, (0, 2)), InstructionStep(2, (1,)))
+
+    assert analyze_vertical_insertion_accessibility(
+        placements, steps
+    ) == analyze_vertical_insertion_accessibility(placements, steps)
