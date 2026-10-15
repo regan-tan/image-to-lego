@@ -1,16 +1,13 @@
-"""Verified LEGO colour data and deterministic source-colour matching.
+"""Canonical LEGO colour data and deterministic source-colour matching.
 
 Display RGB values and LDraw codes come from the LDraw official colour table
-(https://www.ldraw.org/article/547.html). BrickLink colour IDs and the supported
-part/colour pairs were checked against the matching BrickLink catalogue pages
-(https://www.bricklink.com/v2/catalog/catalogitem.page?P={part_id}) on
-2026-10-11. The availability data means manufactured catalogue combinations,
-not current marketplace stock.
+(https://www.ldraw.org/article/547.html). Part/colour verification belongs to
+the generated part catalogue, not this canonical colour list.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from math import pow
 from types import MappingProxyType
@@ -60,42 +57,16 @@ LEGO_PALETTE = LEGO_COLOR_CATALOGUE
 COLORS_BY_KEY: Final = MappingProxyType({color.key: color for color in LEGO_COLOR_CATALOGUE})
 COLORS_BY_ID: Final = MappingProxyType({color.color_id: color for color in LEGO_COLOR_CATALOGUE})
 
-# These fourteen part IDs are the complete current surface-grid-v3 catalogue.
-# Each set is deliberately static: do not infer an unlisted combination.
-_VERIFIED_COLOR_IDS = frozenset(color.color_id for color in LEGO_COLOR_CATALOGUE)
-PART_COLOR_AVAILABILITY: Final = MappingProxyType(
-    {
-        "3001": _VERIFIED_COLOR_IDS,
-        "3002": _VERIFIED_COLOR_IDS,
-        "3003": _VERIFIED_COLOR_IDS,
-        "3010": _VERIFIED_COLOR_IDS,
-        "3622": _VERIFIED_COLOR_IDS,
-        "3020": _VERIFIED_COLOR_IDS,
-        "3021": _VERIFIED_COLOR_IDS,
-        "3004": _VERIFIED_COLOR_IDS,
-        "3022": _VERIFIED_COLOR_IDS,
-        "3710": _VERIFIED_COLOR_IDS,
-        "3005": _VERIFIED_COLOR_IDS,
-        "3623": _VERIFIED_COLOR_IDS,
-        "3023": _VERIFIED_COLOR_IDS,
-        "3024": _VERIFIED_COLOR_IDS,
-        "4286": _VERIFIED_COLOR_IDS,
-    }
-)
 
-
-def is_color_available(part_id: str, color_id: str) -> bool:
-    return color_id in PART_COLOR_AVAILABILITY.get(part_id, frozenset())
-
-
-def nearest_available_color(part_id: str, rgb: Rgb) -> LegoColor:
+def nearest_available_color(verified_color_ids: Collection[str], rgb: Rgb) -> LegoColor:
     """Choose the closest verified colour for a real part, with stable catalogue ties."""
-    allowed_ids = PART_COLOR_AVAILABILITY.get(part_id)
-    if not allowed_ids:
-        raise ValueError(f"No verified LEGO colours are configured for part {part_id}.")
+    if not verified_color_ids:
+        raise ValueError("No verified LEGO colours are configured for this part.")
 
     source_lab = _rgb_to_lab(rgb)
-    candidates = [color for color in LEGO_COLOR_CATALOGUE if color.color_id in allowed_ids]
+    candidates = [color for color in LEGO_COLOR_CATALOGUE if color.color_id in verified_color_ids]
+    if not candidates:
+        raise ValueError("No canonical verified LEGO colours are configured for this part.")
     best = candidates[0]
     best_distance = _lab_distance_squared(source_lab, _rgb_to_lab(best.rgb))
     for color in candidates[1:]:

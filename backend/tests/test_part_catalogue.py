@@ -1,4 +1,3 @@
-from app.conversion.colors import PART_COLOR_AVAILABILITY
 from app.conversion.part_catalogue import ALL_PARTS, FITTER_PARTS, LEGO_PART_CATALOGUE, PART_BY_ID
 from app.conversion.part_geometry import load_part_geometry
 
@@ -42,10 +41,10 @@ def test_fitter_catalogue_preserves_the_existing_explicit_order() -> None:
     assert LEGO_PART_CATALOGUE == FITTER_PARTS
 
 
-def test_geometry_references_and_color_availability_resolve_for_fitter_parts() -> None:
+def test_geometry_references_and_verified_colors_resolve_for_fitter_parts() -> None:
     assert load_part_geometry(PART_BY_ID["3001"].geometry_asset or "") is not None
     assert load_part_geometry(PART_BY_ID["4286"].geometry_asset or "") is not None
-    assert all(PART_COLOR_AVAILABILITY[part.part_id] for part in FITTER_PARTS)
+    assert all(part.verified_color_ids for part in FITTER_PARTS)
 
 
 def test_slope_33_catalogue_profile_is_explicit() -> None:

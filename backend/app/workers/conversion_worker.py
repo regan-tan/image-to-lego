@@ -25,6 +25,7 @@ from app.conversion import (
     order_placements_for_instructions,
 )
 from app.conversion.core import MAX_INPUT_BYTES
+from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
 from app.domain.artifacts import ArtifactStatus
 from app.domain.jobs import JobStatus, WorkerConversionJob
@@ -212,6 +213,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             },
             "candidateCount": model.metadata.candidate_count,
             "occupancyMode": model.metadata.occupancy_mode,
+            "partColorVerificationVersion": PART_COLOR_VERIFICATION_VERSION,
             "fidelity": {
                 "metricsVersion": model.metadata.fidelity.metrics_version,
                 "rasterResolution": model.metadata.fidelity.raster_resolution,
@@ -288,6 +290,9 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "colorId": placement.color_id,
                 "colorName": placement.color_name,
                 "colorHex": placement.color_hex,
+                "partColorVerified": placement.brick_type.supports_color_id(
+                    placement.color_id or ""
+                ),
             }
             for placement in ordered_placements
         ],

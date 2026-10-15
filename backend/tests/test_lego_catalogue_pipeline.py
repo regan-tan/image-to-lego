@@ -86,8 +86,16 @@ def test_catalogue_generation_is_byte_deterministic(tmp_path: Path) -> None:
             "geometry asset missing.json does not exist.",
         ),
         (
-            lambda records: records[0].update({"partId": "9999"}),
-            "Color availability references unknown part IDs: 3001.",
+            lambda records: records[0].update({"verifiedColorIds": ["ldraw:999"]}),
+            "Part 3001: verifiedColorIds references unknown colors: ldraw:999.",
+        ),
+        (
+            lambda records: records[0].update({"verifiedColorIds": ["ldraw:4", "ldraw:4"]}),
+            "Part 3001: verifiedColorIds must not contain duplicates.",
+        ),
+        (
+            lambda records: records[0].update({"verifiedColorIds": []}),
+            "Fitter-enabled part 3001 has no verified color IDs.",
         ),
         (
             lambda records: records[-1].__setitem__("slopeProfile", "unknown"),

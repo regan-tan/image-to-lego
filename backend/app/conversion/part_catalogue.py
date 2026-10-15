@@ -11,6 +11,7 @@ from typing import Final, cast
 BRICK_HEIGHT_PLATES = 3
 PLATE_HEIGHT_PLATES = 1
 SLOPE_33_FAMILY = "slope_33"
+PART_COLOR_VERIFICATION_VERSION = "catalogue-v1"
 _GENERATED_CATALOGUE_PATH = Path(__file__).with_name("generated_part_catalogue.json")
 
 
@@ -36,6 +37,7 @@ class LegoPart:
     geometry_asset: str | None = None
     ldraw_id: str | None = None
     bricklink_id: str | None = None
+    verified_color_ids: frozenset[str] = frozenset()
     fitter_enabled: bool = False
     fitter_order: int | None = None
 
@@ -47,6 +49,9 @@ class LegoPart:
     def catalogue_key(self) -> str:
         display_family = self.family.split("_", maxsplit=1)[0]
         return f"{display_family}_{self.width_studs}x{self.length_studs}"
+
+    def supports_color_id(self, color_id: str) -> bool:
+        return color_id in self.verified_color_ids
 
 
 def _load_generated_catalogue() -> tuple[LegoPart, ...]:
@@ -72,6 +77,7 @@ def _load_generated_catalogue() -> tuple[LegoPart, ...]:
                 geometry_asset=cast(str | None, record["geometryAsset"]),
                 ldraw_id=cast(str | None, record["ldrawId"]),
                 bricklink_id=cast(str | None, record["bricklinkId"]),
+                verified_color_ids=frozenset(cast(list[str], record["verifiedColorIds"])),
                 fitter_enabled=cast(bool, record["fitterEnabled"]),
                 fitter_order=cast(int | None, record["fitterOrder"]),
             )
@@ -102,6 +108,7 @@ def legacy_grid_catalogue() -> tuple[LegoPart, ...]:
             width_studs=part.width_studs,
             length_studs=part.length_studs,
             height_plates=PLATE_HEIGHT_PLATES,
+            verified_color_ids=part.verified_color_ids,
         )
         for part in FITTER_PARTS
         if part.family == "brick"

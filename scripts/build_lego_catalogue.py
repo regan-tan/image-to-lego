@@ -8,7 +8,6 @@ import json
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from types import ModuleType
 from typing import Never, cast
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +23,7 @@ class CatalogueValidationError(ValueError):
     """The human-maintained catalogue source is not safe to generate."""
 
 
-def _load_color_catalogue() -> tuple[Mapping[str, object], Mapping[str, frozenset[str]]]:
+def _load_color_catalogue() -> Mapping[str, object]:
     """Load only static color data without importing the converter and its mesh dependencies."""
     colors_path = REPOSITORY_ROOT / "backend" / "app" / "conversion" / "colors.py"
     spec = importlib.util.spec_from_file_location("lego_catalogue_colors", colors_path)
@@ -33,14 +32,10 @@ def _load_color_catalogue() -> tuple[Mapping[str, object], Mapping[str, frozense
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    color_module = cast(ModuleType, module)
-    return (
-        cast(Mapping[str, object], color_module.COLORS_BY_ID),
-        cast(Mapping[str, frozenset[str]], color_module.PART_COLOR_AVAILABILITY),
-    )
+    return cast(Mapping[str, object], module.COLORS_BY_ID)
 
 
-COLORS_BY_ID, PART_COLOR_AVAILABILITY = _load_color_catalogue()
+COLORS_BY_ID = _load_color_catalogue()
 
 
 def _error(message: str) -> Never:
@@ -70,6 +65,23 @@ def _positive_integer(record: Mapping[str, object], field: str, part_id: str) ->
     return value
 
 
+def _verified_color_ids(record: Mapping[str, object], part_id: str) -> list[str]:
+    value = record.get("verifiedColorIds")
+    if not isinstance(value, list) or not all(isinstance(color_id, str) for color_id in value):
+        _error(f"Part {part_id}: verifiedColorIds must be an array of canonical color IDs.")
+    color_ids = cast(list[str], value)
+    if len(color_ids) != len(set(color_ids)):
+        _error(f"Part {part_id}: verifiedColorIds must not contain duplicates.")
+    unknown_colors = set(color_ids) - set(COLORS_BY_ID)
+    if unknown_colors:
+        _error(
+            f"Part {part_id}: verifiedColorIds references unknown colors: "
+            + ", ".join(sorted(unknown_colors))
+            + "."
+        )
+    return color_ids
+
+
 def _read_records(source_path: Path) -> list[Mapping[str, object]]:
     try:
         payload = json.loads(source_path.read_text(encoding="utf-8"))
@@ -91,7 +103,6 @@ def validate_records(
     records: Sequence[Mapping[str, object]],
     *,
     asset_directory: Path,
-    color_availability: Mapping[str, frozenset[str]] = PART_COLOR_AVAILABILITY,
 ) -> list[dict[str, object]]:
     """Validate records and return their stable runtime representation."""
     normalized: list[dict[str, object]] = []
@@ -115,6 +126,7 @@ def validate_records(
         ldraw_id = _optional_string(record, "ldrawId", part_id)
         bricklink_id = _optional_string(record, "bricklinkId", part_id)
         geometry_asset = _optional_string(record, "geometryAsset", part_id)
+        verified_color_ids = _verified_color_ids(record, part_id)
 
         if ldraw_id is not None:
             if ldraw_id in ldraw_ids:
@@ -146,6 +158,8 @@ def validate_records(
             if fitter_order in fitter_orders:
                 _error(f"Duplicate fitterOrder: {fitter_order}.")
             fitter_orders.add(fitter_order)
+            if not verified_color_ids:
+                _error(f"Fitter-enabled part {part_id} has no verified color IDs.")
         elif fitter_order is not None:
             _error(f"Part {part_id}: disabled parts must not define fitterOrder.")
 
@@ -161,6 +175,7 @@ def validate_records(
             "ldrawId": ldraw_id,
             "bricklinkId": bricklink_id,
             "geometryAsset": geometry_asset,
+            "verifiedColorIds": verified_color_ids,
             "fitterEnabled": fitter_enabled,
             "fitterOrder": fitter_order,
         }
@@ -169,26 +184,6 @@ def validate_records(
     expected_orders = set(range(len(fitter_orders)))
     if fitter_orders != expected_orders:
         _error("Fitter orders must be contiguous, starting at 0.")
-
-    availability_part_ids = set(color_availability)
-    unknown_availability_parts = availability_part_ids - part_ids
-    if unknown_availability_parts:
-        _error(
-            "Color availability references unknown part IDs: "
-            + ", ".join(sorted(unknown_availability_parts))
-            + "."
-        )
-    for availability_part_id, color_ids in color_availability.items():
-        unknown_colors = set(color_ids) - set(COLORS_BY_ID)
-        if unknown_colors:
-            _error(
-                f"Color availability for {availability_part_id} references unknown colors: "
-                + ", ".join(sorted(unknown_colors))
-                + "."
-            )
-    for record in normalized:
-        if record["fitterEnabled"] and not color_availability.get(cast(str, record["partId"])):
-            _error(f"Fitter-enabled part {record['partId']} has no verified color availability.")
 
     return sorted(normalized, key=lambda record: cast(str, record["partId"]))
 

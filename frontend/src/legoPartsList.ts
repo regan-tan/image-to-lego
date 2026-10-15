@@ -14,6 +14,7 @@ export interface LegoPartGroup {
   colorId?: string;
   colorName?: string;
   colorHex?: string;
+  partColorVerified?: boolean;
   quantity: number;
 }
 
@@ -26,16 +27,17 @@ export function aggregateLegoPlacements(
 ): LegoPartGroup[] {
   const groups = new Map<string, LegoPartGroup>();
   for (const placement of placements) {
-    const { brickType, partId, partName, shape, geometryAsset, dimensions, color, colorId, colorName, colorHex } = placement;
+    const { brickType, partId, partName, shape, geometryAsset, dimensions, color, colorId, colorName, colorHex, partColorVerified } = placement;
     const heightPlates = heightInPlates(dimensions);
     const partIdentity = partId ?? [brickType, dimensions.lengthStuds, dimensions.widthStuds, heightPlates].join(":");
     const key = [partIdentity, colorId ?? color].join("|");
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += 1;
+      existing.partColorVerified = existing.partColorVerified && partColorVerified;
       continue;
     }
-    groups.set(key, { brickType, partId, partName, shape, geometryAsset, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, colorId, colorName, colorHex, quantity: 1 });
+    groups.set(key, { brickType, partId, partName, shape, geometryAsset, lengthStuds: dimensions.lengthStuds, widthStuds: dimensions.widthStuds, heightPlates, color, colorId, colorName, colorHex, partColorVerified, quantity: 1 });
   }
   return [...groups.values()].sort(compareParts);
 }
@@ -67,8 +69,14 @@ export function colorLabel(color: string): string {
 }
 
 export function serializePartsListCsv(parts: LegoPartGroup[]): string {
-  const rows = [["Part ID", "Part Name", "Color", "Color ID", "Quantity"], ...parts.map((part) => [part.partId ?? "", partLabel(part), part.colorName ?? colorLabel(part.color), part.colorId ?? "", String(part.quantity)])];
+  const rows = [["Part ID", "Part Name", "Color", "Color ID", "Verified part/color", "Quantity"], ...parts.map((part) => [part.partId ?? "", partLabel(part), part.colorName ?? colorLabel(part.color), part.colorId ?? "", partColorVerificationLabel(part), String(part.quantity)])];
   return rows.map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
+}
+
+export function partColorVerificationLabel(part: LegoPartGroup): string {
+  if (part.partColorVerified === true) return "Verified";
+  if (part.partColorVerified === false) return "Not verified";
+  return "Not recorded";
 }
 
 function escapeCsvValue(value: string): string {

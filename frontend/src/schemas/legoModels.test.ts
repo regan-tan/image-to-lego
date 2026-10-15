@@ -51,4 +51,14 @@ describe("legoModelSchema", () => {
 
     expect(legoModelSchema.parse(model).instructionSteps).toEqual(model.instructionSteps);
   });
+
+  it("accepts the catalogue part-color verification marker", () => {
+    const model = {
+      ...legacyModel,
+      metadata: { ...legacyModel.metadata, partColorVerificationVersion: "catalogue-v1" },
+      placements: [{ ...legacyModel.placements[0], partColorVerified: true }],
+    };
+
+    expect(legoModelSchema.parse(model).placements[0]?.partColorVerified).toBe(true);
+  });
 });

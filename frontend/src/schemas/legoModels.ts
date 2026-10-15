@@ -29,6 +29,7 @@ export const legoModelSchema = z.object({
     gridSize: dimensionsSchema,
     candidateCount: z.number(),
     occupancyMode: z.string(),
+    partColorVerificationVersion: z.string().optional(),
   }),
   placements: z.array(z.object({
     brickType: z.string(),
@@ -43,6 +44,7 @@ export const legoModelSchema = z.object({
     colorId: z.string().optional(),
     colorName: z.string().optional(),
     colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    partColorVerified: z.boolean().optional(),
   })),
   instructionSteps: z.array(z.object({
     stepNumber: z.number().int().positive(),
