@@ -119,9 +119,7 @@ def solve_surface_grid_v4(
     stage_two_model.model.add(sum(stage_two_model.coverage) == achieved_coverage)
     stage_two_model.model.minimize(sum(stage_two_model.selected))
     _add_hint(stage_two_model, stage_one_ids)
-    stage_two_solver, stage_two = _solve(
-        stage_two_model.model, STAGE_TWO_MAX_DETERMINISTIC_TIME
-    )
+    stage_two_solver, stage_two = _solve(stage_two_model.model, STAGE_TWO_MAX_DETERMINISTIC_TIME)
 
     selected_ids = stage_one_ids
     if _has_usable_incumbent(stage_two):
@@ -198,7 +196,7 @@ def _enumerate_candidates(
     candidates: list[_Candidate] = []
     for position in sorted(target, key=_cell_order):
         for brick_type in catalogue:
-            if brick_type.shape != "rectangular":
+            if brick_type.shape != "rectangular" or not brick_type.verified_color_ids:
                 continue
             orientations = (0,) if brick_type.length_studs == brick_type.width_studs else (0, 90)
             for orientation in orientations:

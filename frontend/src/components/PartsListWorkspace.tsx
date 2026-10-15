@@ -1,4 +1,4 @@
-import { colorLabel, type LegoPartsListResult, type LegoPartGroup, partLabel, serializePartsListCsv } from "../legoPartsList";
+import { colorLabel, type LegoPartsListResult, type LegoPartGroup, partColorVerificationLabel, partLabel, serializePartsListCsv } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import { LegoPartThumbnail } from "./LegoPartThumbnail";
 
@@ -43,7 +43,7 @@ export function PartsListWorkspace({ partsList }: { partsList: LegoPartsListResu
       </div>
       <div className="parts-list__table-wrap">
         <table className="parts-list__table">
-          <thead><tr><th scope="col">Preview</th><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Quantity</th></tr></thead>
+          <thead><tr><th scope="col">Preview</th><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Verification</th><th scope="col">Quantity</th></tr></thead>
           <tbody>{partsList.parts.map((part) => <PartsListRow key={partKey(part)} part={part} />)}</tbody>
         </table>
       </div>
@@ -76,6 +76,7 @@ function PartsListRow({ part }: { part: LegoPartGroup }) {
         {part.colorName ?? colorLabel(part.color)}
       </td>
       <td data-label="Color ID">{part.colorId ?? "Legacy color"}</td>
+      <td data-label="Verification">{partColorVerificationLabel(part)}</td>
       <td data-label="Quantity">{part.quantity}</td>
     </tr>
   );

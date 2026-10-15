@@ -12,6 +12,24 @@
     "partId": "3001",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -27,6 +45,22 @@
     "partId": "3002",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:2",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -42,6 +76,24 @@
     "partId": "3003",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -57,6 +109,24 @@
     "partId": "3004",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -72,6 +142,24 @@
     "partId": "3005",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -87,6 +175,24 @@
     "partId": "3010",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -102,6 +208,24 @@
     "partId": "3020",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -117,6 +241,24 @@
     "partId": "3021",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -132,6 +274,24 @@
     "partId": "3022",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 2
   },
   {
@@ -147,6 +307,24 @@
     "partId": "3023",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -162,6 +340,24 @@
     "partId": "3024",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -177,6 +373,24 @@
     "partId": "3622",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -192,6 +406,24 @@
     "partId": "3623",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -207,6 +439,24 @@
     "partId": "3710",
     "shape": "rectangular",
     "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   },
   {
@@ -222,6 +472,24 @@
     "partId": "4286",
     "shape": "slope_33_3x1",
     "slopeProfile": "rise_33_3",
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
     "widthStuds": 1
   }
 ]

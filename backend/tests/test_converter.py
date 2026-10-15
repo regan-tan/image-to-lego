@@ -5,7 +5,6 @@ import trimesh
 from PIL import Image
 
 import app.conversion.core as converter_core
-from app.conversion.colors import is_color_available
 from app.conversion.core import (
     ALGORITHM_VERSION,
     BRICK_CATALOGUE,
@@ -261,7 +260,7 @@ def test_placements_reference_catalogue_parts() -> None:
     assert all(placement.color_id is not None for placement in model.placements)
     assert all(
         placement.color_id is not None
-        and is_color_available(placement.brick_type.part_id, placement.color_id)
+        and placement.brick_type.supports_color_id(placement.color_id)
         for placement in model.placements
     )
 
@@ -272,6 +271,26 @@ def test_packing_keeps_horizontal_geometry_and_uses_a_plate_for_one_layer() -> N
     assert len(placements) == 1
     assert placements[0].brick_type.part_id == "3020"
     assert placements[0].orientation_degrees == 0
+
+
+def test_packing_rejects_parts_without_any_verified_color() -> None:
+    one_by_one_plate = next(part for part in BRICK_CATALOGUE if part.part_id == "3024")
+    unavailable = replace(
+        one_by_one_plate,
+        part_id="unavailable",
+        verified_color_ids=frozenset(),
+    )
+    verified = replace(
+        one_by_one_plate,
+        part_id="verified",
+        verified_color_ids=frozenset({"ldraw:4"}),
+    )
+
+    placements = pack_occupied_cells({GridPosition(0, 0, 0)}, (unavailable, verified))
+
+    assert [placement.brick_type.part_id for placement in placements] == ["verified"]
+    with pytest.raises(ConversionError, match="could not be covered"):
+        pack_occupied_cells({GridPosition(0, 0, 0)}, (unavailable,))
 
 
 def test_bricks_and_plates_use_explicit_plate_layer_heights() -> None:

@@ -357,8 +357,7 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert "heightBricks" not in output["dimensions"]
     assert output["metadata"]["buildability"]["version"] == "stud-connectivity-v1"
     assert (
-        output["metadata"]["verticalInsertionAccessibility"]["version"]
-        == "vertical-insertion-v1"
+        output["metadata"]["verticalInsertionAccessibility"]["version"] == "vertical-insertion-v1"
     )
 
 
@@ -389,11 +388,14 @@ def test_lego_model_json_is_stable() -> None:
     assert first == second
     assert model.metadata.fidelity == repeated_model.metadata.fidelity
     assert json.loads(first)["metadata"]["algorithmVersion"] == model.metadata.algorithm_version
+    assert json.loads(first)["metadata"]["partColorVerificationVersion"] == "catalogue-v1"
     assert json.loads(first)["metadata"]["fidelity"]["meanIoU"] == model.metadata.fidelity.mean_iou
     assert json.loads(first)["metadata"]["buildability"]["evaluatedPlacements"] >= 0
+    assert all(
+        placement["partColorVerified"] is True for placement in json.loads(first)["placements"]
+    )
     assert (
-        json.loads(first)["metadata"]["verticalInsertionAccessibility"]["evaluatedPlacements"]
-        >= 0
+        json.loads(first)["metadata"]["verticalInsertionAccessibility"]["evaluatedPlacements"] >= 0
     )
 
 
@@ -422,6 +424,7 @@ def test_slope_placement_serializes_with_its_explicit_shape() -> None:
             "colorId": None,
             "colorName": None,
             "colorHex": None,
+            "partColorVerified": False,
         }
     ]
 
@@ -450,6 +453,7 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
         "colorId",
         "colorName",
         "colorHex",
+        "partColorVerified",
     }
     positions = [placement["position"]["z"] for placement in output["placements"]]
     assert positions == sorted(positions)

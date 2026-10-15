@@ -446,7 +446,7 @@ def _color_placements(
             fallback_count += 1
         try:
             verified_color = nearest_available_color(
-                placement.brick_type.part_id,
+                placement.brick_type.verified_color_ids,
                 COLORS_BY_KEY[color].rgb,
             )
         except ValueError as error:
@@ -751,7 +751,7 @@ def _first_fitting_brick(
     catalogue: tuple[LegoPart, ...],
 ) -> BrickPlacement:
     for brick_type in catalogue:
-        if brick_type.shape != "rectangular":
+        if brick_type.shape != "rectangular" or not brick_type.verified_color_ids:
             continue
         orientations = (
             (0,)
@@ -817,7 +817,11 @@ def _place_supported_slopes(
     occupied_cells: Collection[GridPosition],
 ) -> tuple[tuple[BrickPlacement, ...], frozenset[GridPosition]]:
     """Select non-overlapping exposed runs for each supported slope family."""
-    slope_parts = tuple(part for part in BRICK_CATALOGUE if part.family == SLOPE_33_FAMILY)
+    slope_parts = tuple(
+        part
+        for part in BRICK_CATALOGUE
+        if part.family == SLOPE_33_FAMILY and part.verified_color_ids
+    )
     return _place_slope_33_family(occupied_cells, slope_parts)
 
 
