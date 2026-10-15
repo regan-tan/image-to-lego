@@ -208,6 +208,13 @@ region only for presentation and retain no inferred mechanical attachment. These
 collision-free insertion, rotational access, temporary gravity stability, optimal assembly motions, or
 LEGO-official-quality subassemblies.
 
+Canonical conversion metadata also includes `vertical-insertion-v1`. For each rectangular brick or
+plate, it checks only whether the piece can move straight downward into its final pose without crossing
+previously placed rectangular fit geometry. It evaluates the model state at the start of each instruction
+step, so placements in the same step deliberately do not block one another. Slopes are unevaluated. This
+does not model hand reach, rotation, sideways insertion, clutch tolerances, stability, or official LEGO
+assembly feasibility.
+
 ## Repository layout
 
 ```text

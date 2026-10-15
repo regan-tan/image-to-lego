@@ -10,6 +10,7 @@ from heapq import heappop, heappush
 from app.conversion.core import BrickPlacement
 
 BUILDABILITY_ANALYSIS_VERSION = "stud-connectivity-v1"
+VERTICAL_INSERTION_ACCESSIBILITY_VERSION = "vertical-insertion-v1"
 MAX_PLACEMENTS_PER_INSTRUCTION_STEP = 6
 _SUPPORTED_FAMILIES = frozenset({"brick", "plate"})
 
@@ -43,6 +44,25 @@ class InstructionStep:
 
     step_number: int
     placement_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BlockedInsertion:
+    """One rectangular placement blocked during its straight-down insertion."""
+
+    placement_index: int
+    blocker_placement_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VerticalInsertionAccessibility:
+    """Step-start straight-down insertion diagnostics for a completed model."""
+
+    evaluated_placement_count: int
+    unevaluated_placement_count: int
+    accessible_placement_count: int
+    blocked_placement_count: int
+    blocked_insertions: tuple[BlockedInsertion, ...]
 
 
 class BuildInstructionOrderingError(ValueError):
@@ -94,6 +114,62 @@ def analyze_buildability(placements: Collection[BrickPlacement]) -> Buildability
         else 0.0,
         isolated_placement_count=sum(not neighbors for neighbors in adjacency.values()),
         unsupported_placement_count=unsupported_count,
+    )
+
+
+def analyze_vertical_insertion_accessibility(
+    placements: Collection[BrickPlacement],
+    instruction_steps: Sequence[InstructionStep],
+) -> VerticalInsertionAccessibility:
+    """Check rectangular placements against geometry built before each guide step.
+
+    ``vertical-insertion-v1`` only proves that a brick or plate can translate
+    straight down into its final pose without crossing previously placed
+    rectangular fit geometry. Pieces in the same step are deliberately not
+    blockers because the guide does not define an internal insertion order.
+    Slopes are unevaluated and are not given invented bounding-box mechanics.
+    """
+    placement_list = tuple(placements)
+    validate_instruction_steps(placement_list, instruction_steps)
+
+    built_indices: list[int] = []
+    blocked_insertions: list[BlockedInsertion] = []
+    evaluated_count = 0
+    accessible_count = 0
+
+    for step in instruction_steps:
+        for placement_index in step.placement_indices:
+            placement = placement_list[placement_index]
+            if not _is_connector_supported(placement):
+                continue
+
+            evaluated_count += 1
+            target_top_z = placement.position.z + placement.brick_type.height_plates
+            target_footprint = _stud_footprint(placement)
+            blocker_indices: list[int] = []
+            for built_index in built_indices:
+                built = placement_list[built_index]
+                if not _is_connector_supported(built):
+                    continue
+                if built.position.z + built.brick_type.height_plates <= target_top_z:
+                    continue
+                if target_footprint & _stud_footprint(built):
+                    blocker_indices.append(built_index)
+
+            blockers = tuple(sorted(blocker_indices))
+            if blockers:
+                blocked_insertions.append(BlockedInsertion(placement_index, blockers))
+            else:
+                accessible_count += 1
+
+        built_indices.extend(step.placement_indices)
+
+    return VerticalInsertionAccessibility(
+        evaluated_placement_count=evaluated_count,
+        unevaluated_placement_count=len(placement_list) - evaluated_count,
+        accessible_placement_count=accessible_count,
+        blocked_placement_count=len(blocked_insertions),
+        blocked_insertions=tuple(blocked_insertions),
     )
 
 

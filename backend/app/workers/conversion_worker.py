@@ -11,11 +11,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.conversion import (
     BUILDABILITY_ANALYSIS_VERSION,
+    VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
     Axis,
     ConversionError,
     ConversionSettings,
     LegoModel,
     analyze_buildability,
+    analyze_vertical_insertion_accessibility,
     convert_glb,
     generate_instruction_steps,
     order_placements_for_instructions,
@@ -181,6 +183,10 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     ordered_placements = order_placements_for_instructions(model.placements)
     buildability = analyze_buildability(ordered_placements)
     instruction_steps = generate_instruction_steps(ordered_placements)
+    insertion_accessibility = analyze_vertical_insertion_accessibility(
+        ordered_placements,
+        instruction_steps,
+    )
     payload = {
         "partCount": model.part_count,
         "dimensions": {
@@ -225,6 +231,20 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "largestComponentRatio": buildability.largest_connected_component_ratio,
                 "isolatedPlacements": buildability.isolated_placement_count,
                 "unsupportedPlacements": buildability.unsupported_placement_count,
+            },
+            "verticalInsertionAccessibility": {
+                "version": VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
+                "evaluatedPlacements": insertion_accessibility.evaluated_placement_count,
+                "unevaluatedPlacements": insertion_accessibility.unevaluated_placement_count,
+                "accessiblePlacements": insertion_accessibility.accessible_placement_count,
+                "blockedPlacements": insertion_accessibility.blocked_placement_count,
+                "blockedInsertions": [
+                    {
+                        "placementIndex": blocked.placement_index,
+                        "blockerPlacementIndices": list(blocked.blocker_placement_indices),
+                    }
+                    for blocked in insertion_accessibility.blocked_insertions
+                ],
             },
         },
         "placements": [
