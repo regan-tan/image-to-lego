@@ -6,11 +6,13 @@ from collections import defaultdict
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from heapq import heappop, heappush
+from typing import Literal
 
 from app.conversion.core import BrickPlacement
 
 BUILDABILITY_ANALYSIS_VERSION = "stud-connectivity-v1"
 VERTICAL_INSERTION_ACCESSIBILITY_VERSION = "vertical-insertion-v1"
+INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION = "insertion-aware-instructions-v1"
 MAX_PLACEMENTS_PER_INSTRUCTION_STEP = 6
 _SUPPORTED_FAMILIES = frozenset({"brick", "plate"})
 
@@ -65,6 +67,38 @@ class VerticalInsertionAccessibility:
     blocked_insertions: tuple[BlockedInsertion, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PrecedenceEdge:
+    """One hard ordering rule between placements."""
+
+    predecessor_placement_index: int
+    successor_placement_index: int
+    edge_type: Literal["structural", "insertion"]
+
+
+@dataclass(frozen=True, slots=True)
+class InstructionPrecedenceAnalysis:
+    """Combined support and vertical-insertion ordering diagnostics."""
+
+    structural_edges: tuple[PrecedenceEdge, ...]
+    insertion_edges: tuple[PrecedenceEdge, ...]
+    cyclic_components: tuple[tuple[int, ...], ...]
+    cyclic_placement_indices: tuple[int, ...]
+    cyclic_structural_edge_count: int
+    cyclic_insertion_edge_count: int
+    schedulable_evaluated_placement_count: int
+    unresolved_vertical_insertion_placement_indices: tuple[int, ...]
+
+    @property
+    def total_precedence_edge_count(self) -> int:
+        return len(
+            {
+                (edge.predecessor_placement_index, edge.successor_placement_index)
+                for edge in (*self.structural_edges, *self.insertion_edges)
+            }
+        )
+
+
 class BuildInstructionOrderingError(ValueError):
     """The stud-connectivity graph cannot provide a valid instruction order."""
 
@@ -114,6 +148,66 @@ def analyze_buildability(placements: Collection[BrickPlacement]) -> Buildability
         else 0.0,
         isolated_placement_count=sum(not neighbors for neighbors in adjacency.values()),
         unsupported_placement_count=unsupported_count,
+    )
+
+
+def analyze_instruction_precedence(
+    placements: Collection[BrickPlacement],
+) -> InstructionPrecedenceAnalysis:
+    """Build deterministic support and straight-down insertion precedence edges.
+
+    An insertion edge ``A -> B`` means B's final rectangular fit geometry would
+    block A's straight-down insertion if B were already installed. Slopes remain
+    unevaluated and never contribute insertion edges.
+    """
+    placement_list = tuple(placements)
+    buildability = analyze_buildability(placement_list)
+    structural_edges = tuple(
+        PrecedenceEdge(
+            edge.lower_placement_index,
+            edge.upper_placement_index,
+            "structural",
+        )
+        for edge in buildability.edges
+    )
+    insertion_edges = _insertion_precedence_edges(placement_list)
+    cyclic_components = _cyclic_components(
+        len(placement_list), (*structural_edges, *insertion_edges)
+    )
+    cyclic_placement_indices = tuple(
+        index for component in cyclic_components for index in component
+    )
+    cyclic_component_by_index = {
+        index: component_id
+        for component_id, component in enumerate(cyclic_components)
+        for index in component
+    }
+    cyclic_structural_edge_count = sum(
+        cyclic_component_by_index.get(edge.predecessor_placement_index)
+        == cyclic_component_by_index.get(edge.successor_placement_index)
+        and edge.predecessor_placement_index in cyclic_component_by_index
+        for edge in structural_edges
+    )
+    cyclic_insertion_edge_count = sum(
+        cyclic_component_by_index.get(edge.predecessor_placement_index)
+        == cyclic_component_by_index.get(edge.successor_placement_index)
+        and edge.predecessor_placement_index in cyclic_component_by_index
+        for edge in insertion_edges
+    )
+    evaluated_placement_count = sum(
+        _is_connector_supported(placement) for placement in placement_list
+    )
+
+    return InstructionPrecedenceAnalysis(
+        structural_edges=structural_edges,
+        insertion_edges=insertion_edges,
+        cyclic_components=cyclic_components,
+        cyclic_placement_indices=cyclic_placement_indices,
+        cyclic_structural_edge_count=cyclic_structural_edge_count,
+        cyclic_insertion_edge_count=cyclic_insertion_edge_count,
+        schedulable_evaluated_placement_count=evaluated_placement_count
+        - len(cyclic_placement_indices),
+        unresolved_vertical_insertion_placement_indices=cyclic_placement_indices,
     )
 
 
@@ -176,7 +270,7 @@ def analyze_vertical_insertion_accessibility(
 def order_placements_for_instructions(
     placements: Collection[BrickPlacement],
 ) -> tuple[BrickPlacement, ...]:
-    """Return a deterministic support-before-dependent placement order.
+    """Return a deterministic precedence-aware placement order.
 
     This reuses ``stud-connectivity-v1`` edges for rectangular bricks and plates.
     It does not verify insertion accessibility, collision-free assembly, or partial-build stability.
@@ -185,7 +279,11 @@ def order_placements_for_instructions(
     placement below their base z level; this is not a verified mechanical dependency.
     """
     placement_list = tuple(placements)
-    return tuple(placement_list[index] for index in _ordered_placement_indices(placement_list))
+    precedence = analyze_instruction_precedence(placement_list)
+    return tuple(
+        placement_list[index]
+        for index in _ordered_placement_indices(placement_list, precedence)
+    )
 
 
 def generate_instruction_steps(
@@ -201,13 +299,21 @@ def generate_instruction_steps(
     """
     placement_list = tuple(placements)
     analysis = analyze_buildability(placement_list)
-    canonical_indices = _ordered_placement_indices(placement_list)
+    precedence = analyze_instruction_precedence(placement_list)
+    canonical_indices = _ordered_placement_indices(placement_list, precedence)
     canonical_rank = {index: rank for rank, index in enumerate(canonical_indices)}
-    prerequisites = _prerequisites_by_placement(placement_list, analysis.edges)
+    prerequisites = _prerequisites_by_placement(
+        placement_list,
+        _schedulable_precedence_edges(precedence),
+    )
+    structural_prerequisites = _prerequisites_by_placement(
+        placement_list,
+        precedence.structural_edges,
+    )
     component_ids = _component_ids_by_placement(placement_list, analysis.edges)
     region_ids = _subassembly_region_ids_by_placement(
         placement_list,
-        prerequisites,
+        structural_prerequisites,
         component_ids,
         canonical_rank,
     )
@@ -277,6 +383,7 @@ def generate_instruction_steps(
 
     instruction_steps = tuple(steps)
     validate_instruction_steps(placement_list, instruction_steps)
+    _validate_schedulable_precedence_steps(placement_list, instruction_steps, precedence)
     return instruction_steps
 
 
@@ -318,20 +425,41 @@ def validate_instruction_steps(
             )
 
 
-def _ordered_placement_indices(placements: tuple[BrickPlacement, ...]) -> tuple[int, ...]:
-    analysis = analyze_buildability(placements)
+def _validate_schedulable_precedence_steps(
+    placements: tuple[BrickPlacement, ...],
+    instruction_steps: Sequence[InstructionStep],
+    precedence: InstructionPrecedenceAnalysis,
+) -> None:
+    step_by_placement = {
+        placement_index: step.step_number
+        for step in instruction_steps
+        for placement_index in step.placement_indices
+    }
+    for edge in _schedulable_precedence_edges(precedence):
+        predecessor_step = step_by_placement[edge.predecessor_placement_index]
+        successor_step = step_by_placement[edge.successor_placement_index]
+        if predecessor_step >= successor_step:
+            raise BuildInstructionOrderingError(
+                "A schedulable precedence requirement did not cross a step boundary."
+            )
+
+
+def _ordered_placement_indices(
+    placements: tuple[BrickPlacement, ...],
+    precedence: InstructionPrecedenceAnalysis,
+) -> tuple[int, ...]:
     outgoing: list[list[int]] = [[] for _ in placements]
     incoming_counts = [0 for _ in placements]
 
-    for edge in analysis.edges:
-        lower = placements[edge.lower_placement_index]
-        upper = placements[edge.upper_placement_index]
-        if lower.position.z >= upper.position.z:
+    for edge in _schedulable_precedence_edges(precedence):
+        predecessor = placements[edge.predecessor_placement_index]
+        successor = placements[edge.successor_placement_index]
+        if edge.edge_type == "structural" and predecessor.position.z >= successor.position.z:
             raise BuildInstructionOrderingError(
                 "stud-connectivity-v1 produced a non-upward support dependency."
             )
-        outgoing[edge.lower_placement_index].append(edge.upper_placement_index)
-        incoming_counts[edge.upper_placement_index] += 1
+        outgoing[edge.predecessor_placement_index].append(edge.successor_placement_index)
+        incoming_counts[edge.successor_placement_index] += 1
 
     ready: list[tuple[tuple[int, int, int, int, int, str, int, int], int]] = []
     for index, incoming_count in enumerate(incoming_counts):
@@ -353,18 +481,18 @@ def _ordered_placement_indices(placements: tuple[BrickPlacement, ...]) -> tuple[
 
     if len(ordered_indices) != len(placements):
         raise BuildInstructionOrderingError(
-            "stud-connectivity-v1 produced a cyclic support dependency."
+            "Instruction precedence scheduling unexpectedly retained a cycle."
         )
     return tuple(ordered_indices)
 
 
 def _prerequisites_by_placement(
     placements: tuple[BrickPlacement, ...],
-    edges: Sequence[ConnectionEdge],
+    edges: Sequence[PrecedenceEdge],
 ) -> tuple[frozenset[int], ...]:
     prerequisites = [set[int]() for _ in placements]
     for edge in edges:
-        prerequisites[edge.upper_placement_index].add(edge.lower_placement_index)
+        prerequisites[edge.successor_placement_index].add(edge.predecessor_placement_index)
     return tuple(frozenset(indices) for indices in prerequisites)
 
 
@@ -545,6 +673,97 @@ def _connection_edges(
             if overlap:
                 edges.append(ConnectionEdge(lower_index, upper_index, len(overlap)))
     return tuple(edges)
+
+
+def _insertion_precedence_edges(
+    placements: tuple[BrickPlacement, ...],
+) -> tuple[PrecedenceEdge, ...]:
+    edges: list[PrecedenceEdge] = []
+    for target_index, target in enumerate(placements):
+        if not _is_connector_supported(target):
+            continue
+        target_top_z = target.position.z + target.brick_type.height_plates
+        target_footprint = _stud_footprint(target)
+        for blocker_index, blocker in enumerate(placements):
+            if target_index == blocker_index or not _is_connector_supported(blocker):
+                continue
+            if blocker.position.z + blocker.brick_type.height_plates <= target_top_z:
+                continue
+            if target_footprint & _stud_footprint(blocker):
+                edges.append(PrecedenceEdge(target_index, blocker_index, "insertion"))
+    return tuple(edges)
+
+
+def _cyclic_components(
+    placement_count: int,
+    edges: Sequence[PrecedenceEdge],
+) -> tuple[tuple[int, ...], ...]:
+    adjacency = [set[int]() for _ in range(placement_count)]
+    reverse_adjacency = [set[int]() for _ in range(placement_count)]
+    for edge in edges:
+        adjacency[edge.predecessor_placement_index].add(edge.successor_placement_index)
+        reverse_adjacency[edge.successor_placement_index].add(edge.predecessor_placement_index)
+
+    finish_order: list[int] = []
+    visited: set[int] = set()
+    for start_index in range(placement_count):
+        if start_index in visited:
+            continue
+        pending: list[tuple[int, bool]] = [(start_index, False)]
+        while pending:
+            index, exiting = pending.pop()
+            if exiting:
+                finish_order.append(index)
+                continue
+            if index in visited:
+                continue
+            visited.add(index)
+            pending.append((index, True))
+            pending.extend((neighbor, False) for neighbor in sorted(adjacency[index], reverse=True))
+
+    components: list[tuple[int, ...]] = []
+    assigned: set[int] = set()
+    for start_index in reversed(finish_order):
+        if start_index in assigned:
+            continue
+        component: list[int] = []
+        reverse_pending = [start_index]
+        while reverse_pending:
+            index = reverse_pending.pop()
+            if index in assigned:
+                continue
+            assigned.add(index)
+            component.append(index)
+            reverse_pending.extend(sorted(reverse_adjacency[index], reverse=True))
+        if len(component) > 1:
+            components.append(tuple(sorted(component)))
+    return tuple(sorted(components, key=lambda component: component[0]))
+
+
+def _schedulable_precedence_edges(
+    precedence: InstructionPrecedenceAnalysis,
+) -> tuple[PrecedenceEdge, ...]:
+    """Keep structural edges and only relax insertion edges inside an SCC.
+
+    A cyclic region cannot satisfy every straight-down constraint. Retaining its
+    pre-existing structural order keeps the canonical model complete without
+    claiming the affected placements are vertically accessible.
+    """
+    cyclic_component_by_index = {
+        index: component_id
+        for component_id, component in enumerate(precedence.cyclic_components)
+        for index in component
+    }
+    return tuple(
+        edge
+        for edge in (*precedence.structural_edges, *precedence.insertion_edges)
+        if not (
+            edge.edge_type == "insertion"
+            and cyclic_component_by_index.get(edge.predecessor_placement_index)
+            == cyclic_component_by_index.get(edge.successor_placement_index)
+            and edge.predecessor_placement_index in cyclic_component_by_index
+        )
+    )
 
 
 def _stud_footprint(placement: BrickPlacement) -> frozenset[tuple[int, int]]:

@@ -200,19 +200,21 @@ accessibility, color accuracy, or overall perceptual similarity.
 
 Newly converted models also include top-level `instructionSteps`. Each step holds a sequential
 `stepNumber` and stable `placementIndices` into the canonical `placements` array. The worker batches at
-most six placements per step, always puts an evaluated direct stud support in an earlier step than its
-dependent, and deterministically keeps the guide in the current local branch where possible. Local
-presentation regions are inferred from evaluated `stud-connectivity-v1` components and direct support
-forks; they are not a new mechanical analysis. Unevaluated slopes are assigned to the nearest evaluated
-region only for presentation and retain no inferred mechanical attachment. These steps do not guarantee
-collision-free insertion, rotational access, temporary gravity stability, optimal assembly motions, or
-LEGO-official-quality subassemblies.
+most six placements per step and combines evaluated direct stud-support edges with
+`vertical-insertion-v1` edges: a rectangular piece that would block another piece's straight-down path
+must be placed later. Local presentation regions are inferred from evaluated
+`stud-connectivity-v1` components and direct support forks; they are not a new mechanical analysis.
+Unevaluated slopes are assigned to the nearest evaluated region only for presentation and retain no
+inferred mechanical attachment. If the combined graph contains a cycle, structural precedence remains
+valid while the conflicting insertion edges are reported as unresolved in compact metadata. These steps
+do not guarantee collision-free insertion, rotational access, temporary gravity stability, optimal
+assembly motions, or LEGO-official-quality subassemblies.
 
-Canonical conversion metadata also includes `vertical-insertion-v1`. For each rectangular brick or
-plate, it checks only whether the piece can move straight downward into its final pose without crossing
-previously placed rectangular fit geometry. It evaluates the model state at the start of each instruction
-step, so placements in the same step deliberately do not block one another. Slopes are unevaluated. This
-does not model hand reach, rotation, sideways insertion, clutch tolerances, stability, or official LEGO
+Canonical conversion metadata also includes `vertical-insertion-v1` plus a compact combined-precedence
+report. For each rectangular brick or plate, it checks only whether the piece can move straight downward
+into its final pose without crossing previously placed rectangular fit geometry. Direct precedence edges
+must cross instruction-step boundaries, so they cannot share a step. Slopes are unevaluated. This does
+not model hand reach, rotation, sideways insertion, clutch tolerances, stability, or official LEGO
 assembly feasibility.
 
 ## Repository layout

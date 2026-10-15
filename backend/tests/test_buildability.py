@@ -4,9 +4,14 @@ from app.conversion import BrickPlacement, GridPosition
 from app.conversion.buildability import (
     BlockedInsertion,
     ConnectionEdge,
+    InstructionPrecedenceAnalysis,
     InstructionStep,
     InstructionStepValidationError,
+    PrecedenceEdge,
+    _cyclic_components,
+    _schedulable_precedence_edges,
     analyze_buildability,
+    analyze_instruction_precedence,
     analyze_vertical_insertion_accessibility,
     generate_instruction_steps,
     order_placements_for_instructions,
@@ -487,3 +492,63 @@ def test_vertical_insertion_analysis_is_deterministic() -> None:
     assert analyze_vertical_insertion_accessibility(
         placements, steps
     ) == analyze_vertical_insertion_accessibility(placements, steps)
+
+
+def test_instruction_precedence_combines_structural_and_insertion_edges() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    placements = (placement(brick), placement(brick, z=3))
+
+    analysis = analyze_instruction_precedence(placements)
+
+    expected_edge = PrecedenceEdge(0, 1, "structural")
+    assert analysis.structural_edges == (expected_edge,)
+    assert analysis.insertion_edges == (PrecedenceEdge(0, 1, "insertion"),)
+    assert analysis.total_precedence_edge_count == 1
+    steps = generate_instruction_steps(placements)
+    assert step_by_placement(steps)[0] < step_by_placement(steps)[1]
+
+
+def test_instruction_precedence_places_a_target_before_each_overhead_blocker() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    placements = (placement(plate, z=5), placement(plate, z=7), placement(plate, z=3))
+
+    analysis = analyze_instruction_precedence(placements)
+    steps = generate_instruction_steps(placements)
+    assigned_steps = step_by_placement(steps)
+
+    assert analysis.insertion_edges == (
+        PrecedenceEdge(0, 1, "insertion"),
+        PrecedenceEdge(2, 0, "insertion"),
+        PrecedenceEdge(2, 1, "insertion"),
+    )
+    assert assigned_steps[2] < assigned_steps[0]
+    assert assigned_steps[2] < assigned_steps[1]
+    assert assigned_steps[0] < assigned_steps[1]
+
+
+def test_instruction_precedence_does_not_evaluate_slopes() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    placements = (placement(PART_BY_ID["4286"], z=5), placement(plate, z=3))
+
+    analysis = analyze_instruction_precedence(placements)
+
+    assert analysis.insertion_edges == ()
+
+
+def test_cycle_policy_reports_and_relaxes_only_intra_cycle_insertion_edges() -> None:
+    structural = PrecedenceEdge(1, 0, "structural")
+    insertion = PrecedenceEdge(0, 1, "insertion")
+    components = _cyclic_components(2, (structural, insertion))
+    analysis = InstructionPrecedenceAnalysis(
+        structural_edges=(structural,),
+        insertion_edges=(insertion,),
+        cyclic_components=components,
+        cyclic_placement_indices=(0, 1),
+        cyclic_structural_edge_count=1,
+        cyclic_insertion_edge_count=1,
+        schedulable_evaluated_placement_count=0,
+        unresolved_vertical_insertion_placement_indices=(0, 1),
+    )
+
+    assert components == ((0, 1),)
+    assert _schedulable_precedence_edges(analysis) == (structural,)

@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.conversion import (
     BUILDABILITY_ANALYSIS_VERSION,
+    INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION,
     VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
     Axis,
     ConversionError,
     ConversionSettings,
     LegoModel,
     analyze_buildability,
+    analyze_instruction_precedence,
     analyze_vertical_insertion_accessibility,
     convert_glb,
     generate_instruction_steps,
@@ -182,6 +184,7 @@ class ConversionJobProcessor:
 def serialize_lego_model(model: LegoModel) -> bytes:
     ordered_placements = order_placements_for_instructions(model.placements)
     buildability = analyze_buildability(ordered_placements)
+    precedence = analyze_instruction_precedence(ordered_placements)
     instruction_steps = generate_instruction_steps(ordered_placements)
     insertion_accessibility = analyze_vertical_insertion_accessibility(
         ordered_placements,
@@ -245,6 +248,22 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                     }
                     for blocked in insertion_accessibility.blocked_insertions
                 ],
+            },
+            "instructionPrecedence": {
+                "version": INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION,
+                "structuralEdges": len(precedence.structural_edges),
+                "insertionEdges": len(precedence.insertion_edges),
+                "totalPrecedenceEdges": precedence.total_precedence_edge_count,
+                "cyclicPlacements": len(precedence.cyclic_placement_indices),
+                "cyclicComponents": len(precedence.cyclic_components),
+                "cyclicStructuralEdges": precedence.cyclic_structural_edge_count,
+                "cyclicInsertionEdges": precedence.cyclic_insertion_edge_count,
+                "schedulableEvaluatedPlacements": (
+                    precedence.schedulable_evaluated_placement_count
+                ),
+                "unresolvedVerticalInsertionPlacements": len(
+                    precedence.unresolved_vertical_insertion_placement_indices
+                ),
             },
         },
         "placements": [
