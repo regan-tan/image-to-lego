@@ -53,9 +53,12 @@ def evaluate_fidelity(
     slope_vertices: Sequence[SlopeVertices] = (),
 ) -> FidelityMetrics:
     """Measure a source mesh and completed LEGO solids in their shared grid space."""
-    front_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (0, 2))
-    side_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (1, 2))
-    top_iou = _projection_iou(source_vertices, faces, lego_boxes, slope_vertices, (0, 1))
+    masks = render_silhouette_masks(
+        source_vertices, faces, lego_boxes, slope_vertices=slope_vertices
+    )
+    front_iou = binary_mask_iou(*masks["front"])
+    side_iou = binary_mask_iou(*masks["side"])
+    top_iou = binary_mask_iou(*masks["top"])
     actual_parts = len(lego_boxes) + len(slope_vertices)
     part_count_delta = actual_parts - target_parts
     return FidelityMetrics(
@@ -70,6 +73,25 @@ def evaluate_fidelity(
         part_count_delta=part_count_delta,
         part_count_error_ratio=_round_metric(abs(part_count_delta) / target_parts),
     )
+
+
+def render_silhouette_masks(
+    source_vertices: Sequence[Point3D],
+    faces: Sequence[tuple[int, int, int]],
+    lego_boxes: Sequence[Box],
+    *,
+    slope_vertices: Sequence[SlopeVertices] = (),
+) -> dict[str, tuple[Image.Image, Image.Image]]:
+    """Rasterize target and output masks using the canonical silhouette-v1 views.
+
+    The returned masks share bounds within each view and are intended for
+    diagnostics that need the same geometry that ``evaluate_fidelity`` scores.
+    """
+    return {
+        "front": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (0, 2)),
+        "side": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (1, 2)),
+        "top": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (0, 1)),
+    }
 
 
 def binary_mask_iou(first: Image.Image, second: Image.Image) -> float:
@@ -97,13 +119,25 @@ def _projection_iou(
     slope_vertices: Sequence[SlopeVertices],
     projection: Projection,
 ) -> float:
+    return binary_mask_iou(
+        *_projection_masks(source_vertices, faces, lego_boxes, slope_vertices, projection)
+    )
+
+
+def _projection_masks(
+    source_vertices: Sequence[Point3D],
+    faces: Sequence[tuple[int, int, int]],
+    lego_boxes: Sequence[Box],
+    slope_vertices: Sequence[SlopeVertices],
+    projection: Projection,
+) -> tuple[Image.Image, Image.Image]:
     bounds = _projection_bounds(source_vertices, lego_boxes, slope_vertices, projection)
     source_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     lego_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     _draw_source_triangles(source_mask, source_vertices, faces, projection, bounds)
     _draw_lego_boxes(lego_mask, lego_boxes, projection, bounds)
     _draw_lego_slopes(lego_mask, slope_vertices, projection, bounds)
-    return binary_mask_iou(source_mask, lego_mask)
+    return source_mask, lego_mask
 
 
 def _projection_bounds(
