@@ -10,6 +10,13 @@ This is a catalogue-history assertion only: a verified pair was manufactured. It
 mean the pair is currently sold by LEGO, listed on BrickLink or Rebrickable, in stock,
 affordable, or available in a particular country. No runtime catalogue lookup or scraping occurs.
 
+Canonical `partId` and `colorId` values remain the application's stable identities: part IDs come
+from this catalogue and colour IDs use the `ldraw:` namespace. BrickLink part IDs are explicit
+catalogue fields, while BrickLink colour IDs are explicit fields in
+`backend/app/conversion/colors.py`; neither is inferred from a canonical ID. Converted LEGO-model
+JSON carries these mappings when known so the browser can produce a verified-manufactured sourcing
+CSV. The CSV is not a BrickLink wanted-list import and does not make any availability claim.
+
 Run the following from the repository root after changing it:
 
 ```powershell

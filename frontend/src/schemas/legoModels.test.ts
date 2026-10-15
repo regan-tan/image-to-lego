@@ -61,4 +61,18 @@ describe("legoModelSchema", () => {
 
     expect(legoModelSchema.parse(model).placements[0]?.partColorVerified).toBe(true);
   });
+
+  it("accepts catalogue-provenanced external part and color IDs", () => {
+    const model = {
+      ...legacyModel,
+      placements: [{
+        ...legacyModel.placements[0],
+        externalIds: { bricklink: { partId: "3001", colorId: 5 } },
+      }],
+    };
+
+    expect(legoModelSchema.parse(model).placements[0]?.externalIds).toEqual(
+      { bricklink: { partId: "3001", colorId: 5 } },
+    );
+  });
 });
