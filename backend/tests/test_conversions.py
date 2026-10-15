@@ -11,7 +11,9 @@ import trimesh
 from app.api.v1.conversions import get_conversion_queue, get_conversion_repository
 from app.api.v1.reconstructions import get_job_repository
 from app.conversion import Axis, BrickPlacement, ConversionSettings, GridPosition, convert_glb
+from app.conversion.colors import COLORS_BY_ID
 from app.conversion.core import BRICK_CATALOGUE
+from app.conversion.part_catalogue import PART_BY_ID
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
 from app.domain.artifacts import Artifact, ArtifactStatus
@@ -353,6 +355,15 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     assert output["placements"][0]["colorId"]
     assert output["placements"][0]["colorName"]
     assert output["placements"][0]["colorHex"].startswith("#")
+    first_placement = output["placements"][0]
+    assert (
+        first_placement["externalIds"]["bricklink"]["partId"]
+        == PART_BY_ID[first_placement["partId"]].bricklink_id
+    )
+    assert (
+        first_placement["externalIds"]["bricklink"]["colorId"]
+        == COLORS_BY_ID[first_placement["colorId"]].bricklink_color_id
+    )
     assert "heightPlates" in output["dimensions"]
     assert "heightBricks" not in output["dimensions"]
     assert output["metadata"]["buildability"]["version"] == "stud-connectivity-v1"
@@ -424,6 +435,7 @@ def test_slope_placement_serializes_with_its_explicit_shape() -> None:
             "colorId": None,
             "colorName": None,
             "colorHex": None,
+            "externalIds": {"bricklink": {"partId": "4286", "colorId": None}},
             "partColorVerified": False,
         }
     ]
@@ -453,6 +465,7 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
         "colorId",
         "colorName",
         "colorHex",
+        "externalIds",
         "partColorVerified",
     }
     positions = [placement["position"]["z"] for placement in output["placements"]]

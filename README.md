@@ -40,6 +40,11 @@ frontend conversion journey, LEGO renderer, parts list, and basic build guide ar
 production deployment remains **not implemented yet**. No Supabase Storage is used; Azure Blob
 Storage is the artifact store.
 
+The completed Parts List also provides a deterministic purchase-ready CSV. It contains only
+verified manufactured canonical part/color pairs, quantities, and checked-in external BrickLink
+identities when known. It is a sourcing record, not a marketplace availability, price, seller, or
+checkout integration; no marketplace-native wanted-list import is currently generated.
+
 ## Intended architecture
 
 The application is a pragmatic modular monolith with independently runnable API and worker processes. HTTP routes call services; services coordinate purpose-specific repositories and provider abstractions; only those boundary modules communicate with infrastructure. CPU-intensive or long-running work belongs in the worker and must not run in FastAPI request handlers or `BackgroundTasks`.

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateLegoPlacements, createLegoPartsList, serializePartsListCsv } from "./legoPartsList";
+import {
+  aggregateLegoPlacements,
+  createLegoPartsList,
+  createPurchaseReadyPartsList,
+  serializePartsListCsv,
+  serializePurchaseReadyPartsCsv,
+} from "./legoPartsList";
 import type { LegoModel } from "./schemas/legoModels";
 
 function model(placements: LegoModel["placements"], partCount = placements.length): LegoModel {
@@ -60,5 +66,107 @@ describe("serializePartsListCsv", () => {
   it("writes real part identity, color, and quantity", () => {
     expect(serializePartsListCsv([{ brickType: "brick_2x4", partId: "3001", partName: "Brick 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 3, color: "light_bluish_gray", colorId: "ldraw:71", colorName: "Light Bluish Gray", partColorVerified: true, quantity: 3 }])).toBe("Part ID,Part Name,Color,Color ID,Verified part/color,Quantity\r\n3001,Brick 2 x 4,Light Bluish Gray,ldraw:71,Verified,3");
     expect(serializePartsListCsv([{ brickType: "plate_2x4", partId: "3020", partName: "Plate 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('3020,Plate 2 x 4,"Red,Blue",,Not recorded,1');
+  });
+});
+
+describe("createPurchaseReadyPartsList", () => {
+  const verificationVersion = "catalogue-v1";
+
+  function verifiedPart(overrides: Partial<ReturnType<typeof aggregateLegoPlacements>[number]> = {}) {
+    return {
+      brickType: "brick_2x4",
+      partId: "3001",
+      partName: "Brick 2 x 4",
+      lengthStuds: 4,
+      widthStuds: 2,
+      heightPlates: 3,
+      color: "red",
+      colorId: "ldraw:4",
+      colorName: "Red",
+      partColorVerified: true,
+      quantity: 2,
+      externalIds: { bricklink: { partId: "3001", colorId: 5 } },
+      ...overrides,
+    };
+  }
+
+  it("keeps one exact verified part/color row with the BOM quantity and authoritative IDs", () => {
+    const result = createPurchaseReadyPartsList([verifiedPart()], verificationVersion);
+
+    expect(result).toEqual({
+      parts: [{
+        partId: "3001",
+        colorId: "ldraw:4",
+        quantity: 2,
+        partName: "Brick 2 x 4",
+        colorName: "Red",
+        partColorVerified: true,
+        partColorVerificationVersion: verificationVersion,
+        externalIds: { bricklink: { partId: "3001", colorId: 5 } },
+      }],
+      unresolvedParts: [],
+    });
+  });
+
+  it("keeps different canonical colors in separate deterministic rows", () => {
+    const first = createPurchaseReadyPartsList([
+      verifiedPart({ color: "blue", colorId: "ldraw:1", colorName: "Blue", externalIds: { bricklink: { partId: "3001", colorId: 7 } } }),
+      verifiedPart(),
+    ], verificationVersion);
+    const second = createPurchaseReadyPartsList([...first.parts.map((part) => verifiedPart({
+      color: part.colorName.toLowerCase(),
+      colorId: part.colorId,
+      colorName: part.colorName,
+      externalIds: part.externalIds,
+    }))].reverse(), verificationVersion);
+
+    expect(first.parts.map((part) => part.colorId)).toEqual(["ldraw:1", "ldraw:4"]);
+    expect(serializePurchaseReadyPartsCsv(first.parts)).toBe(serializePurchaseReadyPartsCsv(second.parts));
+  });
+
+  it("excludes unverified, missing-identity, and legacy rows instead of exporting them", () => {
+    const result = createPurchaseReadyPartsList([
+      verifiedPart({ partColorVerified: false }),
+      verifiedPart({ partId: undefined }),
+      verifiedPart({ colorId: undefined }),
+    ], verificationVersion);
+
+    expect(result.parts).toEqual([]);
+    expect(result.unresolvedParts.map((part) => part.reason)).toEqual([
+      "unverified_part_color",
+      "missing_part_id",
+      "missing_color_id",
+    ]);
+  });
+
+  it("leaves missing external IDs blank without fabricating a mapping", () => {
+    const result = createPurchaseReadyPartsList([
+      verifiedPart({ externalIds: undefined }),
+    ], verificationVersion);
+
+    expect(result.parts[0]?.externalIds).toEqual({ bricklink: { partId: null, colorId: null } });
+  });
+});
+
+describe("serializePurchaseReadyPartsCsv", () => {
+  it("writes stable headers and escapes sourcing row data", () => {
+    const csv = serializePurchaseReadyPartsCsv(createPurchaseReadyPartsList([
+      {
+        brickType: "plate_2x4",
+        partId: "3020",
+        partName: "Plate \"2 x 4\"",
+        lengthStuds: 4,
+        widthStuds: 2,
+        heightPlates: 1,
+        color: "red",
+        colorId: "ldraw:4",
+        colorName: "Red, Bright",
+        partColorVerified: true,
+        quantity: 3,
+        externalIds: { bricklink: { partId: "3020", colorId: 5 } },
+      },
+    ], "catalogue-v1").parts);
+
+    expect(csv).toBe("Part ID,BrickLink Part ID,Color ID,BrickLink Color ID,Quantity,Part Name,Color Name,Verified part/color,Verification version\r\n3020,3020,ldraw:4,5,3,\"Plate \"\"2 x 4\"\"\",\"Red, Bright\",Verified,catalogue-v1");
   });
 });

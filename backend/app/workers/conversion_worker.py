@@ -24,6 +24,7 @@ from app.conversion import (
     generate_instruction_steps,
     order_placements_for_instructions,
 )
+from app.conversion.colors import COLORS_BY_ID
 from app.conversion.core import MAX_INPUT_BYTES
 from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
@@ -42,6 +43,11 @@ logger = logging.getLogger(__name__)
 
 LEGO_MODEL_MIME_TYPE = "application/json"
 _TERMINAL_JOB_STATUSES = frozenset({JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED})
+
+
+def _bricklink_color_id(color_id: str | None) -> int | None:
+    color = COLORS_BY_ID.get(color_id or "")
+    return color.bricklink_color_id if color is not None else None
 
 
 class ConversionJobProcessor:
@@ -290,6 +296,12 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                 "colorId": placement.color_id,
                 "colorName": placement.color_name,
                 "colorHex": placement.color_hex,
+                "externalIds": {
+                    "bricklink": {
+                        "partId": placement.brick_type.bricklink_id,
+                        "colorId": _bricklink_color_id(placement.color_id),
+                    }
+                },
                 "partColorVerified": placement.brick_type.supports_color_id(
                     placement.color_id or ""
                 ),

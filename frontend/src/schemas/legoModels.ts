@@ -44,6 +44,12 @@ export const legoModelSchema = z.object({
     colorId: z.string().optional(),
     colorName: z.string().optional(),
     colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    externalIds: z.object({
+      bricklink: z.object({
+        partId: z.string().nullable(),
+        colorId: z.number().int().nullable(),
+      }).optional(),
+    }).optional(),
     partColorVerified: z.boolean().optional(),
   })),
   instructionSteps: z.array(z.object({
