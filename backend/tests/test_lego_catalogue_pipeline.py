@@ -98,8 +98,14 @@ def test_catalogue_generation_is_byte_deterministic(tmp_path: Path) -> None:
             "Fitter-enabled part 3001 has no verified color IDs.",
         ),
         (
-            lambda records: records[-1].__setitem__("slopeProfile", "unknown"),
+            lambda records: next(
+                record for record in records if record["partId"] == "4286"
+            ).__setitem__("slopeProfile", "unknown"),
             "Part 4286: slope_33 parts must use rise_33_3.",
+        ),
+        (
+            lambda records: records[-1].update({"verifiedColorIds": ["ldraw:999"]}),
+            "Part 15068: verifiedColorIds references unknown colors: ldraw:999.",
         ),
     ],
 )

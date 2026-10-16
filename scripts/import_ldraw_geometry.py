@@ -19,6 +19,7 @@ from app.conversion.ldraw_importer import (
 PARTS = (
     ("3001", "3001.dat", "x"),
     ("4286", "4286.dat", "z"),
+    ("15068", "15068.dat", "x"),
 )
 
 

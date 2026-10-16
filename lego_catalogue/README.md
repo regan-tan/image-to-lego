@@ -4,7 +4,16 @@
 Each part's `verifiedColorIds` contains only canonical LDraw colour IDs for combinations
 verified as manufactured in the BrickLink reference catalogue's **Known Colors** view.
 The snapshot was checked on 2026-10-15 against the part pages identified by each record's
-`bricklinkId`; the supported colour IDs are defined in `backend/app/conversion/colors.py`.
+`bricklinkId`; part `15068` was added from the same **Known Colors** view on 2026-10-16.
+The supported colour IDs are defined in `backend/app/conversion/colors.py`.
+
+For `15068`, the retrieved record was BrickLink's
+[Slope, Curved 2 x 2 x 2/3](https://www.bricklink.com/v2/catalog/catalogitem.page?P=15068)
+catalogue page (Item No. `15068`). The checked-in IDs are the complete intersection of that
+page's **Known Colors** list with the project's versioned canonical colour catalogue. This is a
+manual, versioned source snapshot: updating it means revisiting that exact Known Colors view,
+mapping its names through `colors.py`'s explicit BrickLink colour IDs, and checking in the
+resulting `verifiedColorIds`; the application never scrapes BrickLink at runtime.
 
 This is a catalogue-history assertion only: a verified pair was manufactured. It does not
 mean the pair is currently sold by LEGO, listed on BrickLink or Rebrickable, in stock,
