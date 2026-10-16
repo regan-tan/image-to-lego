@@ -3,9 +3,22 @@ from app.conversion.part_geometry import load_part_geometry
 
 
 def test_all_parts_load_and_can_be_looked_up_by_canonical_id() -> None:
-    assert len(ALL_PARTS) == 15
+    assert len(ALL_PARTS) == 16
     assert PART_BY_ID["3001"].name == "Brick 2 x 4"
     assert PART_BY_ID["4286"].bricklink_id == "4286"
+    assert PART_BY_ID["15068"].name == "Slope Brick Curved 2 x 2 x 0.667"
+    assert PART_BY_ID["15068"].family == "curved_slope"
+    assert PART_BY_ID["15068"].dimensions.height_plates == 2
+    assert not PART_BY_ID["15068"].fitter_enabled
+
+
+def test_15068_external_ids_are_explicit() -> None:
+    slope = PART_BY_ID["15068"]
+
+    assert slope.ldraw_id == "15068"
+    assert slope.bricklink_id == "15068"
+    assert slope.supports_color_id("ldraw:0")
+    assert not slope.supports_color_id("ldraw:999")
 
 
 def test_fitter_catalogue_preserves_the_existing_explicit_order() -> None:

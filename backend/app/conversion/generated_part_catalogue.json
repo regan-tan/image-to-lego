@@ -1,5 +1,38 @@
 [
   {
+    "bricklinkId": "15068",
+    "family": "curved_slope",
+    "fitterEnabled": false,
+    "fitterOrder": null,
+    "geometryAsset": "15068",
+    "heightPlates": 2,
+    "ldrawId": "15068",
+    "lengthStuds": 2,
+    "name": "Slope Brick Curved 2 x 2 x 0.667",
+    "partId": "15068",
+    "shape": "curved_slope_2x2",
+    "slopeProfile": null,
+    "verifiedColorIds": [
+      "ldraw:0",
+      "ldraw:15",
+      "ldraw:71",
+      "ldraw:72",
+      "ldraw:4",
+      "ldraw:320",
+      "ldraw:25",
+      "ldraw:14",
+      "ldraw:19",
+      "ldraw:70",
+      "ldraw:308",
+      "ldraw:2",
+      "ldraw:288",
+      "ldraw:27",
+      "ldraw:1",
+      "ldraw:272"
+    ],
+    "widthStuds": 2
+  },
+  {
     "bricklinkId": "3001",
     "family": "brick",
     "fitterEnabled": true,

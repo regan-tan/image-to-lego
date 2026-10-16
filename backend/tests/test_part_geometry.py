@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.conversion.ldraw_importer import import_part_geometry
-from app.conversion.part_catalogue import LEGO_PART_CATALOGUE
+from app.conversion.part_catalogue import ALL_PARTS
 from app.conversion.part_geometry import ASSET_DIRECTORY, load_part_geometry
 
 SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "part_geometry" / "ldraw_source"
@@ -16,6 +16,7 @@ SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "part_geometry" / "ldra
     [
         ("3001", "3001.dat", "x", (4.0, 2.0, 3.5)),
         ("4286", "4286.dat", "z", (3.0, 1.0, 3.5)),
+        ("15068", "15068.dat", "x", (2.0, 2.0, 2.000008)),
     ],
 )
 def test_real_part_geometry_is_valid_and_reproducible(
@@ -42,11 +43,9 @@ def test_real_part_geometry_is_valid_and_reproducible(
 
 
 def test_catalogue_geometry_references_resolve() -> None:
-    supported = {
-        part.part_id: part for part in LEGO_PART_CATALOGUE if part.geometry_asset is not None
-    }
+    supported = {part.part_id: part for part in ALL_PARTS if part.geometry_asset is not None}
 
-    assert set(supported) == {"3001", "4286"}
+    assert set(supported) == {"3001", "4286", "15068"}
     for part in supported.values():
         assert part.geometry_asset == part.ldraw_id
         assert load_part_geometry(part.geometry_asset) is not None
