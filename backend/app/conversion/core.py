@@ -31,6 +31,7 @@ from app.conversion.part_catalogue import (
     LegoPart,
     legacy_grid_catalogue,
 )
+from app.conversion.wedge_41769_41770 import WEDGE_PART_IDS, transformed_footprint
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class ConversionSettings:
     target_parts: int
     up_axis: Axis = Axis.Y
     algorithm_version: str = ALGORITHM_VERSION
+    experimental_staged_wedge_refinement: bool = False
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -260,8 +262,52 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
         BRICK_CATALOGUE,
         target_parts=settings.target_parts,
     )
+    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
+    refined_placements = packing.placements
+    baseline_fidelity = _fidelity_for_placements(
+        scaled_vertices, faces, baseline_slopes + refined_placements, settings.target_parts
+    )
+    if settings.experimental_staged_wedge_refinement:
+        from app.conversion.staged_wedge_refinement import refine_wedges, source_top_microcells
+
+        best_fidelity = baseline_fidelity
+
+        def accept_refinement(candidate: tuple[BrickPlacement, ...]) -> bool:
+            nonlocal best_fidelity
+            from app.conversion.buildability import analyze_buildability
+
+            if analyze_buildability(candidate).unsupported_placement_count:
+                return False
+            candidate_fidelity = _fidelity_for_placements(
+                scaled_vertices, faces, baseline_slopes + candidate, settings.target_parts
+            )
+            if (
+                candidate_fidelity.mean_iou < best_fidelity.mean_iou
+                or (
+                    candidate_fidelity.mean_iou == best_fidelity.mean_iou
+                    and candidate_fidelity.front_iou == best_fidelity.front_iou
+                    and candidate_fidelity.side_iou == best_fidelity.side_iou
+                    and candidate_fidelity.top_iou == best_fidelity.top_iou
+                )
+            ):
+                return False
+            best_fidelity = candidate_fidelity
+            return True
+
+        refinement = refine_wedges(
+            refined_placements,
+            target_cells,
+            source_top_microcells(
+                scaled_vertices,
+                faces,
+                baseline.metadata.grid_size.width_studs,
+                baseline.metadata.grid_size.depth_studs,
+            ),
+            accept_refinement,
+        )
+        refined_placements = refinement.placements
     colored_rectangles = _color_placements(
-        packing.placements,
+        refined_placements,
         normalized_vertices,
         faces,
         mesh,
@@ -269,7 +315,6 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
     )
     placements = baseline_slopes + colored_rectangles
     dimensions = _model_dimensions(placements)
-    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
     occupied_cell_count = len(
         {cell for placement in colored_rectangles for cell in _placement_cells(placement)}
         | set(locked_slope_cells)
@@ -282,12 +327,8 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
         grid_size=baseline.metadata.grid_size,
         candidate_count=packing.candidate_count,
         occupancy_mode=OCCUPANCY_MODE,
-        fidelity=evaluate_fidelity(
-            scaled_vertices,
-            faces,
-            _placement_boxes(placements),
-            slope_vertices=_slope_vertices(placements),
-            target_parts=settings.target_parts,
+        fidelity=_fidelity_for_placements(
+            scaled_vertices, faces, placements, settings.target_parts
         ),
     )
     return LegoModel(
@@ -943,6 +984,65 @@ def _slope_vertices(
             vertices.append((horizontal[0], horizontal[1], base.z + height))
         slopes.append(tuple(vertices))
     return tuple(slopes)
+
+
+def _wedge_vertices(
+    placements: Collection[BrickPlacement],
+) -> tuple[tuple[tuple[float, float, float], ...], ...]:
+    wedges = []
+    for placement in placements:
+        if placement.brick_type.part_id not in WEDGE_PART_IDS:
+            continue
+        footprint = transformed_footprint(
+            placement.brick_type.part_id,
+            placement.position.x,
+            placement.position.y,
+            placement.orientation_degrees,
+        )
+        bottom = tuple((x, y, float(placement.position.z)) for x, y in footprint)
+        top = tuple(
+            (x, y, float(placement.position.z + placement.brick_type.height_plates))
+            for x, y in footprint
+        )
+        wedges.append(bottom + top)
+    return tuple(wedges)
+
+
+def _fidelity_for_placements(
+    scaled_vertices: Collection[tuple[float, float, float]],
+    faces: Collection[tuple[int, int, int]],
+    placements: Collection[BrickPlacement],
+    target_parts: int,
+) -> FidelityMetrics:
+    placement_tuple = tuple(placements)
+    non_wedges = tuple(
+        placement
+        for placement in placement_tuple
+        if placement.brick_type.part_id not in WEDGE_PART_IDS
+    )
+    return evaluate_fidelity(
+        tuple(scaled_vertices),
+        tuple(faces),
+        _placement_boxes(non_wedges),
+        slope_vertices=_slope_vertices(non_wedges),
+        wedge_vertices=_wedge_vertices(placement_tuple),
+        target_parts=target_parts,
+    )
+
+
+def _projection_coverage(
+    placements: Collection[BrickPlacement],
+    locked_slope_cells: Collection[GridPosition],
+    required_pixels: Collection[tuple[str, int, int]],
+) -> int:
+    occupied = set(locked_slope_cells)
+    occupied.update(cell for placement in placements for cell in _placement_cells(placement))
+    projected = {
+        pixel
+        for cell in occupied
+        for pixel in (("front", cell.x, cell.z), ("side", cell.y, cell.z), ("top", cell.x, cell.y))
+    }
+    return len(projected & set(required_pixels))
 
 
 def _model_dimensions(placements: tuple[BrickPlacement, ...]) -> ModelDimensions:
