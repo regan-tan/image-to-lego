@@ -104,8 +104,10 @@ def test_catalogue_generation_is_byte_deterministic(tmp_path: Path) -> None:
             "Part 4286: slope_33 parts must use rise_33_3.",
         ),
         (
-            lambda records: records[-1].update({"verifiedColorIds": ["ldraw:999"]}),
-            "Part 15068: verifiedColorIds references unknown colors: ldraw:999.",
+            lambda records: next(
+                record for record in records if record["partId"] == "41769"
+            ).update({"verifiedColorIds": ["ldraw:999"]}),
+            "Part 41769: verifiedColorIds references unknown colors: ldraw:999.",
         ),
     ],
 )

@@ -3,13 +3,15 @@ from app.conversion.part_geometry import load_part_geometry
 
 
 def test_all_parts_load_and_can_be_looked_up_by_canonical_id() -> None:
-    assert len(ALL_PARTS) == 16
+    assert len(ALL_PARTS) == 18
     assert PART_BY_ID["3001"].name == "Brick 2 x 4"
     assert PART_BY_ID["4286"].bricklink_id == "4286"
     assert PART_BY_ID["15068"].name == "Slope Brick Curved 2 x 2 x 0.667"
     assert PART_BY_ID["15068"].family == "curved_slope"
     assert PART_BY_ID["15068"].dimensions.height_plates == 2
     assert not PART_BY_ID["15068"].fitter_enabled
+    assert PART_BY_ID["41769"].name == "Wedge, Plate 4 x 2 Right"
+    assert PART_BY_ID["41770"].name == "Wedge, Plate 4 x 2 Left"
 
 
 def test_15068_external_ids_are_explicit() -> None:
@@ -19,6 +21,33 @@ def test_15068_external_ids_are_explicit() -> None:
     assert slope.bricklink_id == "15068"
     assert slope.supports_color_id("ldraw:0")
     assert not slope.supports_color_id("ldraw:999")
+
+
+def test_wedge_plate_external_ids_keep_catalogue_and_visual_identities_distinct() -> None:
+    right = PART_BY_ID["41769"]
+    left = PART_BY_ID["41770"]
+
+    assert (right.part_id, right.bricklink_id, right.ldraw_id, right.geometry_asset) == (
+        "41769",
+        "41769",
+        "41769a",
+        "41769",
+    )
+    assert (left.part_id, left.bricklink_id, left.ldraw_id, left.geometry_asset) == (
+        "41770",
+        "41770",
+        "41770a",
+        "41770",
+    )
+    assert right.shape == "wedge_plate_4x2_right"
+    assert left.shape == "wedge_plate_4x2_left"
+    assert right.shape != left.shape
+    assert right.verified_color_ids == left.verified_color_ids
+    assert right.supports_color_id("ldraw:0")
+    assert not right.supports_color_id("ldraw:308")
+    assert not left.supports_color_id("ldraw:999")
+    assert not right.fitter_enabled
+    assert not left.fitter_enabled
 
 
 def test_fitter_catalogue_preserves_the_existing_explicit_order() -> None:
@@ -58,6 +87,13 @@ def test_geometry_references_and_verified_colors_resolve_for_fitter_parts() -> N
     assert load_part_geometry(PART_BY_ID["3001"].geometry_asset or "") is not None
     assert load_part_geometry(PART_BY_ID["4286"].geometry_asset or "") is not None
     assert all(part.verified_color_ids for part in FITTER_PARTS)
+
+
+def test_wedge_plate_visual_assets_resolve_without_enabling_the_fitter() -> None:
+    for part_id in ("41769", "41770"):
+        part = PART_BY_ID[part_id]
+        assert load_part_geometry(part.geometry_asset or "") is not None
+        assert not part.fitter_enabled
 
 
 def test_slope_33_catalogue_profile_is_explicit() -> None:

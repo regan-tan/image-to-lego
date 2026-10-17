@@ -212,5 +212,33 @@
     "geometryAsset": "15068",
     "verifiedColorIds": ["ldraw:0", "ldraw:15", "ldraw:71", "ldraw:72", "ldraw:4", "ldraw:320", "ldraw:25", "ldraw:14", "ldraw:19", "ldraw:70", "ldraw:308", "ldraw:2", "ldraw:288", "ldraw:27", "ldraw:1", "ldraw:272"],
     "fitterEnabled": false
+  },
+  {
+    "partId": "41769",
+    "name": "Wedge, Plate 4 x 2 Right",
+    "family": "wedge_plate",
+    "shape": "wedge_plate_4x2_right",
+    "widthStuds": 2,
+    "lengthStuds": 4,
+    "heightPlates": 1,
+    "ldrawId": "41769a",
+    "bricklinkId": "41769",
+    "geometryAsset": "41769",
+    "verifiedColorIds": ["ldraw:0", "ldraw:15", "ldraw:71", "ldraw:72", "ldraw:4", "ldraw:320", "ldraw:25", "ldraw:14", "ldraw:19", "ldraw:70", "ldraw:2", "ldraw:288", "ldraw:27", "ldraw:1", "ldraw:272"],
+    "fitterEnabled": false
+  },
+  {
+    "partId": "41770",
+    "name": "Wedge, Plate 4 x 2 Left",
+    "family": "wedge_plate",
+    "shape": "wedge_plate_4x2_left",
+    "widthStuds": 2,
+    "lengthStuds": 4,
+    "heightPlates": 1,
+    "ldrawId": "41770a",
+    "bricklinkId": "41770",
+    "geometryAsset": "41770",
+    "verifiedColorIds": ["ldraw:0", "ldraw:15", "ldraw:71", "ldraw:72", "ldraw:4", "ldraw:320", "ldraw:25", "ldraw:14", "ldraw:19", "ldraw:70", "ldraw:2", "ldraw:288", "ldraw:27", "ldraw:1", "ldraw:272"],
+    "fitterEnabled": false
   }
 ]
