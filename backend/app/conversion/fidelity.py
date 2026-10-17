@@ -17,6 +17,7 @@ Point3D = tuple[float, float, float]
 Box = tuple[float, float, float, float, float, float]
 Projection = tuple[int, int]
 SlopeVertices = tuple[Point3D, ...]
+WedgeVertices = tuple[Point3D, ...]
 
 _SLOPE_PRISM_FACES = (
     (0, 1, 2),
@@ -51,15 +52,20 @@ def evaluate_fidelity(
     *,
     target_parts: int,
     slope_vertices: Sequence[SlopeVertices] = (),
+    wedge_vertices: Sequence[WedgeVertices] = (),
 ) -> FidelityMetrics:
     """Measure a source mesh and completed LEGO solids in their shared grid space."""
     masks = render_silhouette_masks(
-        source_vertices, faces, lego_boxes, slope_vertices=slope_vertices
+        source_vertices,
+        faces,
+        lego_boxes,
+        slope_vertices=slope_vertices,
+        wedge_vertices=wedge_vertices,
     )
     front_iou = binary_mask_iou(*masks["front"])
     side_iou = binary_mask_iou(*masks["side"])
     top_iou = binary_mask_iou(*masks["top"])
-    actual_parts = len(lego_boxes) + len(slope_vertices)
+    actual_parts = len(lego_boxes) + len(slope_vertices) + len(wedge_vertices)
     part_count_delta = actual_parts - target_parts
     return FidelityMetrics(
         metrics_version=SILHOUETTE_METRICS_VERSION,
@@ -81,6 +87,7 @@ def render_silhouette_masks(
     lego_boxes: Sequence[Box],
     *,
     slope_vertices: Sequence[SlopeVertices] = (),
+    wedge_vertices: Sequence[WedgeVertices] = (),
 ) -> dict[str, tuple[Image.Image, Image.Image]]:
     """Rasterize target and output masks using the canonical silhouette-v1 views.
 
@@ -88,9 +95,15 @@ def render_silhouette_masks(
     diagnostics that need the same geometry that ``evaluate_fidelity`` scores.
     """
     return {
-        "front": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (0, 2)),
-        "side": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (1, 2)),
-        "top": _projection_masks(source_vertices, faces, lego_boxes, slope_vertices, (0, 1)),
+        "front": _projection_masks(
+            source_vertices, faces, lego_boxes, slope_vertices, wedge_vertices, (0, 2)
+        ),
+        "side": _projection_masks(
+            source_vertices, faces, lego_boxes, slope_vertices, wedge_vertices, (1, 2)
+        ),
+        "top": _projection_masks(
+            source_vertices, faces, lego_boxes, slope_vertices, wedge_vertices, (0, 1)
+        ),
     }
 
 
@@ -117,10 +130,13 @@ def _projection_iou(
     faces: Sequence[tuple[int, int, int]],
     lego_boxes: Sequence[Box],
     slope_vertices: Sequence[SlopeVertices],
+    wedge_vertices: Sequence[WedgeVertices],
     projection: Projection,
 ) -> float:
     return binary_mask_iou(
-        *_projection_masks(source_vertices, faces, lego_boxes, slope_vertices, projection)
+        *_projection_masks(
+            source_vertices, faces, lego_boxes, slope_vertices, wedge_vertices, projection
+        )
     )
 
 
@@ -129,14 +145,18 @@ def _projection_masks(
     faces: Sequence[tuple[int, int, int]],
     lego_boxes: Sequence[Box],
     slope_vertices: Sequence[SlopeVertices],
+    wedge_vertices: Sequence[WedgeVertices],
     projection: Projection,
 ) -> tuple[Image.Image, Image.Image]:
-    bounds = _projection_bounds(source_vertices, lego_boxes, slope_vertices, projection)
+    bounds = _projection_bounds(
+        source_vertices, lego_boxes, slope_vertices, wedge_vertices, projection
+    )
     source_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     lego_mask = Image.new("1", (SILHOUETTE_RESOLUTION, SILHOUETTE_RESOLUTION))
     _draw_source_triangles(source_mask, source_vertices, faces, projection, bounds)
     _draw_lego_boxes(lego_mask, lego_boxes, projection, bounds)
     _draw_lego_slopes(lego_mask, slope_vertices, projection, bounds)
+    _draw_lego_wedges(lego_mask, wedge_vertices, projection, bounds)
     return source_mask, lego_mask
 
 
@@ -144,12 +164,11 @@ def _projection_bounds(
     source_vertices: Sequence[Point3D],
     lego_boxes: Sequence[Box],
     slope_vertices: Sequence[SlopeVertices],
+    wedge_vertices: Sequence[WedgeVertices],
     projection: Projection,
 ) -> tuple[float, float, float, float]:
     first_axis, second_axis = projection
-    coordinates = [
-        (vertex[first_axis], vertex[second_axis]) for vertex in source_vertices
-    ]
+    coordinates = [(vertex[first_axis], vertex[second_axis]) for vertex in source_vertices]
     for box in lego_boxes:
         minimum = (box[0], box[1], box[2])
         maximum = (box[3], box[4], box[5])
@@ -160,6 +179,8 @@ def _projection_bounds(
         )
     for slope in slope_vertices:
         coordinates.extend((vertex[first_axis], vertex[second_axis]) for vertex in slope)
+    for wedge in wedge_vertices:
+        coordinates.extend((vertex[first_axis], vertex[second_axis]) for vertex in wedge)
     if not coordinates:
         return (0.0, 1.0, 0.0, 1.0)
     minimum_first = min(point[0] for point in coordinates)
@@ -219,6 +240,19 @@ def _draw_lego_slopes(
             draw.polygon([_to_pixel(slope[index], projection, bounds) for index in face], fill=1)
 
 
+def _draw_lego_wedges(
+    mask: Image.Image,
+    wedge_vertices: Sequence[WedgeVertices],
+    projection: Projection,
+    bounds: tuple[float, float, float, float],
+) -> None:
+    draw = ImageDraw.Draw(mask)
+    for wedge in wedge_vertices:
+        half = len(wedge) // 2
+        draw.polygon([_to_pixel(vertex, projection, bounds) for vertex in wedge[:half]], fill=1)
+        draw.polygon([_to_pixel(vertex, projection, bounds) for vertex in wedge[half:]], fill=1)
+
+
 def _to_pixel(
     point: Point3D, projection: Projection, bounds: tuple[float, float, float, float]
 ) -> tuple[int, int]:
@@ -226,8 +260,10 @@ def _to_pixel(
     first_axis, second_axis = projection
     first = _scaled_pixel(point[first_axis], minimum_first, maximum_first)
     # Images grow downward, so the projection's second coordinate is deliberately flipped.
-    second = SILHOUETTE_RESOLUTION - 1 - _scaled_pixel(
-        point[second_axis], minimum_second, maximum_second
+    second = (
+        SILHOUETTE_RESOLUTION
+        - 1
+        - _scaled_pixel(point[second_axis], minimum_second, maximum_second)
     )
     return first, second
 

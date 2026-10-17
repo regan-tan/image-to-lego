@@ -640,6 +640,21 @@ def _is_connector_supported(placement: BrickPlacement) -> bool:
     )
 
 
+def is_evaluated_rectangular(placement: BrickPlacement) -> bool:
+    """Return whether stud-connectivity-v1 mechanically evaluates a placement."""
+    return _is_connector_supported(placement)
+
+
+def directly_supports(lower: BrickPlacement, upper: BrickPlacement) -> bool:
+    """Return the direct stud-support relation used by stud-connectivity-v1."""
+    return (
+        _is_connector_supported(lower)
+        and _is_connector_supported(upper)
+        and lower.position.z + lower.brick_type.height_plates == upper.position.z
+        and bool(_stud_footprint(lower) & _stud_footprint(upper))
+    )
+
+
 def _instruction_order_key(
     placement: BrickPlacement,
     original_index: int,
