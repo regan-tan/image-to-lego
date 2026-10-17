@@ -17,6 +17,8 @@ SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "part_geometry" / "ldra
         ("3001", "3001.dat", "x", (4.0, 2.0, 3.5)),
         ("4286", "4286.dat", "z", (3.0, 1.0, 3.5)),
         ("15068", "15068.dat", "x", (2.0, 2.0, 2.000008)),
+        ("41769", "41769a.dat", "z", (4.0, 2.0, 1.5)),
+        ("41770", "41770a.dat", "z", (4.0, 2.0, 1.5)),
     ],
 )
 def test_real_part_geometry_is_valid_and_reproducible(
@@ -45,7 +47,11 @@ def test_real_part_geometry_is_valid_and_reproducible(
 def test_catalogue_geometry_references_resolve() -> None:
     supported = {part.part_id: part for part in ALL_PARTS if part.geometry_asset is not None}
 
-    assert set(supported) == {"3001", "4286", "15068"}
-    for part in supported.values():
-        assert part.geometry_asset == part.ldraw_id
+    assert set(supported) == {"3001", "4286", "15068", "41769", "41770"}
+    for part_id, part in supported.items():
         assert load_part_geometry(part.geometry_asset) is not None
+        if part_id in {"41769", "41770"}:
+            assert part.geometry_asset == part_id
+            assert part.ldraw_id == f"{part_id}a"
+        else:
+            assert part.geometry_asset == part.ldraw_id

@@ -4,7 +4,8 @@
 Each part's `verifiedColorIds` contains only canonical LDraw colour IDs for combinations
 verified as manufactured in the BrickLink reference catalogue's **Known Colors** view.
 The snapshot was checked on 2026-10-15 against the part pages identified by each record's
-`bricklinkId`; part `15068` was added from the same **Known Colors** view on 2026-10-16.
+`bricklinkId`; part `15068` was added from the same **Known Colors** view on 2026-10-16 and
+the 41769/41770 wedge pair was checked on 2026-10-17.
 The supported colour IDs are defined in `backend/app/conversion/colors.py`.
 
 For `15068`, the retrieved record was BrickLink's
@@ -14,6 +15,15 @@ page's **Known Colors** list with the project's versioned canonical colour catal
 manual, versioned source snapshot: updating it means revisiting that exact Known Colors view,
 mapping its names through `colors.py`'s explicit BrickLink colour IDs, and checking in the
 resulting `verifiedColorIds`; the application never scrapes BrickLink at runtime.
+
+For the wedge pair, the retrieved records were BrickLink's
+[41769 right wedge plate](https://www.bricklink.com/v2/catalog/catalogitem.page?P=41769) and
+[41770 left wedge plate](https://www.bricklink.com/v2/catalog/catalogitem.page?P=41770). Each
+record's supported IDs are the complete intersection of its **Known Colors** list with the
+project's canonical palette: `ldraw:0`, `ldraw:15`, `ldraw:71`, `ldraw:72`, `ldraw:4`,
+`ldraw:320`, `ldraw:25`, `ldraw:14`, `ldraw:19`, `ldraw:70`, `ldraw:2`, `ldraw:288`,
+`ldraw:27`, `ldraw:1`, and `ldraw:272`. Dark Brown (`ldraw:308`) and every palette colour not
+in those two Known Colors lists remain unsupported.
 
 This is a catalogue-history assertion only: a verified pair was manufactured. It does not
 mean the pair is currently sold by LEGO, listed on BrickLink or Rebrickable, in stock,
@@ -25,6 +35,12 @@ catalogue fields, while BrickLink colour IDs are explicit fields in
 `backend/app/conversion/colors.py`; neither is inferred from a canonical ID. Converted LEGO-model
 JSON carries these mappings when known so the browser can produce a verified-manufactured sourcing
 CSV. The CSV is not a BrickLink wanted-list import and does not make any availability claim.
+
+`ldrawId` is the explicit visual-source identity, not an alias for `partId` or `bricklinkId`.
+For example, catalogue identities `41769` and `41770` render from LDraw's non-chamfer source
+variants `41769a` and `41770a` respectively; the LDraw `b` files are separate chamfered visual
+variants. See `part_geometry/README.md` for the source decision. Both catalogue entries remain
+source-only with `fitterEnabled: false`.
 
 Run the following from the repository root after changing it:
 
