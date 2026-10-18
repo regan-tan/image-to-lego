@@ -23,6 +23,10 @@ flowchart LR
 
 ## Dependency boundaries
 
+The diagnostic-only [mechanical connector metadata](mechanical-connector-metadata.md)
+defines the calibrated `vertical-stud-v1` representation. It does not change
+production `stud-connectivity-v1` buildability.
+
 Runtime dependencies point inward:
 
 ```text
