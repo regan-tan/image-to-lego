@@ -34,18 +34,19 @@ stud-system connections:
 - `stud_receiver`, direction `-Z`
 
 The provenance vocabulary is `source_backed`, `trusted_family_rule`, and
-`curated_verified`. In this milestone, both generated rectangular top studs
-and underside receivers use `trusted_family_rule`: the top set is additionally
-cross-checked against authoritative `stud.dat` source evidence where present.
-The receiver set is explicitly not inferred from `stud3`/`stud4` counts.
+`curated_verified`. Generated rectangular top studs and underside receivers
+use `trusted_family_rule`; the top set is additionally cross-checked against
+authoritative `stud.dat` source evidence where present. The receiver set is
+explicitly not inferred from `stud3`/`stud4` counts.
 
-The sole metadata source of truth is the trusted rectangular rule in
+The runtime metadata source of truth is
 `backend/app/conversion/mechanical_connectors.py`: a part whose existing
 catalogue semantics say `shape == rectangular` and family `brick` or `plate`
 receives one top stud and one underside receiver at each catalogue footprint
 cell. The runtime catalogue remains the input dimensions; `parts.json` does
-not duplicate per-part connector arrays. This scales to ordinary rectangular
-parts without a manually maintained connector list.
+not duplicate per-part connector arrays. A small explicit declaration in the
+same module may record a separately reviewed non-rectangular part; it does not
+create a family rule.
 
 ## Coordinates, transform, and matching
 
@@ -70,7 +71,31 @@ and source-backed top-stud disagreement. Reports are deterministic and include
 the metadata version, dimensions, counts, provenance, evidence agreement, and
 ordered connector data.
 
-## Non-trivial parts
+## Curated part 4286
+
+4286 (Slope Brick 33 3 x 1) is the one curated non-rectangular part in this
+metadata version. Its source hierarchy is `parts/4286.dat` ->
+`parts/s/4286s01.dat` -> `p/stud.dat`, which has one upward source-backed
+male stud at raw LDraw `(0,0,0)` and canonical `(2.5,0.5,3)`. No additional
+upward `stud.dat` reference appears in that hierarchy.
+
+Its three underside receivers are a project-owned `curated_verified` decision
+at canonical `(0.5,0.5,0)`, `(1.5,0.5,0)`, and `(2.5,0.5,0)`, all directed
+`-Z`. The decision combines the corrected explicit source frame, the official
+underside cavity/body geometry, the calibrated ordinary 1-wide brick/plate
+receiver pitch and bottom plane, and external corroboration from the LDCad
+Shadow Library at `RolandMelkert/LDCadShadowLibrary`
+`9b1131fb1991f8c0bfc072325e4e12f6271aba35`, `parts/4286.dat`. That external
+community metadata is not vendored, runtime data, or manufacturer truth. LDraw
+geometry supports the placement and absence of any other receiver position in
+the 3 x 1 footprint, but does not by itself prove clutch force.
+
+4286 is therefore `verified` for `stud-connectivity-v1` support only. It is
+still unevaluated by `vertical-insertion-v1`: that analysis deliberately uses
+only conservative rectangular fit geometry, and connectors are not collision
+geometry.
+
+## Other non-trivial parts
 
 41769, 41770, and 15068 remain mechanically `unevaluated`. Their LDraw source
 evidence is preserved for diagnostics but does not create verified underside

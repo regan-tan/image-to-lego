@@ -112,10 +112,13 @@ official roots, catalogue footprint/body planes, and explicit source features:
 | 41769 | `(4,2,1)` | `41769a` / z | `(2,1,1)` | mirrored four-stud row and shared `stud4` |
 | 41770 | `(4,2,1)` | `41770a` / z | `(2,1,1)` | four-stud row and shared `stud4` |
 
-As a diagnostic-only external corroboration, the previously researched LDCad
-4286 snap positions `(0,24,0)`, `(0,24,-20)`, and `(0,24,-40)` map through
+External corroboration was inspected in the LDCad Shadow Library,
+`RolandMelkert/LDCadShadowLibrary` revision
+`9b1131fb1991f8c0bfc072325e4e12f6271aba35`, `parts/4286.dat`. Its three
+female snap positions `(0,24,0)`, `(0,24,-20)`, and `(0,24,-40)` map through
 the corrected frame to `(2.5,0.5,0)`, `(1.5,0.5,0)`, and `(0.5,0.5,0)`.
-They are not runtime data or mechanical truth.
+That community-maintained metadata is corroboration only: it is neither
+vendored nor a runtime input nor manufacturer mechanical truth.
 
 For 41770, the authoritative `stug-1x4` instance contains explicit `stud.dat`
 references that map to `(0.5..3.5, 0.5, 1)`; 41769's mirrored source maps to

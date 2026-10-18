@@ -389,8 +389,8 @@ def test_locked_slope_only_conversion_skips_rectangular_solving(
     ]
     assert actual_placements == [("4286", core.GridPosition(0, 0, 1))]
     buildability = analyze_buildability(model.placements)
-    assert buildability.evaluated_placement_count == 0
-    assert buildability.unevaluated_placement_count == 1
+    assert buildability.evaluated_placement_count == 1
+    assert buildability.unevaluated_placement_count == 0
     serialized = serialize_lego_model(model)
     assert b'"partId":"4286"' in serialized
     assert b'"fidelity"' in serialized

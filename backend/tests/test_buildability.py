@@ -144,11 +144,11 @@ def test_base_layer_evaluated_placements_are_not_unsupported() -> None:
     assert analysis.unsupported_placement_count == 0
 
 
-def test_unsupported_families_are_unevaluated_not_isolated() -> None:
+def test_unevaluated_wedge_parts_are_not_isolated() -> None:
     brick = catalogue_part(family="brick", width=2, length=4)
-    slope = PART_BY_ID["4286"]
+    wedge = PART_BY_ID["41769"]
 
-    analysis = analyze_buildability((placement(brick), placement(slope, x=4)))
+    analysis = analyze_buildability((placement(brick), placement(wedge, x=4)))
 
     assert analysis.evaluated_placement_count == 1
     assert analysis.unevaluated_placement_count == 1
@@ -199,6 +199,118 @@ def test_connector_support_exactly_matches_legacy_rectangular_predicate() -> Non
                                     orientation=upper_orientation,
                                 )
                                 assert analyze_buildability((lower, shifted_upper)).edges == ()
+
+
+@pytest.mark.parametrize("receiver_x", (0, 1, 2))
+def test_4286_receives_support_through_each_curated_underside_receiver(
+    receiver_x: int,
+) -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    lower = placement(plate, x=receiver_x, z=2)
+    slope = placement(PART_BY_ID["4286"], z=3)
+
+    analysis = analyze_buildability((lower, slope))
+
+    assert analysis.edges == (ConnectionEdge(0, 1, 1),)
+    assert analysis.unsupported_placement_count == 0
+
+
+def test_4286_can_have_multiple_simultaneous_supporting_studs() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    placements = (
+        placement(plate, x=0, z=2),
+        placement(plate, x=1, z=2),
+        placement(plate, x=2, z=2),
+        placement(PART_BY_ID["4286"], z=3),
+    )
+
+    assert analyze_buildability(placements).edges == (
+        ConnectionEdge(0, 3, 1),
+        ConnectionEdge(1, 3, 1),
+        ConnectionEdge(2, 3, 1),
+    )
+
+
+def test_4286_is_not_supported_by_studs_outside_its_receivers_or_on_the_wrong_plane() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    slope = placement(PART_BY_ID["4286"], z=3)
+
+    outside = analyze_buildability((placement(plate, x=3, z=2), slope))
+    wrong_plane = analyze_buildability((placement(plate, x=1, z=1), slope))
+
+    assert outside.edges == ()
+    assert wrong_plane.edges == ()
+    assert outside.unsupported_placement_count == 1
+    assert wrong_plane.unsupported_placement_count == 1
+
+
+@pytest.mark.parametrize(
+    ("orientation", "support_positions"),
+    (
+        (0, ((0, 0), (1, 0), (2, 0))),
+        (90, ((0, 0), (0, 1), (0, 2))),
+        (180, ((0, 0), (1, 0), (2, 0))),
+        (270, ((0, 0), (0, 1), (0, 2))),
+    ),
+)
+def test_4286_receiver_support_rotates_with_its_non_square_footprint(
+    orientation: int,
+    support_positions: tuple[tuple[int, int], ...],
+) -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    lower = tuple(placement(plate, x=x, y=y, z=2) for x, y in support_positions)
+    slope = placement(PART_BY_ID["4286"], z=3, orientation=orientation)
+
+    assert analyze_buildability((*lower, slope)).edges == (
+        ConnectionEdge(0, 3, 1),
+        ConnectionEdge(1, 3, 1),
+        ConnectionEdge(2, 3, 1),
+    )
+
+
+def test_4286_supports_only_its_one_verified_top_stud() -> None:
+    plate = catalogue_part(family="plate", width=1, length=1)
+    slope = placement(PART_BY_ID["4286"])
+    aligned = placement(plate, x=2, z=3)
+    middle_slope_region = placement(plate, x=1, z=3)
+    low_slope_region = placement(plate, z=3)
+
+    assert analyze_buildability((slope, aligned)).edges == (ConnectionEdge(0, 1, 1),)
+    assert analyze_buildability((slope, middle_slope_region)).edges == ()
+    assert analyze_buildability((slope, low_slope_region)).edges == ()
+
+
+def test_ground_level_4286_is_supported_but_an_unsupported_raised_4286_is_reported() -> None:
+    slope = PART_BY_ID["4286"]
+    plate = catalogue_part(family="plate", width=1, length=1)
+
+    ground = analyze_buildability((placement(slope),))
+    raised = analyze_buildability((placement(plate, x=10), placement(slope, z=3)))
+
+    assert ground.evaluated_placement_count == 1
+    assert ground.unsupported_placement_count == 0
+    assert raised.evaluated_placement_count == 2
+    assert raised.unsupported_placement_count == 1
+
+
+def test_instruction_order_respects_a_support_chain_through_4286_without_fake_slope_edges() -> None:
+    brick = catalogue_part(family="brick", width=2, length=4)
+    plate = catalogue_part(family="plate", width=1, length=1)
+    lower = placement(brick)
+    slope = placement(PART_BY_ID["4286"], z=3)
+    upper = placement(plate, x=2, z=6)
+    placements = (upper, slope, lower)
+
+    analysis = analyze_buildability(placements)
+    ordered = order_placements_for_instructions(placements)
+
+    assert analysis.edges == (ConnectionEdge(1, 0, 1), ConnectionEdge(2, 1, 3))
+    assert ordered.index(lower) < ordered.index(slope) < ordered.index(upper)
+    assert generate_instruction_steps(placements) == (
+        InstructionStep(1, (2,)),
+        InstructionStep(2, (1,)),
+        InstructionStep(3, (0,)),
+    )
 
 
 def test_instruction_order_places_a_simple_stack_from_lower_to_upper() -> None:
@@ -257,7 +369,7 @@ def test_instruction_order_handles_disconnected_evaluated_components_determinist
     )
 
 
-def test_instruction_order_keeps_unevaluated_slopes_without_inventing_support() -> None:
+def test_instruction_order_respects_4286_support_dependencies() -> None:
     brick = catalogue_part(family="brick", width=2, length=4)
     lower = placement(brick)
     slope = placement(PART_BY_ID["4286"], z=3)
@@ -266,7 +378,7 @@ def test_instruction_order_keeps_unevaluated_slopes_without_inventing_support() 
     ordered = order_placements_for_instructions(placements)
 
     assert ordered == (lower, slope)
-    assert analyze_buildability(placements).edges == ()
+    assert analyze_buildability(placements).edges == (ConnectionEdge(1, 0, 3),)
 
 
 def test_instruction_order_contains_every_placement_once_and_respects_all_edges() -> None:
@@ -425,14 +537,14 @@ def test_instruction_steps_finish_a_connected_component_before_starting_another(
     assert steps[0].placement_indices == (0, 1, 2, 3, 4, 5)
 
 
-def test_instruction_steps_keep_unevaluated_slopes_as_presentation_only() -> None:
+def test_instruction_steps_keep_4286_after_its_lower_support() -> None:
     brick = catalogue_part(family="brick", width=2, length=4)
     placements = (placement(PART_BY_ID["4286"], z=3), placement(brick))
 
     steps = generate_instruction_steps(placements)
 
     assert steps == (InstructionStep(1, (1,)), InstructionStep(2, (0,)))
-    assert analyze_buildability(placements).edges == ()
+    assert analyze_buildability(placements).edges == (ConnectionEdge(1, 0, 3),)
 
 
 @pytest.mark.parametrize(
