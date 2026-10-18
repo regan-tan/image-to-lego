@@ -116,7 +116,7 @@ def analyze_buildability(placements: Collection[BrickPlacement]) -> Buildability
     """Analyze supported brick and plate placements without changing the conversion output.
 
     A supported placement is unsupported when its bottom is above the model's minimum
-    placement z plane and no evaluated rectangular placement connects directly below it.
+    placement z plane and no evaluated placement connects directly below it.
     """
     placement_list = tuple(placements)
     evaluated = tuple(
@@ -239,7 +239,7 @@ def analyze_vertical_insertion_accessibility(
     for step in instruction_steps:
         for placement_index in step.placement_indices:
             placement = placement_list[placement_index]
-            if not _is_connector_supported(placement):
+            if not _is_vertical_insertion_evaluated(placement):
                 continue
 
             evaluated_count += 1
@@ -248,7 +248,7 @@ def analyze_vertical_insertion_accessibility(
             blocker_indices: list[int] = []
             for built_index in built_indices:
                 built = placement_list[built_index]
-                if not _is_connector_supported(built):
+                if not _is_vertical_insertion_evaluated(built):
                     continue
                 if built.position.z + built.brick_type.height_plates <= target_top_z:
                     continue
@@ -643,8 +643,13 @@ def _is_connector_supported(placement: BrickPlacement) -> bool:
 
 
 def is_evaluated_rectangular(placement: BrickPlacement) -> bool:
-    """Return whether stud-connectivity-v1 mechanically evaluates a placement."""
-    return _is_connector_supported(placement)
+    """Return whether vertical-insertion-v1 has rectangular fit geometry."""
+    return _is_vertical_insertion_evaluated(placement)
+
+
+def _is_vertical_insertion_evaluated(placement: BrickPlacement) -> bool:
+    part = placement.brick_type
+    return part.shape == "rectangular" and part.family in {"brick", "plate"}
 
 
 def directly_supports(lower: BrickPlacement, upper: BrickPlacement) -> bool:
@@ -724,12 +729,12 @@ def _insertion_precedence_edges(
 ) -> tuple[PrecedenceEdge, ...]:
     edges: list[PrecedenceEdge] = []
     for target_index, target in enumerate(placements):
-        if not _is_connector_supported(target):
+        if not _is_vertical_insertion_evaluated(target):
             continue
         target_top_z = target.position.z + target.brick_type.height_plates
         target_footprint = _stud_footprint(target)
         for blocker_index, blocker in enumerate(placements):
-            if target_index == blocker_index or not _is_connector_supported(blocker):
+            if target_index == blocker_index or not _is_vertical_insertion_evaluated(blocker):
                 continue
             if blocker.position.z + blocker.brick_type.height_plates <= target_top_z:
                 continue

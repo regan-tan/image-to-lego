@@ -1,8 +1,8 @@
 """Verified vertical stud-system metadata, separate from production buildability.
 
-This module deliberately models only the calibrated rectangular brick and
-plate family.  LDraw connector evidence remains source evidence; it is checked
-against this trusted family rule but never promoted automatically.
+The calibrated rectangular brick and plate family uses a trusted family rule.
+Part 4286 is the sole reviewed, curated exception. LDraw connector evidence
+remains source evidence and is never promoted automatically.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
+from types import MappingProxyType
 
 from app.conversion.connector_evidence import (
     CanonicalDirection,
@@ -75,20 +76,64 @@ class MechanicalConnectorValidationError(ValueError):
     """The narrow vertical-stud metadata contract is invalid."""
 
 
+_CURATED_CONNECTORS_BY_PART_ID = MappingProxyType(
+    {
+        "4286": (
+            MechanicalConnector(
+                (2.5, 0.5, 3.0),
+                CanonicalDirection.POSITIVE_Z,
+                MechanicalInterfaceKind.MALE_STUD,
+                MechanicalProvenance.SOURCE_BACKED,
+            ),
+            MechanicalConnector(
+                (0.5, 0.5, 0.0),
+                CanonicalDirection.NEGATIVE_Z,
+                MechanicalInterfaceKind.STUD_RECEIVER,
+                MechanicalProvenance.CURATED_VERIFIED,
+            ),
+            MechanicalConnector(
+                (1.5, 0.5, 0.0),
+                CanonicalDirection.NEGATIVE_Z,
+                MechanicalInterfaceKind.STUD_RECEIVER,
+                MechanicalProvenance.CURATED_VERIFIED,
+            ),
+            MechanicalConnector(
+                (2.5, 0.5, 0.0),
+                CanonicalDirection.NEGATIVE_Z,
+                MechanicalInterfaceKind.STUD_RECEIVER,
+                MechanicalProvenance.CURATED_VERIFIED,
+            ),
+        )
+    }
+)
+
+
 def mechanical_evaluation_status(part: LegoPart) -> MechanicalEvaluationStatus:
     """Report whether this milestone has verified vertical connector metadata."""
+    if part.part_id in _CURATED_CONNECTORS_BY_PART_ID:
+        return MechanicalEvaluationStatus.VERIFIED
     if part.shape == "rectangular" and part.family in _RECTANGULAR_FAMILIES:
         return MechanicalEvaluationStatus.VERIFIED
     return MechanicalEvaluationStatus.UNEVALUATED
 
 
 def resolve_part_mechanical_metadata(part: LegoPart) -> PartMechanicalMetadata | None:
-    """Resolve connectors from the one trusted rectangular family rule.
+    """Resolve trusted rectangular or explicitly curated connector metadata.
 
-    The catalogue dimensions are the source of generated coordinates.  This
-    intentionally does not inspect LDraw evidence, so non-rectangular evidence
-    cannot accidentally become mechanically verified metadata.
+    The catalogue dimensions generate rectangular coordinates. Curated entries
+    are explicit; this resolver never inspects LDraw evidence, so source
+    geometry cannot accidentally become mechanically verified metadata.
     """
+    curated_connectors = _CURATED_CONNECTORS_BY_PART_ID.get(part.part_id)
+    if curated_connectors is not None:
+        metadata = PartMechanicalMetadata(
+            part.part_id,
+            VERTICAL_STUD_METADATA_VERSION,
+            curated_connectors,
+        )
+        validate_part_mechanical_metadata(metadata)
+        return metadata
+
     if mechanical_evaluation_status(part) != MechanicalEvaluationStatus.VERIFIED:
         return None
 
@@ -168,8 +213,16 @@ def mechanical_connector_report(
             connector.interface_kind == MechanicalInterfaceKind.STUD_RECEIVER
             for connector in connectors
         ),
-        "topProvenance": MechanicalProvenance.TRUSTED_FAMILY_RULE.value,
-        "receiverProvenance": MechanicalProvenance.TRUSTED_FAMILY_RULE.value,
+        "topProvenance": next(
+            connector.provenance.value
+            for connector in connectors
+            if connector.interface_kind == MechanicalInterfaceKind.MALE_STUD
+        ),
+        "receiverProvenance": next(
+            connector.provenance.value
+            for connector in connectors
+            if connector.interface_kind == MechanicalInterfaceKind.STUD_RECEIVER
+        ),
         "sourceEvidenceAgreement": True,
         "connectors": [
             {

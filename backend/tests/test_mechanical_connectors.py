@@ -107,6 +107,101 @@ def test_calibration_top_studs_exactly_agree_with_authoritative_source_evidence(
         assert report["sourceEvidenceAgreement"] is True
 
 
+def test_4286_has_reviewed_complete_connector_metadata_and_source_backed_top_stud() -> None:
+    part = PART_BY_ID["4286"]
+    metadata = resolve_part_mechanical_metadata(part)
+    assert metadata is not None
+
+    assert mechanical_evaluation_status(part) == MechanicalEvaluationStatus.VERIFIED
+    assert metadata.version == VERTICAL_STUD_METADATA_VERSION
+    assert metadata.connectors == (
+        MechanicalConnector(
+            (2.5, 0.5, 3.0),
+            CanonicalDirection.POSITIVE_Z,
+            MechanicalInterfaceKind.MALE_STUD,
+            MechanicalProvenance.SOURCE_BACKED,
+        ),
+        MechanicalConnector(
+            (0.5, 0.5, 0.0),
+            CanonicalDirection.NEGATIVE_Z,
+            MechanicalInterfaceKind.STUD_RECEIVER,
+            MechanicalProvenance.CURATED_VERIFIED,
+        ),
+        MechanicalConnector(
+            (1.5, 0.5, 0.0),
+            CanonicalDirection.NEGATIVE_Z,
+            MechanicalInterfaceKind.STUD_RECEIVER,
+            MechanicalProvenance.CURATED_VERIFIED,
+        ),
+        MechanicalConnector(
+            (2.5, 0.5, 0.0),
+            CanonicalDirection.NEGATIVE_Z,
+            MechanicalInterfaceKind.STUD_RECEIVER,
+            MechanicalProvenance.CURATED_VERIFIED,
+        ),
+    )
+
+    evidence = extract_connector_evidence(
+        SOURCE_DIRECTORY,
+        part_id="4286",
+        source_file="4286.dat",
+        source_frame=ldraw_source_frame("4286"),
+        part_family=part.family,
+    )
+    top_studs = tuple(
+        item
+        for item in evidence
+        if item.feature_kind == ConnectorFeatureKind.MALE_STUD
+        and item.direction == CanonicalDirection.POSITIVE_Z
+    )
+    assert len(top_studs) == 1
+    assert top_studs[0].source_path == (
+        "parts/4286.dat",
+        "parts/s/4286s01.dat",
+        "p/stud.dat",
+    )
+    assert top_studs[0].ldraw_coordinate == (0.0, 0.0, 0.0)
+    assert top_studs[0].canonical_coordinate == (2.5, 0.5, 3.0)
+    validate_source_backed_top_studs(metadata, evidence)
+
+    report = mechanical_connector_report(part, metadata, evidence)
+    assert report["topProvenance"] == MechanicalProvenance.SOURCE_BACKED.value
+    assert report["receiverProvenance"] == MechanicalProvenance.CURATED_VERIFIED.value
+
+
+@pytest.mark.parametrize(
+    ("orientation", "top", "receivers"),
+    (
+        (0, (12.5, 20.5, 33.0), ((10.5, 20.5, 30.0), (11.5, 20.5, 30.0), (12.5, 20.5, 30.0))),
+        (90, (10.5, 20.5, 33.0), ((10.5, 20.5, 30.0), (10.5, 21.5, 30.0), (10.5, 22.5, 30.0))),
+        (180, (10.5, 20.5, 33.0), ((10.5, 20.5, 30.0), (11.5, 20.5, 30.0), (12.5, 20.5, 30.0))),
+        (270, (10.5, 22.5, 33.0), ((10.5, 20.5, 30.0), (10.5, 21.5, 30.0), (10.5, 22.5, 30.0))),
+    ),
+)
+def test_4286_connector_rotation_uses_only_canonical_local_coordinates(
+    orientation: int,
+    top: tuple[float, float, float],
+    receivers: tuple[tuple[float, float, float], ...],
+) -> None:
+    part = PART_BY_ID["4286"]
+    metadata = resolve_part_mechanical_metadata(part)
+    assert metadata is not None
+
+    world = tuple(
+        transform_connector_to_world(connector, part, GridPosition(10, 20, 30), orientation)
+        for connector in metadata.connectors
+    )
+
+    assert world[0].coordinate == top
+    assert world[0].direction == CanonicalDirection.POSITIVE_Z
+    assert tuple(sorted(connector.coordinate for connector in world[1:])) == receivers
+    assert {connector.direction for connector in world[1:]} == {CanonicalDirection.NEGATIVE_Z}
+    assert world == tuple(
+        transform_connector_to_world(connector, part, GridPosition(10, 20, 30), orientation)
+        for connector in metadata.connectors
+    )
+
+
 def test_source_evidence_disagreement_fails_validation() -> None:
     metadata = resolve_part_mechanical_metadata(PART_BY_ID["3001"])
     assert metadata is not None
@@ -177,6 +272,18 @@ def test_matcher_requires_exact_coordinate_opposite_direction_and_complementary_
         MechanicalProvenance.TRUSTED_FAMILY_RULE,
     )
     assert matching_vertical_connectors((receiver,), (receiver_to_receiver,)) == ()
+
+
+def test_4286_receiver_model_does_not_match_a_stud_between_receiver_positions() -> None:
+    slope = BrickPlacement(PART_BY_ID["4286"], GridPosition(0, 0, 3), 0)
+    between_receivers = WorldMechanicalConnector(
+        (1.0, 0.5, 3.0),
+        CanonicalDirection.POSITIVE_Z,
+        MechanicalInterfaceKind.MALE_STUD,
+        MechanicalProvenance.CURATED_VERIFIED,
+    )
+
+    assert matching_vertical_connectors((between_receivers,), _world_connectors(slope)) == ()
 
 
 @pytest.mark.parametrize(
