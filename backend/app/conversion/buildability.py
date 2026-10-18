@@ -9,12 +9,17 @@ from heapq import heappop, heappush
 from typing import Literal
 
 from app.conversion.core import BrickPlacement
+from app.conversion.mechanical_connectors import (
+    WorldMechanicalConnector,
+    matching_vertical_connectors,
+    resolve_part_mechanical_metadata,
+    transform_connector_to_world,
+)
 
 BUILDABILITY_ANALYSIS_VERSION = "stud-connectivity-v1"
 VERTICAL_INSERTION_ACCESSIBILITY_VERSION = "vertical-insertion-v1"
 INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION = "insertion-aware-instructions-v1"
 MAX_PLACEMENTS_PER_INSTRUCTION_STEP = 6
-_SUPPORTED_FAMILIES = frozenset({"brick", "plate"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,10 +639,7 @@ def _placement_distance(left: BrickPlacement, right: BrickPlacement) -> int:
 
 
 def _is_connector_supported(placement: BrickPlacement) -> bool:
-    return (
-        placement.brick_type.shape == "rectangular"
-        and placement.brick_type.family in _SUPPORTED_FAMILIES
-    )
+    return resolve_part_mechanical_metadata(placement.brick_type) is not None
 
 
 def is_evaluated_rectangular(placement: BrickPlacement) -> bool:
@@ -647,12 +649,7 @@ def is_evaluated_rectangular(placement: BrickPlacement) -> bool:
 
 def directly_supports(lower: BrickPlacement, upper: BrickPlacement) -> bool:
     """Return the direct stud-support relation used by stud-connectivity-v1."""
-    return (
-        _is_connector_supported(lower)
-        and _is_connector_supported(upper)
-        and lower.position.z + lower.brick_type.height_plates == upper.position.z
-        and bool(_stud_footprint(lower) & _stud_footprint(upper))
-    )
+    return bool(_direct_support_matches(lower, upper))
 
 
 def _instruction_order_key(
@@ -679,15 +676,47 @@ def _connection_edges(
     for index, placement in evaluated:
         placements_by_bottom_z[placement.position.z].append((index, placement))
 
+    world_connectors = {
+        index: _world_connectors(placement) for index, placement in evaluated
+    }
     edges: list[ConnectionEdge] = []
     for lower_index, lower in evaluated:
         upper_z = lower.position.z + lower.brick_type.height_plates
-        lower_footprint = _stud_footprint(lower)
-        for upper_index, upper in placements_by_bottom_z[upper_z]:
-            overlap = lower_footprint & _stud_footprint(upper)
-            if overlap:
-                edges.append(ConnectionEdge(lower_index, upper_index, len(overlap)))
+        for upper_index, _upper in placements_by_bottom_z[upper_z]:
+            matches = matching_vertical_connectors(
+                world_connectors[lower_index], world_connectors[upper_index]
+            )
+            if matches:
+                edges.append(ConnectionEdge(lower_index, upper_index, len(matches)))
     return tuple(edges)
+
+
+def _direct_support_matches(
+    lower: BrickPlacement,
+    upper: BrickPlacement,
+) -> tuple[tuple[WorldMechanicalConnector, WorldMechanicalConnector], ...]:
+    if lower.position.z + lower.brick_type.height_plates != upper.position.z:
+        return ()
+    lower_connectors = _world_connectors(lower)
+    upper_connectors = _world_connectors(upper)
+    return matching_vertical_connectors(lower_connectors, upper_connectors)
+
+
+def _world_connectors(
+    placement: BrickPlacement,
+) -> tuple[WorldMechanicalConnector, ...]:
+    metadata = resolve_part_mechanical_metadata(placement.brick_type)
+    if metadata is None:
+        return ()
+    return tuple(
+        transform_connector_to_world(
+            connector,
+            placement.brick_type,
+            placement.position,
+            placement.orientation_degrees,
+        )
+        for connector in metadata.connectors
+    )
 
 
 def _insertion_precedence_edges(

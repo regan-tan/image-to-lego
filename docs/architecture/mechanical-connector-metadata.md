@@ -1,8 +1,8 @@
 # Mechanical connector metadata
 
-Status: implemented as a diagnostic metadata foundation. It does **not** alter
-`stud-connectivity-v1`, fitting, vertical insertion, instructions, API, or the
-frontend.
+Status: implemented. It backs production direct support-edge construction for
+`stud-connectivity-v1`; it does **not** alter fitter, vertical insertion, API,
+or the frontend.
 
 ## Why the model is hybrid
 
@@ -19,7 +19,7 @@ flowchart LR
     LDraw[Authoritative LDraw] --> Evidence[Connector evidence]
     Evidence --> Verified[Verified mechanical metadata]
     Verified --> Matcher[Generic connector matcher]
-    Matcher -. future separately reviewed migration .-> Buildability[Production buildability]
+    Matcher --> Buildability[Production stud-connectivity-v1 buildability]
 ```
 
 Source evidence is never automatically promoted to mechanical truth.
@@ -58,6 +58,11 @@ Directions remain vertical under these rotations.
 The pure matcher accepts only exact coordinate equality, opposite directions,
 and the pair `male_stud` / `stud_receiver`. It deliberately has no bounding
 box overlap, tolerance, clutch-force, stability, or insertion claim.
+
+Production support detection resolves only `verified` metadata, transforms the
+lower placement's `male_stud +Z` and upper placement's `stud_receiver -Z` to
+world coordinates, then uses this matcher. Ground support remains the existing
+minimum-placement-z rule and does not require a connector below the model.
 
 Validation rejects version mismatches, malformed/non-finite coordinates,
 non-vertical directions, unsupported interface values, duplicate connectors,

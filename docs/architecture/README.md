@@ -23,9 +23,11 @@ flowchart LR
 
 ## Dependency boundaries
 
-The diagnostic-only [mechanical connector metadata](mechanical-connector-metadata.md)
-defines the calibrated `vertical-stud-v1` representation. It does not change
-production `stud-connectivity-v1` buildability.
+The [mechanical connector metadata](mechanical-connector-metadata.md) defines
+the calibrated `vertical-stud-v1` representation. Production
+`stud-connectivity-v1` buildability resolves verified metadata, transforms it
+to world coordinates, and uses the generic matcher to create direct support
+edges. The public buildability semantics and version remain unchanged.
 
 Runtime dependencies point inward:
 
