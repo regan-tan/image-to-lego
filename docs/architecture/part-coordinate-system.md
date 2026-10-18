@@ -9,8 +9,8 @@ semantics or change fitting, buildability, or rendering behaviour.
 
 | System | Axes, units, origin, and current behaviour |
 | --- | --- |
-| LDraw source | `x` right, `y` down, `z` depth; LDraw units (LDU); part-local origin is conventionally horizontally centred at the top surface.  A stud pitch is 20 LDU and a plate is 8 LDU. |
-| Generated geometry assets | The importer maps either `(x,z,-y)` or `(z,x,-y)`, divides horizontal coordinates by 20 and vertical by 8, then rebases every mesh to its geometry minimum.  Its per-part `long_axis` makes the catalogue length the asset x axis.  This is visual-mesh normalization, not connector data. |
+| LDraw source | `x` right, `y` down, `z` depth; LDraw units (LDU). A stud pitch is 20 LDU and a plate is 8 LDU. The location of LDraw `(0,0,0)` in application-local space is part-specific and verified explicitly. |
+| Generated geometry assets | The importer maps either `(x,z,-y)` or `(z,x,-y)`, divides horizontal coordinates by 20 and vertical by 8, then rebases every mesh to its geometry minimum. Its per-part source axis makes the catalogue length the asset x axis. This is visual-mesh normalization, not connector data or source-frame truth. |
 | Catalogue | `lengthStuds`, `widthStuds`, and `heightPlates` describe the intended placement footprint and body height.  The catalogue does not describe visual protrusions such as studs. |
 | Fitter and world placement | `GridPosition(x,y,z)` uses integer lower-left footprint cells and bottom plate planes. `x` is length, `y` width/depth, `z` plate height.  A placement's orientation is 0/90/180/270. |
 | Frontend | Placement `x` renders to Three.js x, placement `y` to Three.js z, and plate `z` to Three.js y.  Generated asset vertices use the existing normalized asset orientation. |
@@ -29,16 +29,20 @@ corner of its catalogue footprint on the bottom plate plane. `x` runs along
 catalogue length (0..L), `y` along catalogue width (0..W), and `z` is upward in
 plate units. A normal stud center is at `(n + 0.5, m + 0.5, H)`.
 
-For an LDraw point `(lx, ly, lz)`, the transform is:
+`PartLocalFrame` holds only catalogue dimensions and therefore only placement
+rotation semantics. `LDrawSourceFrame` separately holds a part ID, LDraw ID,
+axis mapping, and `ldraw_origin_in_part_local`. For an LDraw point
+`(lx, ly, lz)` and source anchor `(ox, oy, oz)`, the transform is:
 
-- parts whose authoritative long axis is LDraw x: `(lx / 20 + L / 2, lz / 20 + W / 2, H - ly / 8)`;
-- parts whose authoritative long axis is LDraw z: `(lz / 20 + L / 2, lx / 20 + W / 2, H - ly / 8)`.
+- LDraw-x long axis: `(ox + lx / 20, oy + lz / 20, oz - ly / 8)`;
+- LDraw-z long axis: `(ox + lz / 20, oy + lx / 20, oz - ly / 8)`.
 
-The required long-axis choice is explicit per part, matching the existing
-visual importer: 3001 and 15068 use x; 4286, 41769, and 41770 use z. This is
-also why generated visual asset coordinates must not be treated as canonical
-connector coordinates: their final mesh-minimum rebase includes studs and other
-geometry rather than the catalogue body planes.
+The inverse subtracts that same anchor before scaling and permuting. No source
+coordinate is snapped. The one checked-in registry is the authoritative source
+for the axis and anchor used by connector evidence and visual-asset generation.
+Generated asset coordinates must not be treated as canonical connector
+coordinates: their final mesh-minimum rebase includes studs and other geometry
+rather than the catalogue body planes.
 
 ## Orientation and standard rectangular stud grid
 
@@ -75,9 +79,43 @@ SNOT connections, clips, bars, pins, axles, or other interfaces.
 
 ## Checked-in calibration and diagnostics
 
-3001 confirms the scale and origin: LDraw `(-30, 0, -10)` maps to canonical
-`(0.5, 0.5, 3)`, while `(-40, 24, -20)` maps to `(0, 0, 0)`. The visual stud
-centers therefore land on the expected lattice.
+3001 is the centred reference: its source anchor is `(2, 1, 3)`. LDraw
+`(-30, 0, -10)` maps to canonical `(0.5, 0.5, 3)`, while `(-40, 24, -20)`
+maps to `(0, 0, 0)`. The visual stud centers therefore land on the expected
+lattice.
+
+4286 contrasts with that reference. Its official source body spans LDraw
+`z=-50..10`, while its 3 x 1 catalogue footprint is canonical `x=0..3`.
+The explicit anchor `(2.5, 0.5, 3)` follows those body end planes: raw
+`z=-50` maps to canonical `x=0`, raw `z=10` maps to `x=3`, and the source's
+top-stud origin `(0,0,0)` maps to `(2.5,0.5,3)`. The raw underside `stud3a`
+placement `(0,20,-30)` maps to `(1,0.5,0.5)`. This matches the generated
+asset's rebased horizontal landmarks at x `0`, `1`, `2.5`, and `3`, but the
+mesh rebase is corroborating visual evidence only, not how the anchor is
+defined.
+
+The following source-frame registry entries are calibrated from the checked-in
+official roots, catalogue footprint/body planes, and explicit source features:
+
+| Part | Catalogue `(L,W,H)` | LDraw ID / axis | LDraw origin in canonical space | Source-backed check |
+| --- | --- | --- | --- | --- |
+| 3001 | `(4,2,3)` | `3001` / x | `(2,1,3)` | eight top studs, including `(-30,0,-10)` -> `(0.5,0.5,3)` |
+| 3002 | `(3,2,3)` | `3002` / x | `(1.5,1,3)` | six top studs on the rectangular grid |
+| 3003 | `(2,2,3)` | `3003` / x | `(1,1,3)` | four top studs on the rectangular grid |
+| 3010 | `(4,1,3)` | `3010` / x | `(2,0.5,3)` | four top studs on the rectangular grid |
+| 3020 | `(4,2,1)` | `3020` / x | `(2,1,1)` | eight top studs on the rectangular grid |
+| 3021 | `(3,2,1)` | `3021` / x | `(1.5,1,1)` | six top studs on the rectangular grid |
+| 3022 | `(2,2,1)` | `3022` / x | `(1,1,1)` | four top studs on the rectangular grid |
+| 3023 | `(2,1,1)` | `3023b` / x | `(1,0.5,1)` | two top studs on the rectangular grid |
+| 4286 | `(3,1,3)` | `4286` / z | `(2.5,0.5,3)` | top stud and body end planes above |
+| 15068 | `(2,2,2)` | `15068` / x | `(1,1,2)` | `stud3a` / `stud3` retain `(1,0.5,2.5)` / `(1,1.5,3.5)` |
+| 41769 | `(4,2,1)` | `41769a` / z | `(2,1,1)` | mirrored four-stud row and shared `stud4` |
+| 41770 | `(4,2,1)` | `41770a` / z | `(2,1,1)` | four-stud row and shared `stud4` |
+
+As a diagnostic-only external corroboration, the previously researched LDCad
+4286 snap positions `(0,24,0)`, `(0,24,-20)`, and `(0,24,-40)` map through
+the corrected frame to `(2.5,0.5,0)`, `(1.5,0.5,0)`, and `(0.5,0.5,0)`.
+They are not runtime data or mechanical truth.
 
 For 41770, the authoritative `stug-1x4` instance contains explicit `stud.dat`
 references that map to `(0.5..3.5, 0.5, 1)`; 41769's mirrored source maps to

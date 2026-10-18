@@ -197,7 +197,6 @@ def transform_connector_to_world(
             part.length_studs,
             part.width_studs,
             part.height_plates,
-            "x",
         ),
         orientation_degrees,
     )

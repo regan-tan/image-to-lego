@@ -10,7 +10,12 @@ from enum import StrEnum
 from math import isfinite
 from pathlib import Path
 
-from app.conversion.part_coordinates import PartLocalFrame, Point3, is_standard_stud_grid_position
+from app.conversion.part_coordinates import (
+    LDrawSourceFrame,
+    Point3,
+    is_standard_stud_grid_position,
+    ldraw_to_part_local,
+)
 
 MAX_REFERENCE_DEPTH = 64
 Matrix = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
@@ -94,7 +99,7 @@ def extract_connector_evidence(
     *,
     part_id: str,
     source_file: str,
-    frame: PartLocalFrame,
+    source_frame: LDrawSourceFrame,
     part_family: str,
 ) -> tuple[ConnectorEvidence, ...]:
     """Extract recognized connector geometry through the complete reference tree."""
@@ -135,9 +140,9 @@ def extract_connector_evidence(
             child_hierarchy = (*source_path, child_source)
             feature_kind, status = classify_source_primitive(child_source)
             if feature_kind is not None:
-                canonical_coordinate = _ldraw_point_to_canonical(composed_translation, frame)
+                canonical_coordinate = ldraw_to_part_local(composed_translation, source_frame)
                 direction = _ldraw_direction_to_canonical(
-                    _apply(composed_matrix, PRIMITIVE_UP_AXIS), frame
+                    _apply(composed_matrix, PRIMITIVE_UP_AXIS), source_frame
                 )
                 on_grid = is_standard_stud_grid_position(canonical_coordinate)
                 evidence.append(
@@ -194,26 +199,13 @@ def _mechanics_compatibility(
     return CurrentMechanicsCompatibility.UNEVALUATED
 
 
-def _ldraw_point_to_canonical(point: Point3, frame: PartLocalFrame) -> Point3:
-    ldraw_x, ldraw_y, ldraw_z = point
-    if frame.ldraw_long_axis == "x":
-        return (
-            ldraw_x / 20.0 + frame.length_studs / 2,
-            ldraw_z / 20.0 + frame.width_studs / 2,
-            frame.height_plates - ldraw_y / 8.0,
-        )
-    return (
-        ldraw_z / 20.0 + frame.length_studs / 2,
-        ldraw_x / 20.0 + frame.width_studs / 2,
-        frame.height_plates - ldraw_y / 8.0,
-    )
-
-
-def _ldraw_direction_to_canonical(vector: Point3, frame: PartLocalFrame) -> CanonicalDirection:
+def _ldraw_direction_to_canonical(
+    vector: Point3, source_frame: LDrawSourceFrame
+) -> CanonicalDirection:
     ldraw_x, ldraw_y, ldraw_z = vector
     canonical = (
-        ldraw_x if frame.ldraw_long_axis == "x" else ldraw_z,
-        ldraw_z if frame.ldraw_long_axis == "x" else ldraw_x,
+        ldraw_x if source_frame.long_axis == "x" else ldraw_z,
+        ldraw_z if source_frame.long_axis == "x" else ldraw_x,
         -ldraw_y,
     )
     non_zero_axes = [index for index, value in enumerate(canonical) if value != 0.0]
