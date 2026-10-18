@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isclose
+from types import MappingProxyType
 from typing import Literal
 
 LDU_PER_STUD = 20.0
@@ -21,12 +22,49 @@ LongAxis = Literal["x", "z"]
 
 @dataclass(frozen=True, slots=True)
 class PartLocalFrame:
-    """The catalogue dimensions and authoritative LDraw long axis for one part."""
+    """The catalogue dimensions used by application-local placement rotation."""
 
     length_studs: int
     width_studs: int
     height_plates: int
-    ldraw_long_axis: LongAxis
+
+
+@dataclass(frozen=True, slots=True)
+class LDrawSourceFrame:
+    """The verified mapping from one LDraw part source to application-local space."""
+
+    part_id: str
+    ldraw_id: str
+    long_axis: LongAxis
+    ldraw_origin_in_part_local: Point3
+
+
+_LDRAW_SOURCE_FRAMES = (
+    LDrawSourceFrame("3001", "3001", "x", (2.0, 1.0, 3.0)),
+    LDrawSourceFrame("3002", "3002", "x", (1.5, 1.0, 3.0)),
+    LDrawSourceFrame("3003", "3003", "x", (1.0, 1.0, 3.0)),
+    LDrawSourceFrame("3010", "3010", "x", (2.0, 0.5, 3.0)),
+    LDrawSourceFrame("3020", "3020", "x", (2.0, 1.0, 1.0)),
+    LDrawSourceFrame("3021", "3021", "x", (1.5, 1.0, 1.0)),
+    LDrawSourceFrame("3022", "3022", "x", (1.0, 1.0, 1.0)),
+    LDrawSourceFrame("3023", "3023b", "x", (1.0, 0.5, 1.0)),
+    LDrawSourceFrame("4286", "4286", "z", (2.5, 0.5, 3.0)),
+    LDrawSourceFrame("15068", "15068", "x", (1.0, 1.0, 2.0)),
+    LDrawSourceFrame("41769", "41769a", "z", (2.0, 1.0, 1.0)),
+    LDrawSourceFrame("41770", "41770a", "z", (2.0, 1.0, 1.0)),
+)
+
+LDRAW_SOURCE_FRAME_BY_PART_ID = MappingProxyType(
+    {frame.part_id: frame for frame in _LDRAW_SOURCE_FRAMES}
+)
+
+
+def ldraw_source_frame(part_id: str) -> LDrawSourceFrame:
+    """Return the one verified LDraw source frame for a checked-in part."""
+    try:
+        return LDRAW_SOURCE_FRAME_BY_PART_ID[part_id]
+    except KeyError as error:
+        raise ValueError(f"No verified LDraw source frame for part {part_id!r}.") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,35 +80,38 @@ class StandardStudGridPosition:
     z: int
 
 
-def ldraw_to_part_local(point: Point3, frame: PartLocalFrame) -> Point3:
+def ldraw_to_part_local(point: Point3, source_frame: LDrawSourceFrame) -> Point3:
     """Convert a continuous LDraw point to the canonical local stud/plate frame.
 
     The canonical origin is the lower-left footprint corner at the part's
-    bottom plane.  ``x`` follows catalogue length, ``y`` follows catalogue
-    width, and ``z`` increases upwards in plate units.  The LDraw origin is
-    centred horizontally and its top surface is at LDraw y=0.
+    bottom plane. ``x`` follows catalogue length, ``y`` follows catalogue
+    width, and ``z`` increases upwards in plate units. The part-specific
+    source frame explicitly locates LDraw ``(0, 0, 0)`` in that coordinate
+    system; it is not inferred from visual-mesh bounds or catalogue dimensions.
     """
     ldraw_x, ldraw_y, ldraw_z = point
-    if frame.ldraw_long_axis == "x":
-        local_x = ldraw_x / LDU_PER_STUD + frame.length_studs / 2
-        local_y = ldraw_z / LDU_PER_STUD + frame.width_studs / 2
+    origin_x, origin_y, origin_z = source_frame.ldraw_origin_in_part_local
+    if source_frame.long_axis == "x":
+        local_x = origin_x + ldraw_x / LDU_PER_STUD
+        local_y = origin_y + ldraw_z / LDU_PER_STUD
     else:
-        local_x = ldraw_z / LDU_PER_STUD + frame.length_studs / 2
-        local_y = ldraw_x / LDU_PER_STUD + frame.width_studs / 2
-    local_z = frame.height_plates - ldraw_y / LDU_PER_PLATE
+        local_x = origin_x + ldraw_z / LDU_PER_STUD
+        local_y = origin_y + ldraw_x / LDU_PER_STUD
+    local_z = origin_z - ldraw_y / LDU_PER_PLATE
     return (local_x, local_y, local_z)
 
 
-def part_local_to_ldraw(point: Point3, frame: PartLocalFrame) -> Point3:
+def part_local_to_ldraw(point: Point3, source_frame: LDrawSourceFrame) -> Point3:
     """Invert :func:`ldraw_to_part_local` without snapping or rounding."""
     local_x, local_y, local_z = point
-    if frame.ldraw_long_axis == "x":
-        ldraw_x = (local_x - frame.length_studs / 2) * LDU_PER_STUD
-        ldraw_z = (local_y - frame.width_studs / 2) * LDU_PER_STUD
+    origin_x, origin_y, origin_z = source_frame.ldraw_origin_in_part_local
+    if source_frame.long_axis == "x":
+        ldraw_x = (local_x - origin_x) * LDU_PER_STUD
+        ldraw_z = (local_y - origin_y) * LDU_PER_STUD
     else:
-        ldraw_z = (local_x - frame.length_studs / 2) * LDU_PER_STUD
-        ldraw_x = (local_y - frame.width_studs / 2) * LDU_PER_STUD
-    ldraw_y = (frame.height_plates - local_z) * LDU_PER_PLATE
+        ldraw_z = (local_x - origin_x) * LDU_PER_STUD
+        ldraw_x = (local_y - origin_y) * LDU_PER_STUD
+    ldraw_y = (origin_z - local_z) * LDU_PER_PLATE
     return (ldraw_x, ldraw_y, ldraw_z)
 
 
@@ -103,8 +144,10 @@ def standard_stud_grid_coordinate(point: Point3) -> StandardStudGridPosition | N
     snapped_x = _half_integer_if_close(x)
     snapped_y = _half_integer_if_close(y)
     snapped_z = round(z)
-    if snapped_x is None or snapped_y is None or not isclose(
-        z, snapped_z, abs_tol=STANDARD_STUD_GRID_TOLERANCE
+    if (
+        snapped_x is None
+        or snapped_y is None
+        or not isclose(z, snapped_z, abs_tol=STANDARD_STUD_GRID_TOLERANCE)
     ):
         return None
     return StandardStudGridPosition(snapped_x, snapped_y, snapped_z)

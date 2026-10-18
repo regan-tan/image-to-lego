@@ -15,14 +15,9 @@ from app.conversion.ldraw_importer import (
     referenced_source_files,
     write_geometry_asset,
 )
+from app.conversion.part_coordinates import ldraw_source_frame
 
-PARTS = (
-    ("3001", "3001.dat", "x"),
-    ("4286", "4286.dat", "z"),
-    ("15068", "15068.dat", "x"),
-    ("41769", "41769a.dat", "z"),
-    ("41770", "41770a.dat", "z"),
-)
+PART_IDS = ("3001", "4286", "15068", "41769", "41770")
 
 
 def main() -> None:
@@ -38,12 +33,13 @@ def main() -> None:
     library_root = arguments.library_root.resolve()
 
     started = perf_counter()
-    for part_id, source_file, long_axis in PARTS:
+    for part_id in PART_IDS:
+        source_frame = ldraw_source_frame(part_id)
+        source_file = f"{source_frame.ldraw_id}.dat"
         geometry = import_part_geometry(
             library_root,
-            part_id=part_id,
             source_file=source_file,
-            long_axis=long_axis,
+            source_frame=source_frame,
         )
         write_geometry_asset(geometry, arguments.output_directory / f"{part_id}.json")
         if arguments.source_evidence_directory is not None:
@@ -53,7 +49,7 @@ def main() -> None:
                 )
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 copyfile(source_path, destination)
-    print(f"Generated {len(PARTS)} assets in {perf_counter() - started:.3f}s.")
+    print(f"Generated {len(PART_IDS)} assets in {perf_counter() - started:.3f}s.")
 
 
 if __name__ == "__main__":

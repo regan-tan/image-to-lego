@@ -34,7 +34,7 @@ from app.conversion.mechanical_connectors import (
     validate_source_backed_top_studs,
 )
 from app.conversion.part_catalogue import PART_BY_ID
-from app.conversion.part_coordinates import PartLocalFrame
+from app.conversion.part_coordinates import ldraw_source_frame
 
 SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "part_geometry" / "ldraw_source"
 CALIBRATION_IDS = ("3001", "3002", "3003", "3010", "3020", "3021", "3022", "3023")
@@ -99,7 +99,7 @@ def test_calibration_top_studs_exactly_agree_with_authoritative_source_evidence(
             SOURCE_DIRECTORY,
             part_id=part.part_id,
             source_file=f"{part.ldraw_id}.dat",
-            frame=PartLocalFrame(part.length_studs, part.width_studs, part.height_plates, "x"),
+            source_frame=ldraw_source_frame(part.part_id),
             part_family=part.family,
         )
         validate_source_backed_top_studs(metadata, evidence)

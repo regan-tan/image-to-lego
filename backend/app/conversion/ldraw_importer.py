@@ -8,6 +8,8 @@ from json import dumps
 from math import isfinite
 from pathlib import Path
 
+from app.conversion.part_coordinates import LDrawSourceFrame
+
 LDU_PER_STUD = 20.0
 LDU_PER_PLATE = 8.0
 MAX_REFERENCE_DEPTH = 64
@@ -48,14 +50,10 @@ ORIGIN: Point = (0.0, 0.0, 0.0)
 def import_part_geometry(
     library_root: Path,
     *,
-    part_id: str,
     source_file: str,
-    long_axis: str,
+    source_frame: LDrawSourceFrame,
 ) -> ImportedPartGeometry:
     """Resolve one LDraw part and normalize it to the application's LEGO grid space."""
-    if long_axis not in {"x", "z"}:
-        raise LDrawImportError("The part's LDraw long axis must be x or z.")
-
     root = library_root.resolve()
     source_path = _resolve_reference(root, root / "parts" / source_file, source_file)
     triangles: list[tuple[Point, Point, Point]] = []
@@ -63,7 +61,11 @@ def import_part_geometry(
     if not triangles:
         raise LDrawImportError(f"{source_file} does not contain any surface triangles.")
 
-    points = [_normalize_point(point, long_axis) for triangle in triangles for point in triangle]
+    points = [
+        _normalize_point(point, source_frame.long_axis)
+        for triangle in triangles
+        for point in triangle
+    ]
     minimum: Point = (
         min(point[0] for point in points),
         min(point[1] for point in points),
@@ -84,7 +86,7 @@ def import_part_geometry(
     positions = tuple(value for point in normalized for value in point)
     indices = tuple(range(len(normalized)))
     return ImportedPartGeometry(
-        part_id=part_id,
+        part_id=source_frame.part_id,
         positions=positions,
         indices=indices,
         minimum=(0.0, 0.0, 0.0),
@@ -202,9 +204,7 @@ def _read_file(
             )
 
 
-def _parse_reference(
-    fields: list[str], path: Path, line_number: int
-) -> tuple[Point, Matrix, str]:
+def _parse_reference(fields: list[str], path: Path, line_number: int) -> tuple[Point, Matrix, str]:
     if len(fields) < 15:
         raise LDrawImportError(f"Invalid type 1 record at {path.name}:{line_number}")
     values = _float_values(fields[2:14], path, line_number)
@@ -225,8 +225,7 @@ def _parse_surface(fields: list[str], path: Path, line_number: int) -> tuple[Poi
         raise LDrawImportError(f"Invalid type {fields[0]} record at {path.name}:{line_number}")
     values = _float_values(fields[2:], path, line_number)
     return tuple(
-        (values[index], values[index + 1], values[index + 2])
-        for index in range(0, len(values), 3)
+        (values[index], values[index + 1], values[index + 2]) for index in range(0, len(values), 3)
     )
 
 

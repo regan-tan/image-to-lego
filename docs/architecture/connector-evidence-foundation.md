@@ -32,8 +32,10 @@ property.
 For every nested LDraw reference, the extractor composes the child affine
 transform with its parent: `translation = parent_translation +
 parent_matrix * child_translation`; `matrix = parent_matrix * child_matrix`.
-Only then does it convert the continuous point and direction to the canonical
-part-local frame. No coordinate is snapped to the rectangular stud grid.
+Only then does it convert the continuous point and direction through that
+part's explicit `LDrawSourceFrame` to the canonical part-local frame. The
+source anchor is independent from application placement rotation. No coordinate
+is snapped to the rectangular stud grid.
 
 The standard rectangular grid remains only a narrow diagnostic. Current
 `stud-connectivity-v1` is potentially compatible solely with an upward

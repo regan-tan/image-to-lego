@@ -11,22 +11,23 @@ from app.conversion.connector_evidence import (
     classify_source_primitive,
     extract_connector_evidence,
 )
-from app.conversion.part_coordinates import PartLocalFrame
+from app.conversion.part_coordinates import LDrawSourceFrame, ldraw_source_frame
 
 SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "part_geometry" / "ldraw_source"
-BRICK_3001 = PartLocalFrame(4, 2, 3, "x")
-WEDGE = PartLocalFrame(4, 2, 1, "z")
-CURVED_SLOPE = PartLocalFrame(2, 2, 2, "x")
+EXAMPLE_SOURCE_FRAME = LDrawSourceFrame("example", "root", "x", (2.0, 1.0, 3.0))
+BRICK_3001 = ldraw_source_frame("3001")
+WEDGE = ldraw_source_frame("41770")
+CURVED_SLOPE = ldraw_source_frame("15068")
 
 CALIBRATION_PARTS = (
-    ("3001", "3001.dat", PartLocalFrame(4, 2, 3, "x"), "brick", 8, 3, 0),
-    ("3002", "3002.dat", PartLocalFrame(3, 2, 3, "x"), "brick", 6, 2, 0),
-    ("3003", "3003.dat", PartLocalFrame(2, 2, 3, "x"), "brick", 4, 1, 0),
-    ("3010", "3010.dat", PartLocalFrame(4, 1, 3, "x"), "brick", 4, 0, 3),
-    ("3020", "3020.dat", PartLocalFrame(4, 2, 1, "x"), "plate", 8, 3, 0),
-    ("3021", "3021.dat", PartLocalFrame(3, 2, 1, "x"), "plate", 6, 2, 0),
-    ("3022", "3022.dat", PartLocalFrame(2, 2, 1, "x"), "plate", 4, 1, 0),
-    ("3023", "3023b.dat", PartLocalFrame(2, 1, 1, "x"), "plate", 2, 0, 1),
+    ("3001", "3001.dat", ldraw_source_frame("3001"), "brick", 8, 3, 0),
+    ("3002", "3002.dat", ldraw_source_frame("3002"), "brick", 6, 2, 0),
+    ("3003", "3003.dat", ldraw_source_frame("3003"), "brick", 4, 1, 0),
+    ("3010", "3010.dat", ldraw_source_frame("3010"), "brick", 4, 0, 3),
+    ("3020", "3020.dat", ldraw_source_frame("3020"), "plate", 8, 3, 0),
+    ("3021", "3021.dat", ldraw_source_frame("3021"), "plate", 6, 2, 0),
+    ("3022", "3022.dat", ldraw_source_frame("3022"), "plate", 4, 1, 0),
+    ("3023", "3023b.dat", ldraw_source_frame("3023"), "plate", 2, 0, 1),
 )
 
 
@@ -42,7 +43,7 @@ def extract_fake(root: Path) -> tuple[Any, ...]:
         root,
         part_id="example",
         source_file="root.dat",
-        frame=BRICK_3001,
+        source_frame=EXAMPLE_SOURCE_FRAME,
         part_family="brick",
     )
 
@@ -146,7 +147,7 @@ def test_3001_extracts_eight_upward_male_studs_and_three_underside_rings() -> No
         SOURCE_DIRECTORY,
         part_id="3001",
         source_file="3001.dat",
-        frame=BRICK_3001,
+        source_frame=BRICK_3001,
         part_family="brick",
     )
 
@@ -189,14 +190,14 @@ def test_calibration_parts_have_deterministic_source_backed_connector_evidence()
             SOURCE_DIRECTORY,
             part_id=part_id,
             source_file=source_file,
-            frame=frame,
+            source_frame=frame,
             part_family=family,
         )
         second = extract_connector_evidence(
             SOURCE_DIRECTORY,
             part_id=part_id,
             source_file=source_file,
-            frame=frame,
+            source_frame=frame,
             part_family=family,
         )
 
@@ -224,19 +225,20 @@ def test_calibration_parts_have_deterministic_source_backed_connector_evidence()
             for item in male_studs
         )
 
+
 def test_wedge_reflection_keeps_stud4_at_the_same_vertical_level() -> None:
     left = extract_connector_evidence(
         SOURCE_DIRECTORY,
         part_id="41770",
         source_file="41770a.dat",
-        frame=WEDGE,
+        source_frame=WEDGE,
         part_family="wedge_plate",
     )
     right = extract_connector_evidence(
         SOURCE_DIRECTORY,
         part_id="41769",
         source_file="41769a.dat",
-        frame=WEDGE,
+        source_frame=ldraw_source_frame("41769"),
         part_family="wedge_plate",
     )
     left_ring = next(
@@ -261,7 +263,7 @@ def test_15068_small_underside_stud_tubes_are_not_top_studs() -> None:
         SOURCE_DIRECTORY,
         part_id="15068",
         source_file="15068.dat",
-        frame=CURVED_SLOPE,
+        source_frame=CURVED_SLOPE,
         part_family="curved_slope",
     )
 
@@ -284,15 +286,43 @@ def test_output_is_deterministic() -> None:
         SOURCE_DIRECTORY,
         part_id="41770",
         source_file="41770a.dat",
-        frame=WEDGE,
+        source_frame=WEDGE,
         part_family="wedge_plate",
     )
     second = extract_connector_evidence(
         SOURCE_DIRECTORY,
         part_id="41770",
         source_file="41770a.dat",
-        frame=WEDGE,
+        source_frame=WEDGE,
         part_family="wedge_plate",
     )
 
     assert first == second
+
+
+def test_4286_evidence_uses_its_verified_off_center_source_anchor() -> None:
+    evidence = extract_connector_evidence(
+        SOURCE_DIRECTORY,
+        part_id="4286",
+        source_file="4286.dat",
+        source_frame=ldraw_source_frame("4286"),
+        part_family="slope_33",
+    )
+
+    top_stud = next(
+        item for item in evidence if item.feature_kind == ConnectorFeatureKind.MALE_STUD
+    )
+    underside_tube = next(
+        item
+        for item in evidence
+        if item.feature_kind == ConnectorFeatureKind.UNDERSIDE_SMALL_STUD_TUBE
+    )
+    assert (top_stud.ldraw_coordinate, top_stud.canonical_coordinate) == (
+        (0.0, 0.0, 0.0),
+        (2.5, 0.5, 3.0),
+    )
+    assert (underside_tube.ldraw_coordinate, underside_tube.canonical_coordinate) == (
+        (0.0, 20.0, -30.0),
+        (1.0, 0.5, 0.5),
+    )
+    assert top_stud.current_mechanics_compatibility == CurrentMechanicsCompatibility.UNEVALUATED
