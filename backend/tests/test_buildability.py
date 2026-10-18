@@ -13,6 +13,7 @@ from app.conversion.buildability import (
     analyze_buildability,
     analyze_instruction_precedence,
     analyze_vertical_insertion_accessibility,
+    directly_supports,
     generate_instruction_steps,
     order_placements_for_instructions,
     validate_instruction_steps,
@@ -37,6 +38,31 @@ def placement(
     orientation: int = 0,
 ) -> BrickPlacement:
     return BrickPlacement(part, GridPosition(x, y, z), orientation)
+
+
+def _legacy_direct_supports(lower: BrickPlacement, upper: BrickPlacement) -> bool:
+    """Test-only copy of the former rectangular-overlap support predicate."""
+    if (
+        lower.brick_type.shape != "rectangular"
+        or upper.brick_type.shape != "rectangular"
+        or lower.brick_type.family not in {"brick", "plate"}
+        or upper.brick_type.family not in {"brick", "plate"}
+        or lower.position.z + lower.brick_type.height_plates != upper.position.z
+    ):
+        return False
+    return bool(_legacy_stud_footprint(lower) & _legacy_stud_footprint(upper))
+
+
+def _legacy_stud_footprint(placement: BrickPlacement) -> frozenset[tuple[int, int]]:
+    length = placement.brick_type.length_studs
+    width = placement.brick_type.width_studs
+    if placement.orientation_degrees in (90, 270):
+        length, width = width, length
+    return frozenset(
+        (placement.position.x + x, placement.position.y + y)
+        for x in range(length)
+        for y in range(width)
+    )
 
 
 def test_full_2x4_overlap_counts_all_stud_connections() -> None:
@@ -139,6 +165,40 @@ def test_buildability_graph_output_is_deterministic() -> None:
     )
 
     assert analyze_buildability(placements) == analyze_buildability(placements)
+
+
+def test_connector_support_exactly_matches_legacy_rectangular_predicate() -> None:
+    calibration_parts = ("3001", "3002", "3003", "3010", "3020", "3021", "3022", "3023")
+    offsets = (-1, 0, 3, 4)
+    for lower_part_id in calibration_parts:
+        for upper_part_id in calibration_parts:
+            for lower_orientation in (0, 90, 180, 270):
+                for upper_orientation in (0, 90, 180, 270):
+                    for x_offset in offsets:
+                        for y_offset in offsets:
+                            lower = placement(
+                                PART_BY_ID[lower_part_id], orientation=lower_orientation
+                            )
+                            upper_z = lower.brick_type.height_plates
+                            upper = placement(
+                                PART_BY_ID[upper_part_id],
+                                x=x_offset,
+                                y=y_offset,
+                                z=upper_z,
+                                orientation=upper_orientation,
+                            )
+                            assert _legacy_direct_supports(lower, upper) == directly_supports(
+                                lower, upper
+                            )
+                            for vertical_offset in (-1, 1):
+                                shifted_upper = placement(
+                                    PART_BY_ID[upper_part_id],
+                                    x=x_offset,
+                                    y=y_offset,
+                                    z=upper_z + vertical_offset,
+                                    orientation=upper_orientation,
+                                )
+                                assert analyze_buildability((lower, shifted_upper)).edges == ()
 
 
 def test_instruction_order_places_a_simple_stack_from_lower_to_upper() -> None:
