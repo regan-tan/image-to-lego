@@ -23,6 +23,21 @@ def test_15068_external_ids_are_explicit() -> None:
     assert not slope.supports_color_id("ldraw:999")
 
 
+def test_calibration_parts_use_their_authoritative_ldraw_roots() -> None:
+    assert {part_id: PART_BY_ID[part_id].ldraw_id for part_id in (
+        "3001", "3002", "3003", "3010", "3020", "3021", "3022", "3023"
+    )} == {
+        "3001": "3001",
+        "3002": "3002",
+        "3003": "3003",
+        "3010": "3010",
+        "3020": "3020",
+        "3021": "3021",
+        "3022": "3022",
+        "3023": "3023b",
+    }
+
+
 def test_wedge_plate_external_ids_keep_catalogue_and_visual_identities_distinct() -> None:
     right = PART_BY_ID["41769"]
     left = PART_BY_ID["41770"]

@@ -85,13 +85,12 @@ references that map to `(0.5..3.5, 0.5, 1)`; 41769's mirrored source maps to
 standard rectangular stud grid, so the current fitter can represent them.
 
 The shared `s\\41770as01.dat` subpart explicitly references `stud4.dat` at
-`(0, 4, 20)` with transform `(-1,0,0; 0,-1,0; 0,0,1)`. In 41770 its canonical
-reference location is `(3, 1, 0.5)`; 41769 applies its outer x/y mirror, giving
-source location `(0, -4, 20)` and canonical `(3, 1, 1.5)`. Thus the previous
-diagnostic `(3, 1, 1)` is not the center of this explicit source primitive: it
-is the intervening LDraw `y=0` plane. The primitive is genuine source-backed
-stud geometry, but neither continuous location is on the standard rectangular
-stud grid, so neither is currently mechanically evaluated.
+`(0, 4, 20)` with transform `(-1,0,0; 0,-1,0; 0,0,1)`. Both 41770 and 41769
+resolve that full ring/tube at canonical `(3, 1, 0.5)`. Thus the previous
+41769 diagnostic at `(3, 1, 1.5)` was not the center of this explicit source
+primitive. The primitive is genuine source-backed stud geometry, but its
+continuous location is not on the standard rectangular stud grid, so it is not
+currently mechanically evaluated.
 
 The shared subpart's end tube/lip reference around `(0, 8, -20)` maps to
 `(1, 1, 0)` and its centre tube/lip around `(0, 8, 0)` maps to `(2, 1, 0)`;

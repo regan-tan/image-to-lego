@@ -18,6 +18,17 @@ BRICK_3001 = PartLocalFrame(4, 2, 3, "x")
 WEDGE = PartLocalFrame(4, 2, 1, "z")
 CURVED_SLOPE = PartLocalFrame(2, 2, 2, "x")
 
+CALIBRATION_PARTS = (
+    ("3001", "3001.dat", PartLocalFrame(4, 2, 3, "x"), "brick", 8, 3, 0),
+    ("3002", "3002.dat", PartLocalFrame(3, 2, 3, "x"), "brick", 6, 2, 0),
+    ("3003", "3003.dat", PartLocalFrame(2, 2, 3, "x"), "brick", 4, 1, 0),
+    ("3010", "3010.dat", PartLocalFrame(4, 1, 3, "x"), "brick", 4, 0, 3),
+    ("3020", "3020.dat", PartLocalFrame(4, 2, 1, "x"), "plate", 8, 3, 0),
+    ("3021", "3021.dat", PartLocalFrame(3, 2, 1, "x"), "plate", 6, 2, 0),
+    ("3022", "3022.dat", PartLocalFrame(2, 2, 1, "x"), "plate", 4, 1, 0),
+    ("3023", "3023b.dat", PartLocalFrame(2, 1, 1, "x"), "plate", 2, 0, 1),
+)
+
 
 def write_ldraw_file(root: Path, relative_path: str, content: str) -> None:
     path = root / relative_path
@@ -163,6 +174,55 @@ def test_3001_extracts_eight_upward_male_studs_and_three_underside_rings() -> No
         for item in rings
     )
 
+
+def test_calibration_parts_have_deterministic_source_backed_connector_evidence() -> None:
+    for (
+        part_id,
+        source_file,
+        frame,
+        family,
+        expected_male_studs,
+        expected_rings,
+        expected_small_tubes,
+    ) in CALIBRATION_PARTS:
+        first = extract_connector_evidence(
+            SOURCE_DIRECTORY,
+            part_id=part_id,
+            source_file=source_file,
+            frame=frame,
+            part_family=family,
+        )
+        second = extract_connector_evidence(
+            SOURCE_DIRECTORY,
+            part_id=part_id,
+            source_file=source_file,
+            frame=frame,
+            part_family=family,
+        )
+
+        male_studs = [item for item in first if item.feature_kind == ConnectorFeatureKind.MALE_STUD]
+        rings = [
+            item for item in first if item.feature_kind == ConnectorFeatureKind.UNDERSIDE_RING_TUBE
+        ]
+        small_tubes = [
+            item
+            for item in first
+            if item.feature_kind == ConnectorFeatureKind.UNDERSIDE_SMALL_STUD_TUBE
+        ]
+
+        assert first == second
+        assert len(male_studs) == expected_male_studs
+        assert len(rings) == expected_rings
+        assert len(small_tubes) == expected_small_tubes
+        assert all(item.direction == CanonicalDirection.POSITIVE_Z for item in male_studs)
+        assert all(
+            item.direction == CanonicalDirection.NEGATIVE_Z for item in (*rings, *small_tubes)
+        )
+        assert all(item.on_standard_rectangular_stud_grid for item in male_studs)
+        assert all(
+            item.current_mechanics_compatibility == CurrentMechanicsCompatibility.COMPATIBLE
+            for item in male_studs
+        )
 
 def test_wedge_reflection_keeps_stud4_at_the_same_vertical_level() -> None:
     left = extract_connector_evidence(

@@ -1,0 +1,10 @@
+0 Stud Tube Solid Group  1 x  3
+0 Name: stug3-1x3.dat
+0 !LDRAW_ORG Primitive UPDATE 2012-02
+0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt
+
+0 BFC CERTIFY CCW
+
+1 16 -20 0 0 1 0 0 0 1 0 0 0 1 stud3.dat
+1 16 0 0 0 1 0 0 0 1 0 0 0 1 stud3.dat
+1 16 20 0 0 1 0 0 0 1 0 0 0 1 stud3.dat
