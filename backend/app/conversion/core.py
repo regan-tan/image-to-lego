@@ -261,6 +261,7 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
         locked_slope_cells,
         BRICK_CATALOGUE,
         target_parts=settings.target_parts,
+        locked_placements=locked_slopes,
     )
     scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
     refined_placements = packing.placements
@@ -276,7 +277,7 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
             nonlocal best_fidelity
             from app.conversion.buildability import analyze_buildability
 
-            if analyze_buildability(candidate).unsupported_placement_count:
+            if analyze_buildability(baseline_slopes + candidate).unsupported_placement_count:
                 return False
             candidate_fidelity = _fidelity_for_placements(
                 scaled_vertices, faces, baseline_slopes + candidate, settings.target_parts
@@ -314,6 +315,10 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
         baseline.metadata.grid_size,
     )
     placements = baseline_slopes + colored_rectangles
+    from app.conversion.buildability import analyze_buildability
+
+    if analyze_buildability(placements).unsupported_placement_count:
+        raise ConversionError("surface-grid-v4 produced an unsupported evaluated placement.")
     dimensions = _model_dimensions(placements)
     occupied_cell_count = len(
         {cell for placement in colored_rectangles for cell in _placement_cells(placement)}

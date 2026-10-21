@@ -27,7 +27,15 @@ The [mechanical connector metadata](mechanical-connector-metadata.md) defines
 the calibrated `vertical-stud-v1` representation. Production
 `stud-connectivity-v1` buildability resolves verified metadata, transforms it
 to world coordinates, and uses the generic matcher to create direct support
-edges. The public buildability semantics and version remain unchanged.
+edges. surface-grid-v4 first preserves its ordinary rectangular CP-SAT result.
+If a verified locked receiver is unsupported, it runs a deterministic bounded
+local replacement over only affected rectangles: frozen verified structure can
+act as support anchors, every selected rectangle remains directly supported,
+and local selected parts are capped relative to the mutable baseline,
+unsupported consumers, and boundary contacts. Mechanically unevaluated locked
+wedges do not become support consumers or producers. The complete final model
+is checked with `stud-connectivity-v1`; its public semantics and version remain
+unchanged.
 
 Runtime dependencies point inward:
 
