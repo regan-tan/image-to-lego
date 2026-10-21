@@ -7,6 +7,12 @@ from ortools.sat.python import cp_model
 import app.conversion.surface_grid_v4 as surface_grid_v4
 from app.conversion import core
 from app.conversion.buildability import analyze_buildability
+from app.conversion.mechanical_connectors import (
+    MechanicalInterfaceKind,
+    resolve_part_mechanical_metadata,
+    transform_connector_to_world,
+)
+from app.conversion.part_catalogue import PART_BY_ID
 from app.conversion.surface_grid_v4 import (
     SolverStage,
     V4SolveFailure,
@@ -26,6 +32,10 @@ def _one_by_one_plate() -> core.BrickType:
         and part.width_studs == 1
         and part.height_plates == 1
     )
+
+
+def _slope_4286(*, x: int = 0, y: int = 0, z: int = 1, orientation: int = 0) -> core.BrickPlacement:
+    return core.BrickPlacement(PART_BY_ID["4286"], core.GridPosition(x, y, z), orientation)
 
 
 def _required(cells: set[core.GridPosition]) -> set[tuple[str, int, int]]:
@@ -139,6 +149,315 @@ def test_v4_selects_directly_supported_placement() -> None:
 
     assert any(placement.position.z > 0 for placement in result.placements)
     assert analyze_buildability(result.placements).unsupported_placement_count == 0
+
+
+@pytest.mark.parametrize("support_x", (0, 1, 2))
+def test_locked_4286_requires_one_real_receiver_aligned_rectangular_support(
+    support_x: int,
+) -> None:
+    lower_cell = core.GridPosition(support_x, 0, 0)
+    slope = _slope_4286()
+
+    result = solve_surface_grid_v4(
+        {lower_cell},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    assert [placement.position for placement in result.placements] == [lower_cell]
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_locked_4286_can_select_any_of_several_real_rectangular_supporters() -> None:
+    lower_cells = {core.GridPosition(x, 0, 0) for x in range(3)}
+    slope = _slope_4286()
+
+    result = solve_surface_grid_v4(
+        lower_cells,
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    assert len(result.placements) == 1
+    assert result.placements[0].position in lower_cells
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_valid_locked_baseline_is_an_exact_repair_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lower_cell = core.GridPosition(0, 0, 0)
+    slope = _slope_4286()
+    baseline = solve_surface_grid_v4(
+        {lower_cell},
+        _required({lower_cell}),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+    )
+
+    def fail_if_repair_runs(*_: object) -> object:
+        pytest.fail("A mechanically valid baseline must not build a repair model.")
+
+    monkeypatch.setattr(surface_grid_v4, "_solve_support_repair", fail_if_repair_runs)
+    result = solve_surface_grid_v4(
+        {lower_cell},
+        _required({lower_cell}),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    assert result.placements == baseline.placements
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_local_repair_adds_support_without_replacing_an_unrelated_baseline_placement() -> None:
+    supporter_cell = core.GridPosition(0, 0, 0)
+    baseline_cell = core.GridPosition(10, 0, 0)
+    slope = _slope_4286()
+
+    result = solve_surface_grid_v4(
+        {supporter_cell, baseline_cell},
+        _required({baseline_cell}),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    assert {placement.position for placement in result.placements} == {
+        supporter_cell,
+        baseline_cell,
+    }
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_compact_local_repair_stays_within_its_derived_part_bound() -> None:
+    slope = _slope_4286()
+
+    result = solve_surface_grid_v4(
+        {core.GridPosition(0, 0, 0)},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    component = result.repair_diagnostics.components[0]
+    assert component.selected_repair_count == 1
+    assert component.allowed_repair_count == 2
+    assert component.maximum_support_chain_depth == 1
+    assert [stage.status for stage in component.solver_stages] == ["OPTIMAL", "OPTIMAL", "OPTIMAL"]
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_local_repair_rejects_a_support_chain_that_exceeds_its_derived_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slope = _slope_4286(z=10)
+    chain_cells = {core.GridPosition(0, 0, z) for z in range(10)}
+
+    with pytest.raises(V4SolveFailure, match="local part bound"):
+        solve_surface_grid_v4(
+            chain_cells,
+            (),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+            locked_placements=(slope,),
+        )
+
+    monkeypatch.setattr(surface_grid_v4, "REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER", 10)
+    unrestricted_result = solve_surface_grid_v4(
+        chain_cells,
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    component = unrestricted_result.repair_diagnostics.components[0]
+    assert component.selected_repair_count == 10
+    assert component.maximum_support_chain_depth == 10
+    assert analyze_buildability(
+        (slope, *unrestricted_result.placements)
+    ).unsupported_placement_count == 0
+
+
+def test_one_local_repair_candidate_can_support_overlapping_slope_receiver_sets() -> None:
+    shared_supporter = core.GridPosition(2, 0, 0)
+    baseline_cell = core.GridPosition(10, 0, 0)
+    lower_slope = _slope_4286()
+    adjacent_slope = _slope_4286(x=2)
+
+    result = solve_surface_grid_v4(
+        {shared_supporter, baseline_cell},
+        _required({baseline_cell}),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(lower_slope, adjacent_slope),
+    )
+
+    assert {placement.position for placement in result.placements} == {
+        shared_supporter,
+        baseline_cell,
+    }
+    assert analyze_buildability(
+        (lower_slope, adjacent_slope, *result.placements)
+    ).unsupported_placement_count == 0
+
+
+def test_locked_4286_does_not_accept_bounding_box_overlap_or_the_wrong_vertical_level() -> None:
+    slope = _slope_4286()
+
+    with pytest.raises(V4SolveFailure, match="no possible mechanical supporter"):
+        solve_surface_grid_v4(
+            {core.GridPosition(3, 0, 0)},
+            (),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+            locked_placements=(slope,),
+        )
+
+    with pytest.raises(V4SolveFailure, match="no possible mechanical supporter"):
+        solve_surface_grid_v4(
+            {core.GridPosition(0, 0, 1)},
+            (),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+            locked_placements=(_slope_4286(z=3),),
+        )
+
+
+@pytest.mark.parametrize("orientation", (0, 90, 180, 270))
+def test_locked_4286_receiver_constraint_uses_the_existing_rotation_transform(
+    orientation: int,
+) -> None:
+    slope = _slope_4286(x=10, y=20, orientation=orientation)
+    metadata = resolve_part_mechanical_metadata(slope.brick_type)
+    assert metadata is not None
+    receiver = next(
+        connector
+        for connector in metadata.connectors
+        if connector.interface_kind == MechanicalInterfaceKind.STUD_RECEIVER
+    )
+    world_receiver = transform_connector_to_world(
+        receiver,
+        slope.brick_type,
+        slope.position,
+        slope.orientation_degrees,
+    )
+    lower_cell = core.GridPosition(
+        int(world_receiver.coordinate[0] - 0.5),
+        int(world_receiver.coordinate[1] - 0.5),
+        int(world_receiver.coordinate[2] - 1),
+    )
+
+    result = solve_surface_grid_v4(
+        {lower_cell},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(slope,),
+    )
+
+    assert result.placements[0].position == lower_cell
+    assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_ground_locked_4286_needs_no_lower_rectangular_support() -> None:
+    result = solve_surface_grid_v4(
+        {core.GridPosition(5, 0, 1)},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(_slope_4286(z=1),),
+    )
+
+    assert result.placements == ()
+
+
+def test_locked_verified_placement_can_receive_support_from_another_locked_placement() -> None:
+    lower_slope = _slope_4286(z=0)
+    upper_slope = _slope_4286(x=2, z=3)
+
+    result = solve_surface_grid_v4(
+        {core.GridPosition(10, 0, 0)},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(lower_slope, upper_slope),
+    )
+
+    assert result.placements == ()
+    assert analyze_buildability((lower_slope, upper_slope)).unsupported_placement_count == 0
+
+
+def test_unevaluated_locked_part_does_not_create_a_support_constraint() -> None:
+    wedge = core.BrickPlacement(PART_BY_ID["41769"], core.GridPosition(0, 0, 3), 0)
+
+    result = solve_surface_grid_v4(
+        {core.GridPosition(5, 0, 0)},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(wedge,),
+    )
+
+    assert result.placements == ()
+    assert analyze_buildability((wedge,)).evaluated_placement_count == 0
+
+
+def test_impossible_locked_4286_support_fails_before_producing_a_model() -> None:
+    with pytest.raises(V4SolveFailure, match="no possible mechanical supporter"):
+        solve_surface_grid_v4(
+            {core.GridPosition(10, 0, 0)},
+            (),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+            locked_placements=(_slope_4286(),),
+        )
+
+
+def test_final_v4_buildability_gate_includes_locked_verified_placements() -> None:
+    unrelated_ground = core.BrickPlacement(PART_BY_ID["3020"], core.GridPosition(10, 0, 0), 0)
+    with pytest.raises(V4SolveFailure, match="unsupported evaluated placement"):
+        surface_grid_v4._validate_placements(
+            (),
+            frozenset({core.GridPosition(10, 0, 0)}),
+            (unrelated_ground, _slope_4286()),
+        )
+
+
+def test_final_v4_validation_accepts_a_rectangle_supported_by_locked_4286() -> None:
+    slope = _slope_4286(z=0)
+    upper_plate = core.BrickPlacement(
+        _one_by_one_plate(), core.GridPosition(2, 0, 3), 0
+    )
+
+    surface_grid_v4._validate_placements(
+        (upper_plate,),
+        frozenset({core.GridPosition(2, 0, 0), core.GridPosition(2, 0, 3)}),
+        (slope,),
+    )
 
 
 def test_v4_projection_coverage_is_exact_or_of_occupied_cells() -> None:
@@ -309,6 +628,7 @@ def test_solver_uses_deterministic_work_budgets_without_a_wall_clock_limit(
         def __init__(self) -> None:
             self.parameters = FakeParameters()
             self.objective_value = 1.0
+            self.best_objective_bound = 1.0
 
         def solve(self, model: cp_model.CpModel) -> int:
             return int(cp_model.OPTIMAL)

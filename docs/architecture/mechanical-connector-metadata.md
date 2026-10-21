@@ -1,8 +1,8 @@
 # Mechanical connector metadata
 
-Status: implemented. It backs production direct support-edge construction for
-`stud-connectivity-v1`; it does **not** alter fitter, vertical insertion, API,
-or the frontend.
+Status: implemented. It backs production direct support-edge construction and
+surface-grid-v4 fitting for `stud-connectivity-v1`; it does **not** alter
+vertical insertion, API, or the frontend.
 
 ## Why the model is hybrid
 
@@ -64,6 +64,19 @@ Production support detection resolves only `verified` metadata, transforms the
 lower placement's `male_stud +Z` and upper placement's `stud_receiver -Z` to
 world coordinates, then uses this matcher. Ground support remains the existing
 minimum-placement-z rule and does not require a connector below the model.
+
+surface-grid-v4 keeps fitted slope geometry locked while its ordinary
+rectangular CP-SAT packing remains unchanged. It then deterministically repairs
+an unsupported locked verified receiver only in a local replacement component:
+unaffected baseline rectangles stay frozen and can provide direct connector
+support anchors. The local solver preserves required projection coverage,
+minimizes changed baseline placements and then local part count, and rejects a
+solution whose selected local placements exceed a bound derived from mutable
+baseline placements, unsupported consumers, and frozen boundary contacts.
+Locked geometry and mechanical evaluation are separate: an unevaluated locked
+part adds no invented repair requirement and cannot provide verified support.
+The complete v4 output is checked again with `stud-connectivity-v1` after
+repair and after optional staged wedge refinement.
 
 Validation rejects version mismatches, malformed/non-finite coordinates,
 non-vertical directions, unsupported interface values, duplicate connectors,
