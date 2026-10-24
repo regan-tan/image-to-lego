@@ -36,7 +36,8 @@ export const legoModelSchema = z.object({
     partId: z.string().optional(),
     partName: z.string().optional(),
     shape: z.enum(["rectangular", "slope_33_3x1"]).optional(),
-    geometryAsset: z.string().optional(),
+    // The worker writes null for parts without a bespoke geometry asset.
+    geometryAsset: z.string().nullish().transform((asset) => asset ?? undefined).optional(),
     dimensions: partDimensionsSchema,
     position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
     orientationDegrees: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
