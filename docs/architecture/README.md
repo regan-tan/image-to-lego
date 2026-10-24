@@ -77,6 +77,38 @@ that UUID in the transaction-local `app.current_user_id` PostgreSQL setting, and
 `projects` and `artifacts` enforce the same ownership boundary. The API database role must not own
 the tables or have `BYPASSRLS`.
 
+The one deliberate cross-owner read is `public.existing_project_ids(uuid[])`, a `SECURITY DEFINER`
+function used only by the Blob sweep. It returns which of the given project IDs still exist and no
+other project data. It is revoked from `PUBLIC`, `anon`, and `authenticated` so the browser cannot
+call it through Supabase's REST API, and is granted only to the API role.
+
+## Project deletion and Blob cleanup
+
+Deleting a project and deleting its files are separate steps, because PostgreSQL and Blob Storage
+cannot share a transaction.
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API
+    participant DB as PostgreSQL
+    participant Sweep as Blob sweep (manual)
+    participant Blob as Azure Blob Storage
+
+    Browser->>API: DELETE /api/v1/projects/{projectId}
+    API->>DB: Lock owned project row; reject with 409 if a job is queued/running
+    API->>DB: Delete project (cascades to jobs, runs, artifacts)
+    API-->>Browser: 204 No Content
+    Note over Blob: Files remain but no read URL can be issued for them
+    Sweep->>Blob: List blobs under projects/
+    Sweep->>DB: existing_project_ids(folder IDs)
+    Sweep->>Blob: Delete folders with no project whose blobs are all older than the minimum age
+```
+
+The sweep is idempotent and reports by default; `--delete` performs the deletion. Until it runs, a
+deleted project's private files still exist in the container even though the application can no
+longer serve them.
+
 ## Source-image lifecycle
 
 ```mermaid

@@ -191,6 +191,22 @@ h1 {
   background: var(--color-surface-raised);
 }
 
+.button--compact {
+  min-height: 38px;
+  padding: 0 0.875rem;
+  font-size: 0.875rem;
+}
+
+.button--danger {
+  background: var(--color-error-text);
+  box-shadow: var(--brick-edge-dark);
+}
+
+.button--danger:hover {
+  background: var(--color-error-text);
+  filter: brightness(0.92);
+}
+
 .button:disabled,
 .oauth-button:disabled {
   cursor: not-allowed;

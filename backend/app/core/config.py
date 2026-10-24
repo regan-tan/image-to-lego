@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     reconstruction_max_model_size_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
     reconstruction_source_sas_lifetime_minutes: int = Field(default=25, gt=0)
     reconstruction_http_timeout_seconds: int = Field(default=30, gt=0)
+    # The sweep skips a deleted project's folder until all its blobs are at least this old, so it
+    # never races a browser upload that was granted a SAS just before the project was deleted.
+    blob_sweep_min_age_minutes: int = Field(default=60, gt=0)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     @model_validator(mode="after")

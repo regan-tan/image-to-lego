@@ -10,6 +10,7 @@ from app.core.database import set_database_owner
 from app.domain.jobs import JobStatus
 from app.domain.projects import (
     Project,
+    ProjectDeletion,
     ProjectLegoModel,
     ProjectOverview,
     ProjectReconstruction,
@@ -137,6 +138,54 @@ class SqlAlchemyProjectRepository:
                 {"owner_id": owner_id},
             )
         return [_overview_from_row(row) for row in result.mappings()]
+
+    async def delete_for_owner(self, *, project_id: UUID, owner_id: UUID) -> ProjectDeletion:
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            # Locking the project row first blocks a concurrent job insert (its foreign-key check
+            # needs a key-share lock on this row), so no job can be queued between the active-job
+            # check and the delete.
+            locked = await self._session.execute(
+                text(
+                    """
+                    select id from public.projects
+                    where id = :project_id and owner_id = :owner_id
+                    for update
+                    """
+                ),
+                {"project_id": project_id, "owner_id": owner_id},
+            )
+            if locked.one_or_none() is None:
+                return ProjectDeletion.NOT_FOUND
+
+            active_job = await self._session.execute(
+                text(
+                    """
+                    select 1 from public.jobs
+                    where project_id = :project_id and status in ('queued', 'running')
+                    limit 1
+                    """
+                ),
+                {"project_id": project_id},
+            )
+            if active_job.one_or_none() is not None:
+                return ProjectDeletion.HAS_ACTIVE_JOBS
+
+            # Jobs, run rows, and artifact rows go with the project through ON DELETE CASCADE.
+            # Blob files are left for the Blob sweep (app.workers.blob_sweep).
+            await self._session.execute(
+                text("delete from public.projects where id = :project_id"),
+                {"project_id": project_id},
+            )
+        return ProjectDeletion.DELETED
+
+    async def existing_project_ids(self, *, candidate_ids: list[UUID]) -> set[UUID]:
+        async with self._session.begin():
+            result = await self._session.execute(
+                text("select public.existing_project_ids(:candidate_ids) as id"),
+                {"candidate_ids": candidate_ids},
+            )
+        return {cast(UUID, row["id"]) for row in result.mappings()}
 
 
 def _project_from_row(row: RowMapping) -> Project:

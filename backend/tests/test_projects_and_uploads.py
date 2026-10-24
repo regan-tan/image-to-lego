@@ -10,7 +10,7 @@ from app.api.v1.uploads import get_blob_storage, get_upload_repository
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
 from app.domain.artifacts import Artifact, ArtifactStatus
-from app.domain.projects import Project, ProjectOverview
+from app.domain.projects import Project, ProjectDeletion, ProjectOverview
 from app.main import create_app
 from app.providers.blob_storage import StoredBlobProperties
 from app.repositories.uploads import PendingUploadRejection, PendingUploadResult
@@ -23,6 +23,7 @@ SHA256 = "a" * 64
 class FakeProjectRepository:
     def __init__(self) -> None:
         self.projects: dict[UUID, Project] = {}
+        self.projects_with_active_jobs: set[UUID] = set()
 
     async def create(self, *, owner_id: UUID, name: str) -> Project:
         now = datetime.now(UTC)
@@ -55,6 +56,14 @@ class FakeProjectRepository:
             for project in self.projects.values()
             if project.owner_id == owner_id
         ]
+
+    async def delete_for_owner(self, *, project_id: UUID, owner_id: UUID) -> ProjectDeletion:
+        if await self.get_for_owner(project_id=project_id, owner_id=owner_id) is None:
+            return ProjectDeletion.NOT_FOUND
+        if project_id in self.projects_with_active_jobs:
+            return ProjectDeletion.HAS_ACTIVE_JOBS
+        del self.projects[project_id]
+        return ProjectDeletion.DELETED
 
 
 class FakeUploadRepository:
@@ -226,6 +235,81 @@ async def test_project_name_cannot_be_empty(
     response = await client.post("/api/v1/projects", json={"name": "   "})
     await client.aclose()
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_owner_can_delete_project(
+    api_context: tuple[
+        httpx.AsyncClient,
+        FakeProjectRepository,
+        FakeUploadRepository,
+        FakeBlobStorage,
+    ],
+) -> None:
+    client, projects, _, _ = api_context
+    project = await create_owned_project(projects)
+
+    response = await client.delete(f"/api/v1/projects/{project.id}")
+    detail = await client.get(f"/api/v1/projects/{project.id}")
+    await client.aclose()
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert detail.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_does_not_reveal_missing_or_other_users_projects(
+    api_context: tuple[
+        httpx.AsyncClient,
+        FakeProjectRepository,
+        FakeUploadRepository,
+        FakeBlobStorage,
+    ],
+) -> None:
+    client, projects, _, _ = api_context
+    other_project = await projects.create(owner_id=OTHER_OWNER_ID, name="Other")
+
+    missing = await client.delete(f"/api/v1/projects/{uuid4()}")
+    other_user = await client.delete(f"/api/v1/projects/{other_project.id}")
+    await client.aclose()
+
+    assert missing.status_code == 404
+    assert other_user.status_code == 404
+    assert missing.json() == other_user.json()
+    assert other_project.id in projects.projects
+
+
+@pytest.mark.asyncio
+async def test_project_with_active_job_cannot_be_deleted(
+    api_context: tuple[
+        httpx.AsyncClient,
+        FakeProjectRepository,
+        FakeUploadRepository,
+        FakeBlobStorage,
+    ],
+) -> None:
+    client, projects, _, _ = api_context
+    project = await create_owned_project(projects)
+    projects.projects_with_active_jobs.add(project.id)
+
+    response = await client.delete(f"/api/v1/projects/{project.id}")
+    await client.aclose()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Wait for the current job to finish before deleting this project."
+    )
+    assert project.id in projects.projects
+
+
+@pytest.mark.asyncio
+async def test_delete_project_requires_authentication() -> None:
+    app = create_app(Settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete(f"/api/v1/projects/{uuid4()}")
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

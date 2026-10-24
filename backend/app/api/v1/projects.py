@@ -124,6 +124,29 @@ async def get_project(
     return _project_detail_response(overview)
 
 
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: UUID,
+    owner_id: CurrentOwnerId,
+    repository: ProjectRepositoryDependency,
+) -> None:
+    try:
+        await ProjectService(repository).delete_for_owner(project_id=project_id, owner_id=owner_id)
+    except ApplicationError as error:
+        if error.code == "project_not_found":
+            # Another user's project is reported exactly like a missing one, so IDs reveal nothing.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error.message,
+            ) from error
+        if error.code == "project_has_active_jobs":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error.message,
+            ) from error
+        raise
+
+
 def _project_response(
     project: Project,
     project_status: ProjectStatus,

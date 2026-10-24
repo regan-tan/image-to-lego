@@ -1,7 +1,7 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.projects import Project, ProjectOverview
+from app.domain.projects import Project, ProjectDeletion, ProjectOverview
 
 
 class ProjectRepository(Protocol):
@@ -17,3 +17,11 @@ class ProjectRepository(Protocol):
     ) -> ProjectOverview | None: ...
 
     async def list_overviews_for_owner(self, *, owner_id: UUID) -> list[ProjectOverview]: ...
+
+    async def delete_for_owner(self, *, project_id: UUID, owner_id: UUID) -> ProjectDeletion: ...
+
+
+class ProjectExistenceRepository(Protocol):
+    """Cross-owner existence check used only by the Blob sweep; it reveals no project data."""
+
+    async def existing_project_ids(self, *, candidate_ids: list[UUID]) -> set[UUID]: ...

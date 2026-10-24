@@ -23,6 +23,12 @@ class ProjectStatus(StrEnum):
     FAILED = "failed"
 
 
+class ProjectDeletion(StrEnum):
+    DELETED = "deleted"
+    NOT_FOUND = "not_found"
+    HAS_ACTIVE_JOBS = "has_active_jobs"
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectSourceImage:
     """The project's most recent source image whose upload is ready."""

@@ -6,7 +6,8 @@ import { getLegoModel } from "../api/client";
 import { useAppLayout } from "../components/appLayoutContext";
 import { BrickProgress } from "../components/BrickProgress";
 import { BuildGuideWorkspace } from "../components/BuildGuideWorkspace";
-import { ArrowLeftIcon } from "../components/Icons";
+import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
+import { ArrowLeftIcon, TrashIcon } from "../components/Icons";
 import { ProjectPreview } from "../components/ProjectPreview";
 import type { PreviewView } from "../components/ProjectPreview";
 import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
@@ -40,6 +41,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const [resultView, setResultView] = useState<ResultView>("model");
   const [buildStepIndex, setBuildStepIndex] = useState(0);
   const [selectedBuildComplexity, setSelectedBuildComplexity] = useState<BuildComplexity | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
   const persistedLegoModel = useQuery({
     queryKey: ["lego-model", session.user.id, persistedLegoArtifactId],
@@ -106,7 +108,23 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
                 legoModelReady={currentLegoModel !== null}
               />
             </div>
+            <button
+              type="button"
+              className="button button--secondary button--compact"
+              onClick={() => setIsDeleteDialogOpen(true)}
+            >
+              <TrashIcon size={16} />
+              Delete project
+            </button>
           </div>
+          <DeleteProjectDialog
+            isOpen={isDeleteDialogOpen}
+            onClose={() => setIsDeleteDialogOpen(false)}
+            accessToken={session.access_token}
+            userId={session.user.id}
+            projectId={project.data.id}
+            projectName={project.data.name}
+          />
           {currentLegoModel ? null : (
             <BrickProgress
               status={project.data.status}

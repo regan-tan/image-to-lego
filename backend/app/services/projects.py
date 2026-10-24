@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from app.core.errors import ApplicationError
-from app.domain.projects import Project, ProjectOverview
+from app.domain.projects import Project, ProjectDeletion, ProjectOverview
 from app.repositories.projects import ProjectRepository
 
 
@@ -31,3 +31,21 @@ class ProjectService:
             project_id=project_id,
             owner_id=owner_id,
         )
+
+    async def delete_for_owner(self, *, project_id: UUID, owner_id: UUID) -> None:
+        deletion = await self._repository.delete_for_owner(
+            project_id=project_id,
+            owner_id=owner_id,
+        )
+        if deletion is ProjectDeletion.NOT_FOUND:
+            raise ApplicationError(
+                code="project_not_found",
+                message="The project does not exist.",
+            )
+        if deletion is ProjectDeletion.HAS_ACTIVE_JOBS:
+            # A queued or running reconstruction may already be billed by fal; deleting the project
+            # would throw that paid result away.
+            raise ApplicationError(
+                code="project_has_active_jobs",
+                message="Wait for the current job to finish before deleting this project.",
+            )

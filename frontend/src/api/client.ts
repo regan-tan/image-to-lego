@@ -76,6 +76,13 @@ export async function createProject(accessToken: string, name: string): Promise<
   return projectSchema.parse(await response.json());
 }
 
+/** Deletes the project and its records. A 409 means a job is still queued or running. */
+export async function deleteProject(accessToken: string, projectId: string): Promise<void> {
+  await authenticatedRequest(`/api/v1/projects/${encodeURIComponent(projectId)}`, accessToken, {
+    method: "DELETE",
+  });
+}
+
 interface InitiateUploadRequest {
   projectId: string;
   fileName: string;

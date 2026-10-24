@@ -114,6 +114,7 @@ interface FakeApiOptions {
   invalidLegoArtifactId?: string;
   legoTargetPartsByArtifact?: Record<string, number | null>;
   legoModelsByArtifact?: Record<string, ReturnType<typeof legoModelResponse>>;
+  hasActiveJob?: boolean;
 }
 
 interface FakeConversionResult {
@@ -186,6 +187,7 @@ function installFakeApi({
   invalidLegoArtifactId,
   legoTargetPartsByArtifact = {},
   legoModelsByArtifact = {},
+  hasActiveJob = false,
 }: FakeApiOptions = {}) {
   let current = project;
   let blobFailuresLeft = blobUploadFailures;
@@ -256,6 +258,13 @@ function installFakeApi({
     if (path === "/api/v1/projects") {
       return jsonResponse(current ? [summary(current)] : []);
     }
+    if (path === `/api/v1/projects/${PROJECT_ID}` && method === "DELETE") {
+      if (hasActiveJob) {
+        return jsonResponse({ detail: "Wait for the current job to finish before deleting this project." }, 409);
+      }
+      current = null;
+      return new Response(null, { status: 204 });
+    }
     if (path === `/api/v1/projects/${PROJECT_ID}`) {
       return current ? jsonResponse(current) : jsonResponse({ detail: "The project does not exist." }, 404);
     }
@@ -304,6 +313,7 @@ function installFakeApi({
 
   return {
     posts: (path: string) => requests.filter((request) => request.method === "POST" && request.path === path),
+    deletes: () => requests.filter((request) => request.method === "DELETE"),
     readUrlRequests: (artifactId: string) => requests.filter(
       (request) => request.path === `/api/v1/artifacts/${artifactId}/read-url`,
     ),
@@ -1045,6 +1055,35 @@ describe("project flows", () => {
 
     expect(await screen.findByRole("heading", { name: "Project not found" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/");
+  });
+
+  it("deletes a project only after confirmation and returns to the project list", async () => {
+    const api = installFakeApi({ project: projectDetail() });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete project" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete this project?" });
+    expect(api.deletes()).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
+
+    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(api.deletes().map((request) => request.path)).toEqual([`/api/v1/projects/${PROJECT_ID}`]);
+    expect(screen.queryByRole("link", { name: /Castle/ })).not.toBeInTheDocument();
+  });
+
+  it("explains that a project with a job in progress cannot be deleted yet", async () => {
+    installFakeApi({ project: projectDetail(), hasActiveJob: true });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete project" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete this project?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "This project has a job in progress. Wait for it to finish, then try again.",
+    );
+    expect(screen.getByRole("heading", { name: "Castle" })).toBeInTheDocument();
   });
 
   it("shows each project's status badge and photo thumbnail on its card", async () => {

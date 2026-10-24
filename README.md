@@ -14,6 +14,7 @@ authenticated application slices:
 - a verified `GET /api/v1/profile` profile endpoint;
 - authenticated project creation/listing through PostgreSQL, with a derived status per project;
 - an owner-scoped project overview endpoint with the latest photo and 3D generation job;
+- owner-scoped project deletion, plus a manually run sweep that removes deleted projects' Blob files;
 - pending/ready source-image metadata with owner-scoped RLS;
 - direct browser-to-Azure Blob upload using a short-lived, single-blob SAS;
 - short-lived, read-only, single-blob links for showing a project's photo and 3D model in the browser
@@ -153,6 +154,32 @@ earlier, replaced photo does not count.
 The status is derived in the backend domain layer from one query per request; the list uses
 `LATERAL` joins so it does not issue one query per project. Each project also carries
 `sourceImageArtifactId` so the browser can request its thumbnail.
+
+## Deleting a project
+
+`DELETE /api/v1/projects/{projectId}` returns `204 No Content` and removes the project row. Its jobs,
+run rows, and artifact rows go with it through `ON DELETE CASCADE`. Another user's project returns
+the same 404 as a missing one. While any of the project's jobs is `queued` or `running` the request
+returns `409 Conflict`, because a reconstruction may already be billed by fal and deleting the
+project would discard that paid result. The repository locks the project row before checking for
+active jobs, so a job cannot be queued between the check and the delete.
+
+The request does not touch Azure Blob Storage. Once the artifact rows are gone, no read URL can be
+issued for those files, but the bytes stay in the private container until the Blob sweep removes
+them:
+
+```powershell
+Set-Location backend
+uv run python -m app.workers.blob_sweep            # report orphaned project folders
+uv run python -m app.workers.blob_sweep --delete   # delete them
+```
+
+Every application file lives under `projects/{projectId}/`. The sweep lists that prefix, asks
+PostgreSQL which project IDs still exist, and deletes a folder only when its project is gone and
+every blob in it is older than `BLOB_SWEEP_MIN_AGE_MINUTES` (default 60), so it never races an upload
+whose SAS was issued just before the delete. Running it twice is harmless. It is run by hand for
+now; scheduling it is part of the future deployment work. It does not yet remove abandoned pending
+uploads of projects that still exist.
 
 ## Viewing private photos and models
 
@@ -302,7 +329,8 @@ The API independently verifies each browser access token with the project's JWKS
 ### PostgreSQL API role
 
 Apply all committed migrations, including `20261006010000_upload_lifecycle.sql`. `DATABASE_URL`
-must use a dedicated login role that can select/insert/update the `projects` and `artifacts` tables,
+must use a dedicated login role that can select/insert/update the `projects` and `artifacts` tables
+and delete from `projects`,
 is not the table owner, and does not have `BYPASSRLS`. Each repository transaction sets the
 verified JWT subject in the transaction-local `app.current_user_id` setting; the migration's RLS
 policies use that value and pooled connections cannot retain it after the transaction.
@@ -315,6 +343,20 @@ grant select, insert, update on public.jobs, public.artifacts, public.reconstruc
 public.conversion_runs
 to image_to_lego_api;
 ```
+
+After applying `20261024000000_project_deletion.sql`, also allow project deletion and the Blob
+sweep's existence check:
+
+```sql
+grant delete on public.projects to image_to_lego_api;
+grant execute on function public.existing_project_ids(uuid[]) to image_to_lego_api;
+```
+
+Deleting a project needs `DELETE` only on `projects`; PostgreSQL performs the cascade to child
+tables itself. `existing_project_ids` is a `SECURITY DEFINER` function, because the sweep must see
+projects across all owners while RLS limits the API role to one owner per transaction. It returns
+only which of the given IDs still exist. The migration revokes it from `PUBLIC`, `anon`, and
+`authenticated`, so the browser cannot call it through Supabase's REST API.
 
 The migration never assumes this environment-specific role exists. RLS still applies to these grants.
 
@@ -376,6 +418,8 @@ docker run --rm image-to-lego-api:local python -m app.workers.conversion_worker
 
 The generation worker requires configured PostgreSQL, Blob Storage, Service Bus, and `FAL_KEY` values.
 The conversion worker requires PostgreSQL, Blob Storage, and the existing conversion Service Bus queue.
+The Blob sweep (`python -m app.workers.blob_sweep`) requires PostgreSQL and Blob Storage, and its
+Blob identity needs permission to list and delete blobs (Storage Blob Data Contributor).
 
 ## Environment variables
 
@@ -404,6 +448,7 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 | `RECONSTRUCTION_MAX_MODEL_SIZE_BYTES` | Worker | Maximum accepted generated model size |
 | `RECONSTRUCTION_SOURCE_SAS_LIFETIME_MINUTES` | Worker | Read-only source Blob SAS lifetime; configured for maximum runtime plus a five-minute pickup buffer |
 | `RECONSTRUCTION_HTTP_TIMEOUT_SECONDS` | Worker | fal API and result-download timeout |
+| `BLOB_SWEEP_MIN_AGE_MINUTES` | Sweep | Minimum age of every blob in a deleted project's folder before the sweep removes it |
 | `CORS_ORIGINS` | API | JSON array of allowed browser origins |
 | `VITE_API_BASE_URL` | Web | FastAPI base URL |
 | `VITE_SUPABASE_URL` | Web | Supabase URL for browser authentication |
