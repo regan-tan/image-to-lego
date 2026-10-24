@@ -62,6 +62,15 @@ describe("legoModelSchema", () => {
     expect(legoModelSchema.parse(model).placements[0]?.partColorVerified).toBe(true);
   });
 
+  it("accepts the null geometry asset the worker writes for ordinary parts", () => {
+    const model = {
+      ...legacyModel,
+      placements: [{ ...legacyModel.placements[0], geometryAsset: null }],
+    };
+
+    expect(legoModelSchema.parse(model).placements[0]?.geometryAsset).toBeUndefined();
+  });
+
   it("accepts catalogue-provenanced external part and color IDs", () => {
     const model = {
       ...legacyModel,
