@@ -277,10 +277,11 @@ The Vite development server listens at `http://localhost:5173` and calls the URL
 
 Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` for the frontend. Keep the publishable key in the frontend only; never expose a Supabase service-role key.
 
-The frontend provides `/login` and `/signup` public routes. Signed-in users get three protected
-routes that share one header (an on-demand "How it works" dialog and an account menu):
+The frontend provides a public landing page at `/` plus `/login` and `/signup` authentication
+routes. Signed-in users get three protected routes that share one header (an on-demand "How it
+works" dialog and an account menu):
 
-- `/` lists the user's projects with a status badge each, or shows an empty state on first visit;
+- `/workspace` lists the user's projects with a status badge each, or shows an empty state on first visit;
 - `/projects/:projectId` shows one project's progress (Photo → 3D model → LEGO build) and its next action;
 - `/profile` shows the verified profile returned by `GET /api/v1/profile`.
 
