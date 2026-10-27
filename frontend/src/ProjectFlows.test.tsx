@@ -381,7 +381,7 @@ describe("project flows", () => {
 
   it("creates a project from a photo, names it after the file and opens it ready to generate", async () => {
     const api = installFakeApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -400,7 +400,7 @@ describe("project flows", () => {
 
   it("rejects an unsupported photo before creating anything", async () => {
     const api = installFakeApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -415,7 +415,7 @@ describe("project flows", () => {
 
   it("retries a failed photo upload without creating a second project", async () => {
     const api = installFakeApi({ blobUploadFailures: 1 });
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -1049,7 +1049,7 @@ describe("project flows", () => {
 
   it("shows each project's status badge and photo thumbnail on its card", async () => {
     installFakeApi({ project: projectDetail({ status: "generating", sourceImage: READY_SOURCE_IMAGE }) });
-    renderApp("/");
+    renderApp("/workspace");
 
     const card = await screen.findByRole("link", { name: /Castle/ });
     expect(within(card).getByText("Generating 3D")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { supabase } from "../lib/supabase";
 
@@ -13,12 +13,18 @@ interface AuthenticationFormProps {
 
 export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationFormProps) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const isLogin = mode === "login";
+  const requestedPath = searchParams.get("next");
+  const returnPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//")
+    ? requestedPath
+    : "/workspace";
+  const authLinkPath = (path: "/login" | "/signup") => `${path}?next=${encodeURIComponent(returnPath)}`;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,7 +42,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
           setErrorMessage("We could not create your account. Check your details and try again.");
         } else if (data.session) {
           onAuthenticated(data.session);
-          navigate("/");
+          navigate(returnPath);
         } else {
           setPassword("");
           setShowConfirmation(true);
@@ -50,7 +56,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
         return;
       }
       onAuthenticated(data.session);
-      navigate("/");
+      navigate(returnPath);
     } finally {
       setIsSubmitting(false);
     }
@@ -65,7 +71,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
     setErrorMessage(null);
     const { error } = await client.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: new URL("/", window.location.origin).toString() },
+      options: { redirectTo: new URL(returnPath, window.location.origin).toString() },
     });
     if (error) {
       setErrorMessage("We could not start sign-in. Please try again.");
@@ -85,7 +91,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
           type="button"
           onClick={() => {
             setPassword("");
-            navigate("/login");
+            navigate(authLinkPath("/login"));
           }}
         >
           Back to sign in
@@ -127,7 +133,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
       </form>
       <p className="auth-switch">
         {isLogin ? "New to Image to LEGO?" : "Already have an account?"}{" "}
-        <Link className="text-button" to={isLogin ? "/signup" : "/login"}>
+        <Link className="text-button" to={authLinkPath(isLogin ? "/signup" : "/login")}>
           {isLogin ? "Sign up" : "Sign in"}
         </Link>
       </p>

@@ -49,7 +49,7 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
     <div className="app">
       <header className="app-header">
         <div className="app-header__inner">
-          <Link to="/" className="app-header__brand" aria-label="Image to LEGO, all projects">
+          <Link to="/workspace" className="app-header__brand" aria-label="Image to LEGO, all projects">
             <LogoMark />
             <span className="app-header__brand-name">Image to LEGO</span>
           </Link>
