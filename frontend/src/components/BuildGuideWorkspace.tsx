@@ -1,4 +1,4 @@
-import { placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
+import { buildGuideWarnings, placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
 import { colorLabel, partLabel } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
@@ -22,7 +22,7 @@ export function BuildGuideWorkspace({
     return (
       <section className="build-guide" aria-labelledby="build-guide-title">
         <h2 id="build-guide-title">Build guide</h2>
-        <p>No build steps are available for this model.</p>
+        <p>No trustworthy build steps are available for this model.</p>
       </section>
     );
   }
@@ -34,6 +34,7 @@ export function BuildGuideWorkspace({
   const placementStages = placementBuildStagesForStep(model, steps, selectedStepIndex);
   const isFirstStep = selectedStepIndex === 0;
   const isLastStep = selectedStepIndex === steps.length - 1;
+  const warnings = buildGuideWarnings(model);
 
   return (
     <section className="build-guide" aria-labelledby="build-guide-title">
@@ -105,6 +106,22 @@ export function BuildGuideWorkspace({
                 </li>
               ))}
             </ul>
+            <section className="build-guide__placements" aria-labelledby="placement-guidance-title">
+              <h4 id="placement-guidance-title">Placement guidance</h4>
+              <ol>
+                {step.placementGuidance.map((placement) => (
+                  <li key={placement.placementIndex}>
+                    Piece {placement.placementIndex + 1}: x {placement.position.x}, y {placement.position.y}, z {placement.position.z}; rotate {placement.orientationDegrees}°
+                  </li>
+                ))}
+              </ol>
+            </section>
+            <section className="build-guide__warnings" aria-labelledby="build-guide-warnings-title">
+              <h4 id="build-guide-warnings-title">Buildability notes</h4>
+              <ul>
+                {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            </section>
           </div>
 
           <div className="build-guide__footer">
@@ -126,7 +143,7 @@ export function BuildGuideWorkspace({
                 {isLastStep ? "Build complete" : "Next"}
               </button>
             </div>
-            <p>Draft instructions · Physical assembly is not validated.</p>
+            <p>Assembly guidance · review buildability notes before building.</p>
           </div>
         </aside>
       </div>

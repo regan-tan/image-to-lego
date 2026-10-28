@@ -52,6 +52,29 @@ describe("legoModelSchema", () => {
     expect(legoModelSchema.parse(model).instructionSteps).toEqual(model.instructionSteps);
   });
 
+  it("accepts the additive V2 guide while preserving legacy artifacts", () => {
+    const model = {
+      ...legacyModel,
+      instructionGuide: {
+        version: "build-guide-v2",
+        warnings: ["Physical assembly is not guaranteed."],
+        steps: [{
+          stepNumber: 1,
+          placementIndices: [0],
+          placements: [{
+            placementIndex: 0,
+            position: { x: 0, y: 0, z: 0 },
+            orientationDegrees: 0,
+          }],
+          parts: [{ partId: "3001", color: "red", colorId: null, quantity: 1 }],
+        }],
+      },
+    };
+
+    expect(legoModelSchema.parse(model).instructionGuide?.version).toBe("build-guide-v2");
+    expect(legoModelSchema.parse(legacyModel).instructionGuide).toBeUndefined();
+  });
+
   it("accepts the catalogue part-color verification marker", () => {
     const model = {
       ...legacyModel,

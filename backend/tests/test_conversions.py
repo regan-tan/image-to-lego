@@ -463,6 +463,7 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
         "metadata",
         "placements",
         "instructionSteps",
+        "instructionGuide",
     }
     assert set(output["placements"][0]) == {
         "brickType",
@@ -485,6 +486,29 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
     assert [step["stepNumber"] for step in output["instructionSteps"]] == list(
         range(1, len(output["instructionSteps"]) + 1)
     )
+    assert output["instructionGuide"]["version"] == "build-guide-v2"
+
+
+def test_v2_instruction_guide_covers_every_placement_and_has_exact_step_quantities() -> None:
+    model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
+
+    output = json.loads(serialize_lego_model(model))
+
+    guide_steps = output["instructionGuide"]["steps"]
+    covered = [index for step in guide_steps for index in step["placementIndices"]]
+    assert sorted(covered) == list(range(len(output["placements"])))
+    assert len(covered) == len(set(covered))
+    for step in guide_steps:
+        assert sum(part["quantity"] for part in step["parts"]) == len(step["placementIndices"])
+        assert [placement["placementIndex"] for placement in step["placements"]] == step[
+            "placementIndices"
+        ]
+        for placement in step["placements"]:
+            canonical = output["placements"][placement["placementIndex"]]
+            assert placement["position"] == canonical["position"]
+            assert placement["orientationDegrees"] == canonical["orientationDegrees"]
+            assert placement["partId"] == canonical["partId"]
+            assert placement["colorId"] == canonical["colorId"]
 
 
 @pytest.mark.asyncio

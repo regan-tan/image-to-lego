@@ -203,8 +203,12 @@ model's minimum placement z plane and it has no evaluated placement connected di
 diagnostic does not assess structural stability, collision, clutch force, center of mass, insertion
 accessibility, color accuracy, or overall perceptual similarity.
 
-Newly converted models also include top-level `instructionSteps`. Each step holds a sequential
-`stepNumber` and stable `placementIndices` into the canonical `placements` array. The worker batches at
+Newly converted models retain top-level `instructionSteps` for compatibility and add a versioned
+top-level `instructionGuide` with `version: "build-guide-v2"`. Each V2 step holds stable
+`placementIndices`, exact per-step part/color quantities, and each added placement's canonical position
+and orientation. The guide also carries explicit diagnostic warnings; the browser derives displayed
+quantities from canonical placements and keeps legacy artifacts accessible through their original steps
+or layer fallback. The worker batches at
 most six placements per step and combines evaluated direct stud-support edges with
 `vertical-insertion-v1` edges: a rectangular piece that would block another piece's straight-down path
 must be placed later. Local presentation regions are inferred from evaluated
