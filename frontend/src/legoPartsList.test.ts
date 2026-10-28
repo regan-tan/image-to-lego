@@ -65,11 +65,12 @@ describe("aggregateLegoPlacements", () => {
 describe("serializePartsListCsv", () => {
   it("writes real part identity, color, and quantity", () => {
     expect(serializePartsListCsv([{ brickType: "brick_2x4", partId: "3001", partName: "Brick 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 3, color: "light_bluish_gray", colorId: "ldraw:71", colorName: "Light Bluish Gray", partColorVerified: true, quantity: 3 }])).toBe("Part ID,Part Name,Color,Color ID,Verified part/color,Quantity\r\n3001,Brick 2 x 4,Light Bluish Gray,ldraw:71,Verified,3");
-    expect(serializePartsListCsv([{ brickType: "plate_2x4", partId: "3020", partName: "Plate 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('3020,Plate 2 x 4,"Red,Blue",,Not recorded,1');
+    expect(serializePartsListCsv([{ brickType: "plate_2x4", partId: "3020", partName: "Plate 2 x 4", lengthStuds: 2, widthStuds: 4, heightPlates: 1, color: "red,blue", quantity: 1 }])).toContain('3020,Plate 2 x 4,"Red,Blue",,Unresolved,1');
   });
 });
 
 describe("createPurchaseReadyPartsList", () => {
+  const algorithmVersion = "surface-grid-v4";
   const verificationVersion = "catalogue-v1";
 
   function verifiedPart(overrides: Partial<ReturnType<typeof aggregateLegoPlacements>[number]> = {}) {
@@ -91,7 +92,7 @@ describe("createPurchaseReadyPartsList", () => {
   }
 
   it("keeps one exact verified part/color row with the BOM quantity and authoritative IDs", () => {
-    const result = createPurchaseReadyPartsList([verifiedPart()], verificationVersion);
+    const result = createPurchaseReadyPartsList([verifiedPart()], algorithmVersion, verificationVersion);
 
     expect(result).toEqual({
       parts: [{
@@ -112,13 +113,13 @@ describe("createPurchaseReadyPartsList", () => {
     const first = createPurchaseReadyPartsList([
       verifiedPart({ color: "blue", colorId: "ldraw:1", colorName: "Blue", externalIds: { bricklink: { partId: "3001", colorId: 7 } } }),
       verifiedPart(),
-    ], verificationVersion);
+    ], algorithmVersion, verificationVersion);
     const second = createPurchaseReadyPartsList([...first.parts.map((part) => verifiedPart({
       color: part.colorName.toLowerCase(),
       colorId: part.colorId,
       colorName: part.colorName,
       externalIds: part.externalIds,
-    }))].reverse(), verificationVersion);
+    }))].reverse(), algorithmVersion, verificationVersion);
 
     expect(first.parts.map((part) => part.colorId)).toEqual(["ldraw:1", "ldraw:4"]);
     expect(serializePurchaseReadyPartsCsv(first.parts)).toBe(serializePurchaseReadyPartsCsv(second.parts));
@@ -129,7 +130,7 @@ describe("createPurchaseReadyPartsList", () => {
       verifiedPart({ partColorVerified: false }),
       verifiedPart({ partId: undefined }),
       verifiedPart({ colorId: undefined }),
-    ], verificationVersion);
+    ], algorithmVersion, verificationVersion);
 
     expect(result.parts).toEqual([]);
     expect(result.unresolvedParts.map((part) => part.reason)).toEqual([
@@ -139,12 +140,65 @@ describe("createPurchaseReadyPartsList", () => {
     ]);
   });
 
+  it("keeps historical inventory visible but unresolved when verification metadata is absent", () => {
+    const result = createPurchaseReadyPartsList([
+      verifiedPart({ partColorVerified: undefined }),
+    ], algorithmVersion, undefined);
+
+    expect(result.parts).toEqual([]);
+    expect(result.unresolvedParts[0]?.reason).toBe("missing_verification_metadata");
+  });
+
+  it("rejects a v4 row when its catalog verification version is missing", () => {
+    const result = createPurchaseReadyPartsList([verifiedPart()], algorithmVersion, undefined);
+
+    expect(result.parts).toEqual([]);
+    expect(result.unresolvedParts[0]?.reason).toBe("missing_verification_version");
+  });
+
   it("leaves missing external IDs blank without fabricating a mapping", () => {
     const result = createPurchaseReadyPartsList([
       verifiedPart({ externalIds: undefined }),
-    ], verificationVersion);
+    ], algorithmVersion, verificationVersion);
 
     expect(result.parts[0]?.externalIds).toEqual({ bricklink: { partId: null, colorId: null } });
+  });
+});
+
+describe("purchase-ready algorithm compatibility", () => {
+  const verificationVersion = "catalogue-v1";
+
+  function verifiedPart() {
+    return {
+      brickType: "brick_2x4",
+      partId: "3001",
+      partName: "Brick 2 x 4",
+      lengthStuds: 4,
+      widthStuds: 2,
+      heightPlates: 3,
+      color: "red",
+      colorId: "ldraw:4",
+      colorName: "Red",
+      partColorVerified: true,
+      quantity: 2,
+      externalIds: { bricklink: { partId: "3001", colorId: 5 } },
+    };
+  }
+
+  it("rejects persisted v3 verification metadata", () => {
+    const parts = [verifiedPart()];
+    const result = createPurchaseReadyPartsList(parts, "surface-grid-v3", verificationVersion);
+
+    expect(result.parts).toEqual([]);
+    expect(result.unresolvedParts[0]?.reason).toBe("unsupported_algorithm_version");
+    expect(serializePartsListCsv(parts)).toContain("3001,Brick 2 x 4,Red,ldraw:4,Verified,2");
+  });
+
+  it.each([undefined, "surface-grid-v5", "unknown"])("rejects unsupported algorithm version %s", (version) => {
+    const result = createPurchaseReadyPartsList([verifiedPart()], version, verificationVersion);
+
+    expect(result.parts).toEqual([]);
+    expect(result.unresolvedParts[0]?.reason).toBe("unsupported_algorithm_version");
   });
 });
 
@@ -165,7 +219,7 @@ describe("serializePurchaseReadyPartsCsv", () => {
         quantity: 3,
         externalIds: { bricklink: { partId: "3020", colorId: 5 } },
       },
-    ], "catalogue-v1").parts);
+    ], "surface-grid-v4", "catalogue-v1").parts);
 
     expect(csv).toBe("Part ID,BrickLink Part ID,Color ID,BrickLink Color ID,Quantity,Part Name,Color Name,Verified part/color,Verification version\r\n3020,3020,ldraw:4,5,3,\"Plate \"\"2 x 4\"\"\",\"Red, Bright\",Verified,catalogue-v1");
   });

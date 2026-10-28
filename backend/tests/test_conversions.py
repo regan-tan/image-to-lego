@@ -389,6 +389,18 @@ async def test_worker_uses_persisted_algorithm_version(algorithm_version: str) -
     assert output["metadata"]["algorithmVersion"] == algorithm_version
 
 
+def test_legacy_grid_conversion_is_explicitly_not_purchase_ready() -> None:
+    model = convert_glb(
+        box_glb(),
+        ConversionSettings(target_parts=24, up_axis=Axis.Y, algorithm_version="surface-grid-v3"),
+    )
+
+    output = json.loads(serialize_lego_model(model))
+
+    assert "partColorVerificationVersion" not in output["metadata"]
+    assert all(placement["partColorVerified"] is False for placement in output["placements"])
+
+
 def test_lego_model_json_is_stable() -> None:
     source = box_glb()
     settings = ConversionSettings(target_parts=24, up_axis=Axis.Y)

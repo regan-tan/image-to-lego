@@ -25,7 +25,7 @@ from app.conversion import (
     order_placements_for_instructions,
 )
 from app.conversion.colors import COLORS_BY_ID
-from app.conversion.core import MAX_INPUT_BYTES
+from app.conversion.core import MAX_INPUT_BYTES, SURFACE_GRID_V4
 from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
 from app.domain.artifacts import ArtifactStatus
@@ -197,6 +197,77 @@ def serialize_lego_model(model: LegoModel) -> bytes:
         ordered_placements,
         instruction_steps,
     )
+    # surface-grid-v3 uses its historical one-plate grid representation for bricks.
+    # Its part IDs remain useful inventory context, but its geometry is not a
+    # manufactured-part representation and must not be exported for sourcing.
+    catalogue_geometry_verified = model.metadata.algorithm_version == SURFACE_GRID_V4
+    metadata: dict[str, object] = {
+        "algorithmVersion": model.metadata.algorithm_version,
+        "sourceSha256": model.metadata.source_sha256,
+        "targetParts": model.metadata.target_parts,
+        "occupiedCellCount": model.metadata.occupied_cell_count,
+        "gridSize": {
+            "widthStuds": model.metadata.grid_size.width_studs,
+            "depthStuds": model.metadata.grid_size.depth_studs,
+            "heightPlates": model.metadata.grid_size.height_plates,
+        },
+        "candidateCount": model.metadata.candidate_count,
+        "occupancyMode": model.metadata.occupancy_mode,
+        "fidelity": {
+            "metricsVersion": model.metadata.fidelity.metrics_version,
+            "rasterResolution": model.metadata.fidelity.raster_resolution,
+            "frontIoU": model.metadata.fidelity.front_iou,
+            "sideIoU": model.metadata.fidelity.side_iou,
+            "topIoU": model.metadata.fidelity.top_iou,
+            "meanIoU": model.metadata.fidelity.mean_iou,
+            "targetParts": model.metadata.fidelity.target_parts,
+            "actualParts": model.metadata.fidelity.actual_parts,
+            "partCountDelta": model.metadata.fidelity.part_count_delta,
+            "partCountErrorRatio": model.metadata.fidelity.part_count_error_ratio,
+        },
+        "buildability": {
+            "version": BUILDABILITY_ANALYSIS_VERSION,
+            "evaluatedPlacements": buildability.evaluated_placement_count,
+            "unevaluatedPlacements": buildability.unevaluated_placement_count,
+            "connectionEdges": len(buildability.edges),
+            "connectedComponents": buildability.connected_component_count,
+            "largestComponentSize": buildability.largest_connected_component_size,
+            "largestComponentRatio": buildability.largest_connected_component_ratio,
+            "isolatedPlacements": buildability.isolated_placement_count,
+            "unsupportedPlacements": buildability.unsupported_placement_count,
+        },
+        "verticalInsertionAccessibility": {
+            "version": VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
+            "evaluatedPlacements": insertion_accessibility.evaluated_placement_count,
+            "unevaluatedPlacements": insertion_accessibility.unevaluated_placement_count,
+            "accessiblePlacements": insertion_accessibility.accessible_placement_count,
+            "blockedPlacements": insertion_accessibility.blocked_placement_count,
+            "blockedInsertions": [
+                {
+                    "placementIndex": blocked.placement_index,
+                    "blockerPlacementIndices": list(blocked.blocker_placement_indices),
+                }
+                for blocked in insertion_accessibility.blocked_insertions
+            ],
+        },
+        "instructionPrecedence": {
+            "version": INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION,
+            "structuralEdges": len(precedence.structural_edges),
+            "insertionEdges": len(precedence.insertion_edges),
+            "totalPrecedenceEdges": precedence.total_precedence_edge_count,
+            "cyclicPlacements": len(precedence.cyclic_placement_indices),
+            "cyclicComponents": len(precedence.cyclic_components),
+            "cyclicStructuralEdges": precedence.cyclic_structural_edge_count,
+            "cyclicInsertionEdges": precedence.cyclic_insertion_edge_count,
+            "schedulableEvaluatedPlacements": (precedence.schedulable_evaluated_placement_count),
+            "unresolvedVerticalInsertionPlacements": len(
+                precedence.unresolved_vertical_insertion_placement_indices
+            ),
+        },
+    }
+    if catalogue_geometry_verified:
+        metadata["partColorVerificationVersion"] = PART_COLOR_VERIFICATION_VERSION
+
     payload = {
         "partCount": model.part_count,
         "dimensions": {
@@ -207,73 +278,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             "depthMm": model.dimensions.depth_mm,
             "heightMm": model.dimensions.height_mm,
         },
-        "metadata": {
-            "algorithmVersion": model.metadata.algorithm_version,
-            "sourceSha256": model.metadata.source_sha256,
-            "targetParts": model.metadata.target_parts,
-            "occupiedCellCount": model.metadata.occupied_cell_count,
-            "gridSize": {
-                "widthStuds": model.metadata.grid_size.width_studs,
-                "depthStuds": model.metadata.grid_size.depth_studs,
-                "heightPlates": model.metadata.grid_size.height_plates,
-            },
-            "candidateCount": model.metadata.candidate_count,
-            "occupancyMode": model.metadata.occupancy_mode,
-            "partColorVerificationVersion": PART_COLOR_VERIFICATION_VERSION,
-            "fidelity": {
-                "metricsVersion": model.metadata.fidelity.metrics_version,
-                "rasterResolution": model.metadata.fidelity.raster_resolution,
-                "frontIoU": model.metadata.fidelity.front_iou,
-                "sideIoU": model.metadata.fidelity.side_iou,
-                "topIoU": model.metadata.fidelity.top_iou,
-                "meanIoU": model.metadata.fidelity.mean_iou,
-                "targetParts": model.metadata.fidelity.target_parts,
-                "actualParts": model.metadata.fidelity.actual_parts,
-                "partCountDelta": model.metadata.fidelity.part_count_delta,
-                "partCountErrorRatio": model.metadata.fidelity.part_count_error_ratio,
-            },
-            "buildability": {
-                "version": BUILDABILITY_ANALYSIS_VERSION,
-                "evaluatedPlacements": buildability.evaluated_placement_count,
-                "unevaluatedPlacements": buildability.unevaluated_placement_count,
-                "connectionEdges": len(buildability.edges),
-                "connectedComponents": buildability.connected_component_count,
-                "largestComponentSize": buildability.largest_connected_component_size,
-                "largestComponentRatio": buildability.largest_connected_component_ratio,
-                "isolatedPlacements": buildability.isolated_placement_count,
-                "unsupportedPlacements": buildability.unsupported_placement_count,
-            },
-            "verticalInsertionAccessibility": {
-                "version": VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
-                "evaluatedPlacements": insertion_accessibility.evaluated_placement_count,
-                "unevaluatedPlacements": insertion_accessibility.unevaluated_placement_count,
-                "accessiblePlacements": insertion_accessibility.accessible_placement_count,
-                "blockedPlacements": insertion_accessibility.blocked_placement_count,
-                "blockedInsertions": [
-                    {
-                        "placementIndex": blocked.placement_index,
-                        "blockerPlacementIndices": list(blocked.blocker_placement_indices),
-                    }
-                    for blocked in insertion_accessibility.blocked_insertions
-                ],
-            },
-            "instructionPrecedence": {
-                "version": INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION,
-                "structuralEdges": len(precedence.structural_edges),
-                "insertionEdges": len(precedence.insertion_edges),
-                "totalPrecedenceEdges": precedence.total_precedence_edge_count,
-                "cyclicPlacements": len(precedence.cyclic_placement_indices),
-                "cyclicComponents": len(precedence.cyclic_components),
-                "cyclicStructuralEdges": precedence.cyclic_structural_edge_count,
-                "cyclicInsertionEdges": precedence.cyclic_insertion_edge_count,
-                "schedulableEvaluatedPlacements": (
-                    precedence.schedulable_evaluated_placement_count
-                ),
-                "unresolvedVerticalInsertionPlacements": len(
-                    precedence.unresolved_vertical_insertion_placement_indices
-                ),
-            },
-        },
+        "metadata": metadata,
         "placements": [
             {
                 "brickType": placement.brick_type.catalogue_key,
@@ -302,9 +307,8 @@ def serialize_lego_model(model: LegoModel) -> bytes:
                         "colorId": _bricklink_color_id(placement.color_id),
                     }
                 },
-                "partColorVerified": placement.brick_type.supports_color_id(
-                    placement.color_id or ""
-                ),
+                "partColorVerified": catalogue_geometry_verified
+                and placement.brick_type.supports_color_id(placement.color_id or ""),
             }
             for placement in ordered_placements
         ],
