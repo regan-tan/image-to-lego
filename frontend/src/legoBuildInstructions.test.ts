@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveLegoBuildSteps, placementBuildStagesForStep } from "./legoBuildInstructions";
+import {
+  buildGuideWarnings,
+  deriveLegoBuildSteps,
+  placementBuildStagesForStep,
+} from "./legoBuildInstructions";
 import type { LegoModel } from "./schemas/legoModels";
 
 type Placement = LegoModel["placements"][number];
@@ -56,6 +60,119 @@ describe("deriveLegoBuildSteps", () => {
     expect(steps.map((step) => step.placementIndices)).toEqual([[0], [1, 2]]);
     expect(steps[1]?.placements).toEqual([second, third]);
     expect(steps.map((step) => step.cumulativePartCount)).toEqual([1, 3]);
+  });
+
+  it("uses V2 placement guidance while deriving exact current-step parts", () => {
+    const buildModel = model([
+      placement(0, { partId: "3001" }),
+      placement(3, { partId: "3001", color: "blue" }),
+    ]);
+    buildModel.instructionGuide = {
+      version: "build-guide-v2",
+      warnings: ["Physical assembly is not guaranteed."],
+      steps: [
+        {
+          stepNumber: 1,
+          placementIndices: [0],
+          placements: [{ placementIndex: 0, position: { x: 0, y: 0, z: 0 }, orientationDegrees: 0, partId: "3001", colorId: null }],
+          parts: [{ partId: "3001", color: "green", colorId: null, quantity: 1 }],
+        },
+        {
+          stepNumber: 2,
+          placementIndices: [1],
+          placements: [{ placementIndex: 1, position: { x: 0, y: 0, z: 3 }, orientationDegrees: 0, partId: "3001", colorId: null }],
+          parts: [{ partId: "3001", color: "blue", colorId: null, quantity: 1 }],
+        },
+      ],
+    };
+
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(steps[1]?.placementGuidance[0]?.position.z).toBe(3);
+    expect(steps[1]?.parts[0]).toEqual(expect.objectContaining({ color: "blue", quantity: 1 }));
+  });
+
+  it("falls back to valid legacy instructions when V2 guidance is malformed", () => {
+    const buildModel = model([placement(0), placement(3)]);
+    buildModel.instructionSteps = [
+      { stepNumber: 1, placementIndices: [0] },
+      { stepNumber: 2, placementIndices: [1] },
+    ];
+    buildModel.instructionGuide = {
+      version: "build-guide-v2",
+      warnings: [],
+      steps: [{
+        stepNumber: 1,
+        placementIndices: [0, 1],
+        placements: [
+          { placementIndex: 0, position: { x: 99, y: 0, z: 0 }, orientationDegrees: 0 },
+          { placementIndex: 1, position: { x: 0, y: 0, z: 3 }, orientationDegrees: 0 },
+        ],
+        parts: [{ partId: "brick_2x4", color: "green", colorId: null, quantity: 2 }],
+      }],
+    };
+
+    expect(deriveLegoBuildSteps(buildModel).map((step) => step.placementIndices)).toEqual([[0], [1]]);
+    expect(buildGuideWarnings(buildModel)[0]).toMatch(/did not pass integrity checks/);
+  });
+
+  it.each([
+    ["orientation", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[0]!.placements[0]!.orientationDegrees = 90; }],
+    ["coordinates", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[0]!.placements[0]!.position.x = 99; }],
+    ["part identifier", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[0]!.placements[0]!.partId = "wrong"; }],
+    ["color identifier", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[0]!.placements[0]!.colorId = "wrong"; }],
+    ["step quantity", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[0]!.parts[0]!.quantity = 2; }],
+    ["duplicate placement index", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[1]!.placementIndices = [0]; }],
+    ["missing placement index", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps.pop(); }],
+    ["out-of-range placement index", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[1]!.placementIndices = [99]; }],
+    ["duplicate step number", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[1]!.stepNumber = 1; }],
+    ["non-contiguous step number", (guide: NonNullable<LegoModel["instructionGuide"]>) => { guide.steps[1]!.stepNumber = 3; }],
+  ])("does not trust V2 data with an invalid %s", (_caseName, corruptGuide) => {
+    const buildModel = v2Model();
+    corruptGuide(buildModel.instructionGuide!);
+
+    expect(deriveLegoBuildSteps(buildModel).map((step) => step.placementIndices)).toEqual([[0], [1]]);
+    expect(buildGuideWarnings(buildModel)[0]).toMatch(/did not pass integrity checks/);
+  });
+
+  it("rejects V2 placement ordering that violates the available legacy precedence order", () => {
+    const buildModel = v2Model();
+    buildModel.instructionGuide!.steps = [...buildModel.instructionGuide!.steps].reverse().map((step, index) => ({
+      ...step,
+      stepNumber: index + 1,
+    }));
+
+    expect(deriveLegoBuildSteps(buildModel).map((step) => step.placementIndices)).toEqual([[0], [1]]);
+    expect(buildGuideWarnings(buildModel)[0]).toMatch(/did not pass integrity checks/);
+  });
+
+  it("uses canonical placement count when historical partCount metadata is inconsistent", () => {
+    const buildModel = model([placement(0), placement(1)]);
+    buildModel.partCount = 99;
+    buildModel.instructionSteps = [
+      { stepNumber: 1, placementIndices: [0] },
+      { stepNumber: 2, placementIndices: [1] },
+    ];
+
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(steps.at(-1)?.cumulativePartCount).toBe(2);
+    expect(steps.at(-1)?.totalModelPartCount).toBe(2);
+  });
+
+  it("navigates and highlights V2 steps while reproducing all canonical placements", () => {
+    const buildModel = v2Model();
+    const steps = deriveLegoBuildSteps(buildModel);
+
+    expect(steps.flatMap((step) => step.placementIndices).sort()).toEqual([0, 1]);
+    expect(placementBuildStagesForStep(buildModel, steps, 0)).toEqual([
+      "current",
+      "future",
+    ]);
+    expect(placementBuildStagesForStep(buildModel, steps, steps.length - 1)).toEqual([
+      "previous",
+      "current",
+    ]);
   });
 
   it("groups a layer while preserving canonical placement order", () => {
@@ -125,6 +242,36 @@ describe("deriveLegoBuildSteps", () => {
     );
   });
 });
+
+function v2Model(): LegoModel {
+  const buildModel = model([
+    placement(0, { color: "red", colorId: "ldraw:4" }),
+    placement(3, { color: "blue", colorId: "ldraw:1" }),
+  ]);
+  buildModel.instructionSteps = [
+    { stepNumber: 1, placementIndices: [0] },
+    { stepNumber: 2, placementIndices: [1] },
+  ];
+  buildModel.instructionGuide = {
+    version: "build-guide-v2",
+    warnings: [],
+    steps: [
+      {
+        stepNumber: 1,
+        placementIndices: [0],
+        placements: [{ placementIndex: 0, position: { x: 0, y: 0, z: 0 }, orientationDegrees: 0, partId: "3001", colorId: "ldraw:4" }],
+        parts: [{ partId: "3001", color: "red", colorId: "ldraw:4", quantity: 1 }],
+      },
+      {
+        stepNumber: 2,
+        placementIndices: [1],
+        placements: [{ placementIndex: 1, position: { x: 0, y: 0, z: 3 }, orientationDegrees: 0, partId: "3001", colorId: "ldraw:1" }],
+        parts: [{ partId: "3001", color: "blue", colorId: "ldraw:1", quantity: 1 }],
+      },
+    ],
+  };
+  return buildModel;
+}
 
 describe("placementBuildStagesForStep", () => {
   it("keeps earlier placements visible, highlights the current step, and hides future placements", () => {

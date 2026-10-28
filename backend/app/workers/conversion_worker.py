@@ -14,8 +14,10 @@ from app.conversion import (
     INSTRUCTION_PRECEDENCE_ANALYSIS_VERSION,
     VERTICAL_INSERTION_ACCESSIBILITY_VERSION,
     Axis,
+    BrickPlacement,
     ConversionError,
     ConversionSettings,
+    InstructionStep,
     LegoModel,
     analyze_buildability,
     analyze_instruction_precedence,
@@ -268,6 +270,38 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     if catalogue_geometry_verified:
         metadata["partColorVerificationVersion"] = PART_COLOR_VERIFICATION_VERSION
 
+    # This is deliberately a diagnostic guide, not a claim that the model is
+    # physically buildable.  Keep the reasons in the artifact so a client does
+    # not have to infer safety from a count alone.
+    build_warnings = [
+        "Physical assembly is not guaranteed; stability, collision-free motions, and clutch "
+        "force are not evaluated."
+    ]
+    if buildability.unsupported_placement_count:
+        build_warnings.append(
+            f"{buildability.unsupported_placement_count} placement(s) have no verified "
+            "direct support."
+        )
+    if buildability.connected_component_count > 1:
+        build_warnings.append(
+            f"The model has {buildability.connected_component_count} evaluated connected "
+            "components."
+        )
+    if insertion_accessibility.blocked_placement_count:
+        build_warnings.append(
+            f"{insertion_accessibility.blocked_placement_count} placement(s) have a blocked "
+            "straight-down insertion path."
+        )
+    if insertion_accessibility.unevaluated_placement_count:
+        build_warnings.append(
+            f"{insertion_accessibility.unevaluated_placement_count} placement(s) were not "
+            "evaluated for straight-down insertion."
+        )
+    if precedence.unresolved_vertical_insertion_placement_indices:
+        build_warnings.append(
+            "Some precedence constraints conflict, so their vertical insertion order is unresolved."
+        )
+
     payload = {
         "partCount": model.part_count,
         "dimensions": {
@@ -319,9 +353,65 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             }
             for step in instruction_steps
         ],
+        "instructionGuide": {
+            "version": "build-guide-v2",
+            "warnings": build_warnings,
+            "steps": [
+                {
+                    "stepNumber": step.step_number,
+                    "placementIndices": list(step.placement_indices),
+                    "placements": [
+                        {
+                            "placementIndex": placement_index,
+                            "position": {
+                                "x": ordered_placements[placement_index].position.x,
+                                "y": ordered_placements[placement_index].position.y,
+                                "z": ordered_placements[placement_index].position.z,
+                            },
+                            "orientationDegrees": (
+                                ordered_placements[placement_index].orientation_degrees
+                            ),
+                            "partId": ordered_placements[placement_index].brick_type.part_id,
+                            "colorId": ordered_placements[placement_index].color_id,
+                        }
+                        for placement_index in step.placement_indices
+                    ],
+                    "parts": _instruction_step_parts(ordered_placements, step),
+                }
+                for step in instruction_steps
+            ],
+        },
     }
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return serialized.encode("utf-8")
+
+
+def _instruction_step_parts(
+    placements: tuple[BrickPlacement, ...],
+    step: InstructionStep,
+) -> list[dict[str, object]]:
+    """Return exact, deterministic part/color quantities for one guide step."""
+    quantities: dict[tuple[str, str, str | None], int] = {}
+    for placement_index in step.placement_indices:
+        placement = placements[placement_index]
+        key = (
+            placement.brick_type.part_id,
+            placement.color,
+            placement.color_id,
+        )
+        quantities[key] = quantities.get(key, 0) + 1
+
+    return [
+        {
+            "partId": part_id,
+            "color": color,
+            "colorId": color_id,
+            "quantity": quantity,
+        }
+        for (part_id, color, color_id), quantity in sorted(
+            quantities.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or "")
+        )
+    ]
 
 
 async def run_worker(settings: Settings) -> None:

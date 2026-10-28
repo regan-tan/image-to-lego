@@ -244,6 +244,11 @@ h3 { font-size: 1.05rem; }
 .build-guide__part-description { min-width: 0; font-size: .72rem; }
 .build-guide__part-description strong, .build-guide__part-description > span { overflow-wrap: anywhere; }
 .build-guide__part-quantity { min-width: 2.2rem; font-size: .75rem; text-align: right; }
+.build-guide__placements, .build-guide__warnings { margin-top: .85rem; padding-top: .7rem; border-top: 1px solid var(--border); }
+.build-guide__placements h4, .build-guide__warnings h4 { margin: 0 0 .35rem; font-size: .75rem; }
+.build-guide__placements ol, .build-guide__warnings ul { display: grid; margin: 0; padding-left: 1.1rem; gap: .28rem; color: var(--muted); font-size: .68rem; line-height: 1.4; }
+.build-guide__warnings { padding: .7rem; border: 1px solid #e0c56c; border-radius: 8px; background: #fff9df; }
+.build-guide__warnings ul { padding-left: 1rem; }
 .build-guide__footer { flex-shrink: 0; padding: .7rem 1rem .45rem; border-top: 1px solid var(--border); background: var(--surface); }
 .build-guide__navigation { margin: 0; gap: .5rem; }
 .build-guide__navigation .button { min-height: 40px; font-size: .75rem; }
