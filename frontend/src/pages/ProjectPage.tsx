@@ -154,6 +154,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
           {currentLegoModel && resultView === "parts" && partsList ? (
             <PartsListWorkspace
               partsList={partsList}
+              algorithmVersion={currentLegoModel.metadata.algorithmVersion}
               partColorVerificationVersion={currentLegoModel.metadata.partColorVerificationVersion}
             />
           ) : null}
