@@ -4,93 +4,77 @@ interface LandingPageProps {
   isAuthenticated: boolean;
 }
 
-function BrickCat() {
-  return (
-    <div className="brick-cat" aria-hidden="true">
-      <div className="brick-cat__scan" />
-      <svg viewBox="0 0 520 560" focusable="false">
-        <g className="brick-cat__shadow">
-          <ellipse cx="265" cy="495" rx="150" ry="21" />
-        </g>
-        <g className="brick-cat__body">
-          <path d="M132 278h256v171H132z" className="cat-fill" />
-          <path d="M155 252h211v30H155zM105 326h45v76h-45zM371 315h45v87h-45z" className="cat-fill" />
-          <path d="M380 315c56-6 68-47 35-73" className="cat-stroke" />
-          <path d="M162 279h203M132 331h255M132 389h255M204 279v170M302 279v170" className="cat-line" />
-          <circle cx="171" cy="300" r="13" className="cat-stud" />
-          <circle cx="239" cy="300" r="13" className="cat-stud" />
-          <circle cx="307" cy="300" r="13" className="cat-stud" />
-          <circle cx="348" cy="354" r="13" className="cat-stud" />
-          <circle cx="239" cy="409" r="13" className="cat-stud" />
-          <circle cx="307" cy="409" r="13" className="cat-stud" />
-        </g>
-        <g className="brick-cat__head">
-          <path d="M131 123l67 29h136l64-29v191H131z" className="cat-fill" />
-          <path d="M131 123l50 65-50 33zM398 123l-50 65 50 33z" className="cat-accent" />
-          <path d="M131 221h267M165 152v161M364 152v161" className="cat-line" />
-          <g className="brick-cat__eyes">
-            <rect x="190" y="205" width="48" height="29" rx="4" className="cat-eye" />
-            <rect x="292" y="205" width="48" height="29" rx="4" className="cat-eye" />
-          </g>
-          <path d="M252 245h14l7 9-14 10-14-10zM225 278c18 16 52 16 70 0" className="cat-stroke" />
-          <circle cx="189" cy="176" r="12" className="cat-stud" />
-          <circle cx="259" cy="176" r="12" className="cat-stud" />
-          <circle cx="329" cy="176" r="12" className="cat-stud" />
-        </g>
-      </svg>
-      <span className="brick-cat__tag brick-cat__tag--top">UNIT 01 / FELINE</span>
-      <span className="brick-cat__tag brick-cat__tag--bottom">SCANNING FORM</span>
-      <span className="brick-cat__corner brick-cat__corner--one" />
-      <span className="brick-cat__corner brick-cat__corner--two" />
-    </div>
-  );
-}
-
 export function LandingPage({ isAuthenticated }: LandingPageProps) {
   const workspacePath = "/workspace";
-  const loginPath = `/login?next=${encodeURIComponent(workspacePath)}`;
-  const destination = isAuthenticated ? workspacePath : loginPath;
+  const destination = isAuthenticated ? workspacePath : "/login";
+  const destinationState = isAuthenticated ? undefined : { returnTo: workspacePath };
 
   return (
     <main className="landing">
       <header className="landing__header">
         <Link to="/" className="landing__brand" aria-label="Image to LEGO home">
-          <span className="landing__brand-mark" aria-hidden="true">IL</span>
-          <span>IMAGE TO LEGO</span>
+          <span className="landing__brand-mark" aria-hidden="true">⌃</span>
+          <span><strong>image</strong> to <strong>LEGO</strong></span>
         </Link>
         <nav className="landing__nav" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#about">About</a>
-          <Link className="landing__nav-action" to={destination}>
-            {isAuthenticated ? "Open workspace" : "Sign in"}
+          <Link className="landing__nav-action" to={destination} state={destinationState}>
+            {isAuthenticated ? "Open workspace" : "Get started"} ↗
           </Link>
         </nav>
       </header>
+
       <section className="landing__hero" aria-labelledby="landing-title">
-        <div className="landing__grid" aria-hidden="true" />
         <div className="landing__hero-copy">
-          <p className="landing__eyebrow"><span /> AI RECONSTRUCTION LAB / 2026</p>
-          <h1 id="landing-title">FROM<br />PIXELS<br />TO BRICKS<span>.</span></h1>
-          <p className="landing__description">Turn your favourite images into stunning 3D LEGO-inspired creations, powered by AI.</p>
+          <p className="landing__eyebrow">From image to something real</p>
+          <h1 id="landing-title">Your ideas.<br />Made of<br /><span>bricks.</span></h1>
+          <p className="landing__description">Turn an everyday photo into an extraordinary LEGO-inspired 3D creation. Reconstruct, customize, and build it, one brick at a time.</p>
           <div className="landing__actions">
-            <Link className="landing__button landing__button--primary" to={destination}>
-              {isAuthenticated ? "OPEN WORKSPACE" : "GET STARTED"}
-              <span aria-hidden="true">↗</span>
-            </Link>
-            <a className="landing__button landing__button--ghost" href="#how-it-works">HOW IT WORKS</a>
+            <Link className="landing__button landing__button--primary" to={destination} state={destinationState}>Start creating <span aria-hidden="true">↗</span></Link>
+            <a className="landing__button landing__button--secondary" href="#how-it-works">See how it works <span aria-hidden="true">↘</span></a>
           </div>
+          <p className="landing__journey">01 / 03 <span>Upload image</span><i /> <span>Generate model</span><i /> <span>Build</span></p>
         </div>
-        <BrickCat />
-        <p className="landing__scroll-note">SCROLL TO EXPLORE <span>↓</span></p>
-        <p className="landing__index">01 / 03</p>
+        <div className="landing__art-panel"><BrickCat /></div>
       </section>
+
       <section className="landing__process" id="how-it-works" aria-labelledby="process-title">
-        <div className="landing__section-intro"><p className="landing__eyebrow"><span /> THE PROCESS</p><h2 id="process-title">MAKE A NEW<br />KIND OF MODEL.</h2></div>
-        <ol className="landing__steps"><li><span>01</span><h3>UPLOAD</h3><p>Start a private project with a JPEG, PNG, or WebP image.</p></li><li><span>02</span><h3>RECONSTRUCT</h3><p>Choose to generate a 3D model from your ready image.</p></li><li><span>03</span><h3>BUILD</h3><p>Explore the resulting brick model, parts list, and build guide.</p></li></ol>
+        <p className="landing__eyebrow">How it works</p>
+        <div className="landing__process-heading">
+          <h2 id="process-title">Three steps to<br />something amazing.</h2>
+          <p>Simple from<br />start to finish<br />/ 001–003</p>
+        </div>
+        <ol className="landing__steps">
+          <li><span className="landing__step-icon" aria-hidden="true">↥</span><p>01 — Upload</p><h3>Start with a photo.</h3><span>Choose a clear picture of anything that sparks your curiosity.</span></li>
+          <li><span className="landing__step-icon" aria-hidden="true">◇</span><p>02 — Reconstruct</p><h3>See it in 3D.</h3><span>Generate an approximate 3D representation using AI reconstruction.</span></li>
+          <li><span className="landing__step-icon" aria-hidden="true">▦</span><p>03 — Build</p><h3>Make it brick by brick.</h3><span>Explore the LEGO-style conversion, part inventory, and build guide.</span></li>
+        </ol>
       </section>
-      <section className="landing__about" id="about" aria-labelledby="about-title"><p className="landing__eyebrow"><span /> ABOUT THE SYSTEM</p><div><h2 id="about-title">YOUR IMAGE,<br />REIMAGINED IN BRICKS.</h2><p>Image to LEGO pairs an AI reconstruction workflow with a deterministic brick conversion, so you can inspect a LEGO-inspired interpretation of an image in one workspace.</p></div></section>
-      <section className="landing__closing" aria-labelledby="closing-title"><p className="landing__eyebrow"><span /> YOUR TURN</p><h2 id="closing-title">READY TO BUILD?</h2><Link className="landing__button landing__button--primary" to={destination}>START CREATING <span aria-hidden="true">↗</span></Link></section>
-      <footer className="landing__footer"><span>IMAGE TO LEGO / CAPSTONE PROJECT</span><span>MADE FOR CURIOUS BUILDERS</span></footer>
+
+      <section className="landing__closing" id="about" aria-labelledby="closing-title">
+        <p className="landing__eyebrow">Let’s make something</p>
+        <h2 id="closing-title">What will you build?</h2>
+        <p>Your next great idea could start with just one image.</p>
+        <Link className="landing__button landing__button--yellow" to={destination} state={destinationState}>Create your first project <span aria-hidden="true">↗</span></Link>
+      </section>
+      <footer className="landing__footer"><span>© 2026 image to LEGO</span><span>Built to explore what’s possible</span></footer>
     </main>
+  );
+}
+
+function BrickCat() {
+  return (
+    <svg className="brick-cat" viewBox="0 0 520 560" aria-hidden="true" focusable="false">
+      <ellipse cx="265" cy="500" rx="150" ry="20" className="brick-cat__shadow" />
+      <path d="M132 278h256v171H132zM155 252h211v30H155zM105 326h45v76h-45zM371 315h45v87h-45z" className="brick-cat__fill" />
+      <path d="M380 315c56-6 68-47 35-73M162 279h203M132 331h255M132 389h255M204 279v170M302 279v170" className="brick-cat__line" />
+      <path d="M131 123l67 29h136l64-29v191H131z" className="brick-cat__fill" />
+      <path d="M131 123l50 65-50 33zM398 123l-50 65 50 33z" className="brick-cat__accent" />
+      <path d="M131 221h267M165 152v161M364 152v161" className="brick-cat__line" />
+      <rect x="190" y="205" width="48" height="29" rx="5" className="brick-cat__eye" /><rect x="292" y="205" width="48" height="29" rx="5" className="brick-cat__eye" />
+      <path d="M252 245h14l7 9-14 10-14-10zM225 278c18 16 52 16 70 0" className="brick-cat__line" />
+      {[ [171,300], [239,300], [307,300], [348,354], [239,409], [307,409], [189,176], [259,176], [329,176] ].map(([cx, cy]) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="12" className="brick-cat__stud" />)}
+    </svg>
   );
 }

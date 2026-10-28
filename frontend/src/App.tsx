@@ -79,8 +79,8 @@ function ProtectedApp({ session, isLoadingSession, onSignedOut }: ProtectedAppPr
     return <main className="shell"><p className="status status--pending">Loading session…</p></main>;
   }
   if (!session) {
-    const next = `${location.pathname}${location.search}`;
-    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+    const returnTo = `${location.pathname}${location.search}`;
+    return <Navigate to="/login" replace state={{ returnTo }} />;
   }
   return <AppLayout session={session} onSignedOut={onSignedOut} />;
 }

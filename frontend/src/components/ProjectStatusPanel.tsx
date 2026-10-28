@@ -6,6 +6,7 @@ import { getArtifactReadUrl, getJob, getLegoModel, startConversion, startReconst
 import { startBrowserDownload } from "../browserDownload";
 import { conversionPollInterval } from "../conversionPolling";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
+import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import {
   BUILD_COMPLEXITY_PRESETS,
   DEFAULT_BUILD_COMPLEXITY,
@@ -48,9 +49,10 @@ interface ProjectStatusPanelProps {
   onLegoModelLoaded: (model: LegoModel) => void;
   isRehydratingLegoModel: boolean;
   hasPersistedLegoModelError: boolean;
-  onViewFullPartsList: () => void;
   buildComplexity: BuildComplexity;
   onBuildComplexityChange: (complexity: BuildComplexity) => void;
+  onViewFullPartsList: () => void;
+  onOpenBuildGuide: () => void;
   isVisible: boolean;
 }
 
@@ -74,9 +76,10 @@ export function ProjectStatusPanel({
   onLegoModelLoaded,
   isRehydratingLegoModel,
   hasPersistedLegoModelError,
-  onViewFullPartsList,
   buildComplexity,
   onBuildComplexityChange,
+  onViewFullPartsList,
+  onOpenBuildGuide,
   isVisible,
 }: ProjectStatusPanelProps) {
   const queryClient = useQueryClient();
@@ -290,12 +293,20 @@ export function ProjectStatusPanel({
       {project.status === "model_ready" ? (
         <>
           <PanelIntro
-            title={legoModel ? "Your LEGO model is ready" : "Your 3D model is ready"}
+            title={legoModel ? "Project details" : "Your 3D model is ready"}
             text={legoModel
               ? "Use the model, parts list, or build guide to review your build."
               : "Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."}
           />
-          {legoModel ? <LegoSummary model={legoModel} /> : null}
+          {legoModel ? <h3 className="visually-hidden">Your LEGO model is ready</h3> : null}
+          {legoModel ? (
+            <ProjectInspectorSummary
+              project={project}
+              accessToken={accessToken}
+              userId={userId}
+            />
+          ) : null}
+          {legoModel ? <LegoMetrics model={legoModel} partsList={partsList} /> : null}
           <BuildComplexitySelector
             value={buildComplexity}
             onChange={onBuildComplexityChange}
@@ -353,6 +364,11 @@ export function ProjectStatusPanel({
               <button type="button" className="button button--secondary" onClick={handleConvert}>Try conversion again</button>
             </div>
           ) : null}
+          {legoModel ? (
+            <button type="button" className="button button--yellow side-panel__open-guide" onClick={onOpenBuildGuide}>
+              Open build guide
+            </button>
+          ) : null}
           {legoModel && partsList ? (
             <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} />
           ) : null}
@@ -394,14 +410,7 @@ export function ProjectStatusPanel({
         </>
       ) : null}
 
-      {project.sourceImage ? (
-        legoModel ? (
-          <details className="project-details">
-            <summary>Project details</summary>
-            <PhotoDetails sourceImage={project.sourceImage} />
-          </details>
-        ) : <PhotoDetails sourceImage={project.sourceImage} />
-      ) : null}
+      {project.sourceImage && !legoModel ? <PhotoDetails sourceImage={project.sourceImage} /> : null}
       </aside>
     </>
   );
@@ -437,13 +446,53 @@ function LegoResult({
   return null;
 }
 
-function LegoSummary({ model }: { model: LegoModel }) {
+function LegoMetrics({
+  model,
+  partsList,
+}: {
+  model: LegoModel;
+  partsList: LegoPartsListResult | null;
+}) {
   const { dimensions } = model;
   const complexityLabel = buildComplexityLabel(model.metadata.targetParts) ?? "Custom";
   return (
     <section className="lego-result" aria-labelledby="lego-result-title">
-      <h2 id="lego-result-title" className="side-panel__title">Build summary</h2>
-      <p className="side-panel__hint">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {heightInPlates(dimensions)} plates tall · {complexityLabel} target</p>
+      <h2 id="lego-result-title" className="side-panel__title visually-hidden">Build summary</h2>
+      <p className="visually-hidden">{model.partCount} parts · {dimensions.widthStuds} × {dimensions.depthStuds} studs · {heightInPlates(dimensions)} plates tall · {complexityLabel} target</p>
+      <div className="lego-metrics" aria-label="Model metrics">
+        <div><strong>{model.partCount}</strong><span>Total parts</span></div>
+        <div><strong>{partsList?.valid ? partsList.uniquePartTypeCount : "—"}</strong><span>Part types</span></div>
+        <div><strong>{heightInPlates(dimensions)}</strong><span>Plates tall</span></div>
+      </div>
+    </section>
+  );
+}
+
+function ProjectInspectorSummary({
+  project,
+  accessToken,
+  userId,
+}: {
+  project: ProjectDetail;
+  accessToken: string;
+  userId: string;
+}) {
+  const sourceImage = project.sourceImage;
+  const sourceImageUrl = useArtifactReadUrl(accessToken, userId, sourceImage?.artifactId ?? null);
+  const sourceType = sourceImage ? (IMAGE_TYPE_LABELS[sourceImage.mimeType] ?? sourceImage.mimeType) : "No source";
+
+  return (
+    <section className="project-summary" aria-label="Project summary">
+      {sourceImageUrl.data?.url ? (
+        <img src={sourceImageUrl.data.url} alt="Source image" />
+      ) : (
+        <span className="project-summary__placeholder"><BrickIcon size={25} /></span>
+      )}
+      <dl>
+        <div><dt>Project</dt><dd>{project.name}</dd></div>
+        <div><dt>Uploaded</dt><dd>{sourceImage ? uploadDateFormat.format(new Date(sourceImage.createdAt)) : "—"}</dd></div>
+        <div><dt>Source</dt><dd>{sourceImage ? `${sourceType} · ${fileSizeFormat.format(sourceImage.sizeBytes / 1_000_000)}` : sourceType}</dd></div>
+      </dl>
     </section>
   );
 }

@@ -1044,7 +1044,7 @@ describe("project flows", () => {
     renderApp(`/projects/${PROJECT_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Project not found" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/");
+    expect(screen.getAllByRole("link", { name: "All projects" })[0]).toHaveAttribute("href", "/workspace");
   });
 
   it("shows each project's status badge and photo thumbnail on its card", async () => {

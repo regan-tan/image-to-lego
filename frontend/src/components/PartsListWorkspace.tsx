@@ -60,8 +60,17 @@ export function PartsListWorkspace({
         parts={partsList.parts}
         partColorVerificationVersion={partColorVerificationVersion}
       />
-      <div className="parts-list__table-wrap">
+      <div className="parts-list__table-wrap" role="region" aria-label="Parts inventory" tabIndex={0}>
         <table className="parts-list__table">
+          <colgroup>
+            <col className="parts-list__preview-column" />
+            <col className="parts-list__part-id-column" />
+            <col className="parts-list__part-name-column" />
+            <col className="parts-list__color-column" />
+            <col className="parts-list__color-id-column" />
+            <col className="parts-list__verification-column" />
+            <col className="parts-list__quantity-column" />
+          </colgroup>
           <thead><tr><th scope="col">Preview</th><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Verification</th><th scope="col">Quantity</th></tr></thead>
           <tbody>{partsList.parts.map((part) => <PartsListRow key={partKey(part)} part={part} />)}</tbody>
         </table>
@@ -134,7 +143,7 @@ function PartsListDownloadButton({ parts }: { parts: LegoPartGroup[] }) {
 function PartsListRow({ part }: { part: LegoPartGroup }) {
   return (
     <tr>
-      <td data-label="Preview"><LegoPartThumbnail part={part} /></td>
+      <td data-label="Preview"><LegoPartThumbnail part={part} variant="illustration" /></td>
       <td data-label="Part ID">{part.partId ?? "Legacy part"}</td>
       <td data-label="Part name">{partLabel(part)}</td>
       <td data-label="Color">

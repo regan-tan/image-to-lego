@@ -1,12 +1,12 @@
 import type { Session } from "@supabase/supabase-js";
 import { useState } from "react";
-import { Link, Outlet, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { supabase } from "../lib/supabase";
 import { AccountMenu } from "./AccountMenu";
 import type { AppLayoutContext } from "./appLayoutContext";
 import { HowItWorksDialog } from "./HowItWorksDialog";
-import { HelpIcon, LogoMark } from "./Icons";
+import { HelpIcon, LogoMark, PlusIcon } from "./Icons";
 import { NewProjectDialog } from "./NewProjectDialog";
 
 interface AppLayoutProps {
@@ -16,6 +16,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -63,9 +64,21 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
         </div>
       </header>
       {signOutError ? <p className="form-error page-alert" role="alert">{signOutError}</p> : null}
-      <main className="page">
-        <Outlet context={layoutContext} />
-      </main>
+      <div className="app-workspace">
+        <aside className="app-sidebar" aria-label="Workspace navigation">
+          <Link className="app-sidebar__brand" to="/workspace"><LogoMark /> <span>IMAGE → LEGO</span></Link>
+          <p className="app-sidebar__section">Workspace</p>
+          <nav className="app-sidebar__nav">
+            <Link to="/workspace" className={location.pathname === "/workspace" ? "is-active" : ""}>All projects</Link>
+            <Link to="/workspace" className={location.pathname.startsWith("/projects/") ? "is-active" : ""}>3D studio</Link>
+            <button type="button" aria-label="Create a new project" onClick={layoutContext.openNewProject}><PlusIcon size={16} /> New project</button>
+          </nav>
+          <p className="app-sidebar__section">Preferences</p>
+          <nav className="app-sidebar__nav"><Link to="/profile" aria-label="Open profile" className={location.pathname === "/profile" ? "is-active" : ""}>My profile</Link><button type="button" onClick={layoutContext.openHowItWorks}><HelpIcon size={16} /> About this app</button></nav>
+          <button type="button" aria-label="Sign out of workspace" className="app-sidebar__signout" onClick={() => void handleSignOut()}>Sign out</button>
+        </aside>
+        <main className="page"><Outlet context={layoutContext} /></main>
+      </div>
       <HowItWorksDialog
         isOpen={isHowItWorksOpen}
         onClose={() => setIsHowItWorksOpen(false)}
