@@ -19,12 +19,16 @@ export function ProjectsPage() {
   const projects = useProjects(session.access_token, session.user.id);
   const projectList = projects.data ?? [];
   const hasProjects = projectList.length > 0;
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const visibleProjects = projectList.filter((project) => project.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()) && (status === "all" || project.status === status));
 
   return (
-    <div className="page__container">
+    <div className="page__container workspace-page">
       <div className="page-heading">
         <div>
-          <h1>Projects</h1>
+          <p className="eyebrow">Your personal workspace</p>
+          <h1>Your creations.</h1>
           {hasProjects ? (
             <p className="page-heading__meta">
               {projectList.length} {projectList.length === 1 ? "project" : "projects"}
@@ -54,13 +58,18 @@ export function ProjectsPage() {
       ) : null}
 
       {hasProjects ? (
+        <>
+          <section className="workspace-welcome" aria-labelledby="workspace-welcome-title"><div><p className="eyebrow">Made for makers</p><h2 id="workspace-welcome-title">Every creation starts<br />with a single image.</h2><p>Upload a photo, watch it become 3D, and explore your very own brick-built version.</p><button type="button" className="button button--secondary" onClick={openNewProject}>Explore the studio ↗</button></div><span className="workspace-welcome__bricks" aria-hidden="true">▦</span></section>
+          <div className="projects-toolbar"><h2>Recent projects <span>{projectList.length.toString().padStart(2, "0")}</span></h2><div><label className="visually-hidden" htmlFor="project-search">Search projects</label><input id="project-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search projects..." /><label className="visually-hidden" htmlFor="project-status">Filter projects</label><select id="project-status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All projects</option><option value="needs_photo">Needs photo</option><option value="photo_ready">Photo ready</option><option value="generating">Generating</option><option value="model_ready">Model ready</option><option value="failed">Failed</option></select></div></div>
         <ul className="project-grid">
-          {projectList.map((project) => (
+          {visibleProjects.map((project) => (
             <li key={project.id}>
               <ProjectCard project={project} accessToken={session.access_token} userId={session.user.id} />
             </li>
           ))}
         </ul>
+        {visibleProjects.length === 0 ? <p className="empty-filter-state">No projects match the current search or filter.</p> : null}
+        </>
       ) : null}
     </div>
   );
@@ -133,8 +142,8 @@ function EmptyBaseplate({ onNewProject, onHowItWorks }: EmptyBaseplateProps) {
           <rect x="2" y="54" width="108" height="10" rx="5" fill="#d9a900" />
         </svg>
         <div className="empty-baseplate__text">
-          <h2 id="empty-projects-title">Your baseplate is empty</h2>
-          <p>Add a photo of any object. We’ll turn it into a 3D model, then into a LEGO build.</p>
+          <h2 id="empty-projects-title">Your first build starts here.</h2>
+          <p>Upload an image and transform it into a LEGO creation.</p>
         </div>
         <div className="button-row">
           <button type="button" className="button" onClick={onNewProject}>

@@ -114,32 +114,33 @@ describe("App", () => {
     vi.clearAllMocks();
   });
 
-  it("redirects unauthenticated visitors from the home page to login", async () => {
+  it("shows the public landing page to unauthenticated visitors", async () => {
     renderApp("/");
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Your ideas.*Made of.*bricks/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Get started/ })).toHaveAttribute("href", "/login");
   });
 
   it("renders the login page", async () => {
     renderApp("/login");
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/signup");
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup");
   });
 
   it("renders the signup page", async () => {
     renderApp("/signup");
 
-    expect(await screen.findByRole("heading", { name: "Create your account" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Start building your ideas." })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("starts email sign-up and shows email confirmation", async () => {
     renderApp("/signup");
 
-    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "new@example.com" } });
+    fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "new@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "safe-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Sign up" }));
+    fireEvent.click(screen.getByRole("button", { name: /Create account/ }));
 
     expect(authMock.signUp).toHaveBeenCalledWith({ email: "new@example.com", password: "safe-password" });
     expect(await screen.findByRole("heading", { name: "Check your email" })).toBeInTheDocument();
@@ -148,12 +149,12 @@ describe("App", () => {
   it("returns from signup confirmation to the login route", async () => {
     renderApp("/signup");
 
-    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "new@example.com" } });
+    fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "new@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "safe-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Sign up" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Back to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: /Create account/ }));
+    fireEvent.click(await screen.findByRole("link", { name: "Back to sign in" }));
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toHaveValue("");
   });
 
@@ -162,11 +163,11 @@ describe("App", () => {
     mockApi();
     renderApp("/login");
 
-    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "builder@example.com" } });
+    fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "builder@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "safe-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: /Sign in/ }));
 
-    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your creations." })).toBeInTheDocument();
     expect(authMock.signInWithPassword).toHaveBeenCalledWith({
       email: "builder@example.com",
       password: "safe-password",
@@ -180,9 +181,9 @@ describe("App", () => {
     });
     renderApp("/login");
 
-    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "builder@example.com" } });
+    fireEvent.change(await screen.findByLabelText("Email address"), { target: { value: "builder@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: /Sign in/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "We could not sign you in. Check your email and password and try again.",
@@ -190,19 +191,19 @@ describe("App", () => {
   });
 
   it("starts Google and GitHub OAuth with the application root redirect", async () => {
-    const applicationRoot = new URL("/", window.location.origin).toString();
+    const workspaceUrl = new URL("/workspace", window.location.origin).toString();
     renderApp("/login");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue with GitHub" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Google" }));
+    fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
 
     expect(authMock.signInWithOAuth).toHaveBeenNthCalledWith(1, {
       provider: "google",
-      options: { redirectTo: applicationRoot },
+      options: { redirectTo: workspaceUrl },
     });
     expect(authMock.signInWithOAuth).toHaveBeenNthCalledWith(2, {
       provider: "github",
-      options: { redirectTo: applicationRoot },
+      options: { redirectTo: workspaceUrl },
     });
   });
 
@@ -211,7 +212,7 @@ describe("App", () => {
     mockApi();
     renderApp("/login");
 
-    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your creations." })).toBeInTheDocument();
   });
 
   it("redirects an authenticated user from signup to home", async () => {
@@ -219,7 +220,7 @@ describe("App", () => {
     mockApi();
     renderApp("/signup");
 
-    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your creations." })).toBeInTheDocument();
   });
 
   it("sends the session access token to the profile endpoint", async () => {
@@ -239,13 +240,20 @@ describe("App", () => {
   it("signs out from the account menu and returns to login", async () => {
     mockSignedInSession();
     mockApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(authMock.signOut).toHaveBeenCalledOnce();
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+  });
+
+  it("redirects a private project URL to sign in", async () => {
+    renderApp("/projects/eb4d4208-4c79-4bb4-a636-329a37ee5c24");
+
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup");
   });
 });
 
@@ -266,27 +274,27 @@ describe("Signed-in app", () => {
 
   it("shows the empty baseplate instead of profile details on first visit", async () => {
     mockApi({ projects: [] });
-    renderApp("/");
+    renderApp("/workspace");
 
-    expect(await screen.findByRole("heading", { name: "Your baseplate is empty" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your first build starts here." })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New project" })).toBeInTheDocument();
     expect(screen.queryByText("builder@example.com")).not.toBeInTheDocument();
   });
 
   it("lists projects as cards that link to their project page", async () => {
     mockApi({ projects: [castleProject] });
-    renderApp("/");
+    renderApp("/workspace");
 
     const card = await screen.findByRole("link", { name: /Castle/ });
     expect(card).toHaveAttribute("href", `/projects/${castleProject.id}`);
     expect(within(card).getByText("3D model ready")).toBeInTheDocument();
     expect(screen.getByText("1 project")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Your baseplate is empty" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your first build starts here." })).not.toBeInTheDocument();
   });
 
   it("shows the signed-in email in the account menu and closes it with Escape", async () => {
     mockApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     const trigger = await screen.findByRole("button", { name: "Account menu" });
     fireEvent.click(trigger);
@@ -304,9 +312,9 @@ describe("Signed-in app", () => {
 
   it("opens How it works only when asked and closes it again", async () => {
     mockApi({ projects: [castleProject] });
-    renderApp("/");
+    renderApp("/workspace");
 
-    await screen.findByRole("heading", { name: "Projects" });
+    await screen.findByRole("heading", { name: "Your creations." });
     expect(screen.queryByRole("dialog", { name: "How it works" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "How it works" }));

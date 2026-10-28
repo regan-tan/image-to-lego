@@ -36,3 +36,5 @@ Thumbs.db
 # Local artifacts
 artifacts/
 *.log
+
+frontend-design-reference

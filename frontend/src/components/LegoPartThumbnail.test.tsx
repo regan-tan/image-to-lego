@@ -57,4 +57,12 @@ describe("partThumbnailRenderInput", () => {
     expect(screen.getByTestId("lego-part-thumbnail-unavailable")).toHaveAttribute("data-part-id", "unknown-999");
     expect(screen.getByRole("img", { name: "unknown-999 thumbnail unavailable" })).toBeInTheDocument();
   });
+
+  it("uses a compact data-derived brick illustration when requested for a long parts list", () => {
+    render(<LegoPartThumbnail part={part({ lengthStuds: 3, widthStuds: 2, heightPlates: 1 })} variant="illustration" />);
+
+    expect(screen.getByTestId("lego-part-thumbnail")).toHaveAttribute("data-part-id", "3001");
+    expect(screen.getByRole("img", { name: "3001 Brick 2 x 4 brick preview" })).toBeInTheDocument();
+    expect(document.querySelector(".lego-part-thumbnail svg")).toBeInTheDocument();
+  });
 });

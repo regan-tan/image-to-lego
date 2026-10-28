@@ -70,15 +70,16 @@ export function PhotoPicker({ inputId, file, onSelect, disabled = false }: Photo
           </span>
           <span className="photo-picker__text">
             <span className="photo-picker__title">
-              Drag a photo here or <span className="photo-picker__browse">browse</span>
+              Drop an image here
             </span>
-            <span className="photo-picker__hint">JPEG, PNG or WebP, up to {formatMaxImageSize()}</span>
+            <span className="photo-picker__hint">or click to upload · JPEG, PNG or WebP, up to {formatMaxImageSize()}</span>
           </span>
         </>
       )}
       <input
         id={inputId}
         className="visually-hidden"
+        aria-label="Drag a photo here"
         type="file"
         accept={ACCEPTED_IMAGE_TYPES}
         disabled={disabled}
