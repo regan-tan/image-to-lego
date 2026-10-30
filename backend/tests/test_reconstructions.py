@@ -119,6 +119,11 @@ class FakeReconstructionRepository:
         self.created_outputs += 1
         return uuid4()
 
+    async def finalize_success(self, **_: object) -> bool:
+        self.created_outputs += 1
+        self.succeeded = True
+        return True
+
     async def mark_succeeded(self, **_: object) -> None:
         self.succeeded = True
 
@@ -378,6 +383,7 @@ async def test_source_sha_mismatch_prevents_paid_submission() -> None:
     await processor(repository, blob, provider, FakeGenerationQueue()).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert provider.submissions == 0
     assert repository.terminal_states == [("failed", "source_image_validation_failed")]
@@ -391,6 +397,7 @@ async def test_source_mime_signature_mismatch_prevents_paid_submission() -> None
     await processor(repository, FakeBlobStorage(), provider, FakeGenerationQueue()).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert provider.submissions == 0
     assert repository.terminal_states == [("failed", "source_image_validation_failed")]
@@ -406,6 +413,7 @@ async def test_missing_source_blob_prevents_paid_submission() -> None:
     await processor(repository, blob, provider, FakeGenerationQueue()).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert provider.submissions == 0
     assert repository.terminal_states == [("failed", "source_image_validation_failed")]
@@ -421,6 +429,7 @@ async def test_temporary_source_blob_failure_is_rescheduled() -> None:
     await processor(repository, blob, FakeProvider(), queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert queue.scheduled == [repository.worker_job.reconstruction.job.id]
     assert repository.terminal_states == []
@@ -435,6 +444,7 @@ async def test_fresh_unconfirmed_provider_submission_is_rescheduled_without_resu
     await processor(repository, FakeBlobStorage(), provider, queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert provider.submissions == 0
     assert queue.scheduled == [repository.worker_job.reconstruction.job.id]
@@ -452,6 +462,7 @@ async def test_stale_unconfirmed_provider_submission_fails_without_resubmission(
     await processor(repository, FakeBlobStorage(), provider, FakeGenerationQueue()).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert provider.submissions == 0
     assert repository.terminal_states == [("failed", "provider_submission_unconfirmed")]
@@ -465,13 +476,21 @@ async def test_valid_source_submits_once_and_later_queue_delivery_only_polls() -
     provider = FakeProvider()
     queue = FakeGenerationQueue()
     current = processor(repository, blob, provider, queue)
-    await current.process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    await current.process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert provider.submissions == 1
     assert repository.persisted_provider_ids == ["fal-request"]
     assert len(queue.scheduled) == 1
 
     repository.worker_job = worker_job(provider_job_id="fal-request")
-    await current.process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    await current.process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert provider.submissions == 1
     assert len(queue.scheduled) == 2
 
@@ -490,7 +509,11 @@ async def test_provider_success_stores_one_bounded_canonical_model() -> None:
         FakeProvider(ReconstructionState.SUCCEEDED),
         FakeGenerationQueue(),
         download,
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.created_outputs == 1
     assert repository.succeeded
     assert blob.uploaded[0][0].endswith("/model.glb")
@@ -517,7 +540,11 @@ async def test_existing_matching_canonical_model_is_reused() -> None:
         FakeProvider(ReconstructionState.SUCCEEDED),
         FakeGenerationQueue(),
         download,
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.created_outputs == 1
     assert repository.succeeded
 
@@ -542,7 +569,11 @@ async def test_conflicting_existing_canonical_model_fails_safely() -> None:
         FakeProvider(ReconstructionState.SUCCEEDED),
         FakeGenerationQueue(),
         download,
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.created_outputs == 0
     assert repository.succeeded is False
     assert repository.terminal_states == [("failed", "canonical_model_conflict")]
@@ -561,6 +592,7 @@ async def test_provider_result_network_failure_is_rescheduled() -> None:
     await processor(repository, FakeBlobStorage(), provider, queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert queue.scheduled == [repository.worker_job.reconstruction.job.id]
     assert repository.terminal_states == []
@@ -583,7 +615,11 @@ async def test_invalid_glb_fails_terminally(content: bytes) -> None:
         FakeProvider(ReconstructionState.SUCCEEDED),
         FakeGenerationQueue(),
         download,
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.terminal_states == [("failed", "provider_result_invalid")]
 
 
@@ -600,7 +636,11 @@ async def test_oversized_provider_result_fails_terminally() -> None:
         FakeProvider(ReconstructionState.SUCCEEDED),
         FakeGenerationQueue(),
         download,
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.terminal_states == [("failed", "provider_result_invalid")]
 
 
@@ -624,7 +664,11 @@ async def test_terminal_provider_states_are_recorded(
         FakeBlobStorage(),
         FakeProvider(state),
         FakeGenerationQueue(),
-    ).process(job_id=repository.worker_job.reconstruction.job.id, owner_id=OWNER_ID)
+    ).process(
+        job_id=repository.worker_job.reconstruction.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
     assert repository.terminal_states == [(expected_status, error_code)]
 
 
