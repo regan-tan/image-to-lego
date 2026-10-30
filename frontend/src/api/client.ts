@@ -16,8 +16,9 @@ import {
 import { reconstructionSchema, type Reconstruction } from "../schemas/reconstructions";
 import { conversionSchema, type Conversion } from "../schemas/conversions";
 import { legoModelSchema, type LegoModel } from "../schemas/legoModels";
+import { publicRuntimeConfig } from "../runtimeConfig";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
+const apiBaseUrl = (publicRuntimeConfig?.apiBaseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
   /\/$/,
   "",
 );

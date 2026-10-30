@@ -4,6 +4,11 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 RECONSTRUCTION_SOURCE_SAS_PICKUP_BUFFER_MINUTES = 5
+SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS = 15 * 60
+SERVICE_BUS_MAX_LOCK_RENEWAL_LIMIT_SECONDS = 60 * 60
+WORKER_JOB_LEASE_SECONDS = 120
+WORKER_JOB_LEASE_RENEWAL_SECONDS = 30
+WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS = 5
 
 
 class Settings(BaseSettings):
@@ -30,6 +35,22 @@ class Settings(BaseSettings):
     azure_service_bus_namespace: str | None = None
     azure_service_bus_queue: str | None = None
     azure_service_bus_generation_queue: str | None = None
+    service_bus_max_lock_renewal_seconds: int = Field(
+        default=SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS,
+        ge=60,
+        le=SERVICE_BUS_MAX_LOCK_RENEWAL_LIMIT_SECONDS,
+    )
+    worker_job_lease_seconds: int = Field(default=WORKER_JOB_LEASE_SECONDS, ge=60, le=600)
+    worker_job_lease_renewal_seconds: int = Field(
+        default=WORKER_JOB_LEASE_RENEWAL_SECONDS,
+        ge=10,
+        le=300,
+    )
+    worker_job_lease_recovery_buffer_seconds: int = Field(
+        default=WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS,
+        ge=1,
+        le=60,
+    )
     fal_key: str | None = None
     reconstruction_poll_interval_seconds: int = Field(default=10, gt=0)
     reconstruction_max_runtime_minutes: int = Field(default=20, gt=0)
@@ -48,6 +69,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "RECONSTRUCTION_SOURCE_SAS_LIFETIME_MINUTES must cover the maximum "
                 "reconstruction runtime plus five minutes."
+            )
+        if self.worker_job_lease_renewal_seconds >= self.worker_job_lease_seconds:
+            raise ValueError(
+                "WORKER_JOB_LEASE_RENEWAL_SECONDS must be less than the lease duration."
             )
         return self
 

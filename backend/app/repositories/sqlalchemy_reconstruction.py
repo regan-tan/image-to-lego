@@ -132,13 +132,22 @@ class SqlAlchemyReconstructionRepository:
             )
 
     async def mark_queue_publish_failed(self, *, job_id: UUID, owner_id: UUID) -> None:
-        await self.mark_terminal(
-            job_id=job_id,
-            owner_id=owner_id,
-            status=JobStatus.FAILED.value,
-            error_code="generation_queue_unavailable",
-            error_message="Generation could not be queued. Please start it again.",
-        )
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            await self._session.execute(
+                text(
+                    """
+                    update public.jobs j
+                    set status = 'failed', error_code = 'generation_queue_unavailable',
+                        error_message = 'Generation could not be queued. Please start it again.'
+                    from public.projects p
+                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.status = 'queued'
+                      and j.worker_attempt_id is null
+                    """
+                ),
+                {"job_id": job_id, "owner_id": owner_id},
+            )
 
     async def get_for_owner(self, *, job_id: UUID, owner_id: UUID) -> ReconstructionJob | None:
         async with self._session.begin():
@@ -179,7 +188,122 @@ class SqlAlchemyReconstructionRepository:
             source_artifact=_artifact_from_row(row),
         )
 
-    async def claim_provider_submission(self, *, job_id: UUID, owner_id: UUID) -> bool:
+    async def acquire_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        lease_seconds: int,
+    ) -> UUID | None:
+        attempt_id = uuid4()
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            result = await self._session.execute(
+                text(
+                    """
+                    update public.jobs j
+                    set worker_attempt_id = :attempt_id,
+                        worker_lease_expires_at = now() + (:lease_seconds * interval '1 second')
+                    from public.projects p
+                    where j.id = :job_id
+                      and j.project_id = p.id
+                      and p.owner_id = :owner_id
+                      and j.type = 'reconstruction'
+                      and j.status in ('queued', 'running')
+                      and (
+                          j.worker_attempt_id is null
+                          or j.worker_lease_expires_at <= now()
+                      )
+                    returning j.worker_attempt_id
+                    """
+                ),
+                {
+                    "job_id": job_id,
+                    "owner_id": owner_id,
+                    "attempt_id": attempt_id,
+                    "lease_seconds": lease_seconds,
+                },
+            )
+        return cast(UUID | None, result.scalar_one_or_none())
+
+    async def renew_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+        lease_seconds: int,
+    ) -> bool:
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            result = await self._session.execute(
+                text(
+                    """
+                    update public.jobs j
+                    set worker_lease_expires_at = now() + (:lease_seconds * interval '1 second')
+                    from public.projects p
+                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.status in ('queued', 'running')
+                      and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
+                    returning j.id
+                    """
+                ),
+                {
+                    "job_id": job_id,
+                    "owner_id": owner_id,
+                    "attempt_id": attempt_id,
+                    "lease_seconds": lease_seconds,
+                },
+            )
+        return result.scalar_one_or_none() is not None
+
+    async def recovery_time(self, *, job_id: UUID, owner_id: UUID) -> datetime | None:
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            result = await self._session.execute(
+                text(
+                    """
+                    select greatest(coalesce(j.worker_lease_expires_at, now()), now())
+                    from public.jobs j
+                    join public.projects p on p.id = j.project_id
+                    where j.id = :job_id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.status in ('queued', 'running')
+                    """
+                ),
+                {"job_id": job_id, "owner_id": owner_id},
+            )
+        return cast(datetime | None, result.scalar_one_or_none())
+
+    async def release_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+    ) -> None:
+        async with self._session.begin():
+            await set_database_owner(self._session, owner_id)
+            await self._session.execute(
+                text(
+                    """
+                    update public.jobs j
+                    set worker_attempt_id = null, worker_lease_expires_at = null
+                    from public.projects p
+                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.worker_attempt_id = :attempt_id
+                    """
+                ),
+                {"job_id": job_id, "owner_id": owner_id, "attempt_id": attempt_id},
+            )
+
+    async def claim_provider_submission(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+    ) -> bool:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
             result = await self._session.execute(
@@ -188,16 +312,14 @@ class SqlAlchemyReconstructionRepository:
                     update public.jobs j
                     set status = 'running'
                     from public.projects p
-                    where j.id = :job_id
-                      and j.project_id = p.id
-                      and p.owner_id = :owner_id
-                      and j.type = 'reconstruction'
-                      and j.status = 'queued'
-                      and j.provider_job_id is null
+                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.status = 'queued'
+                      and j.provider_job_id is null and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
                     returning j.id
                     """
                 ),
-                {"job_id": job_id, "owner_id": owner_id},
+                {"job_id": job_id, "owner_id": owner_id, "attempt_id": attempt_id},
             )
         return result.scalar_one_or_none() is not None
 
@@ -206,11 +328,12 @@ class SqlAlchemyReconstructionRepository:
         *,
         job_id: UUID,
         owner_id: UUID,
+        attempt_id: UUID,
         provider_job_id: str,
-    ) -> None:
+    ) -> bool:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
-            await self._session.execute(
+            result = await self._session.execute(
                 text(
                     """
                     update public.jobs j
@@ -221,120 +344,146 @@ class SqlAlchemyReconstructionRepository:
                       and p.owner_id = :owner_id
                       and j.type = 'reconstruction'
                       and j.provider_job_id is null
+                      and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
+                    returning j.id
                     """
                 ),
-                {"job_id": job_id, "owner_id": owner_id, "provider_job_id": provider_job_id},
+                {
+                    "job_id": job_id,
+                    "owner_id": owner_id,
+                    "attempt_id": attempt_id,
+                    "provider_job_id": provider_job_id,
+                },
             )
+        return result.scalar_one_or_none() is not None
 
     async def mark_terminal(
         self,
         *,
         job_id: UUID,
         owner_id: UUID,
+        attempt_id: UUID,
         status: str,
         error_code: str | None = None,
         error_message: str | None = None,
-    ) -> None:
+    ) -> bool:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
-            await self._session.execute(
+            result = await self._session.execute(
                 text(
                     """
                     update public.jobs j
-                    set status = :status, error_code = :error_code, error_message = :error_message
+                set status = :status, error_code = :error_code, error_message = :error_message,
+                    worker_attempt_id = null, worker_lease_expires_at = null
                     from public.projects p
                     where j.id = :job_id
                       and j.project_id = p.id
                       and p.owner_id = :owner_id
                       and j.type = 'reconstruction'
                       and j.status in ('queued', 'running')
+                      and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
+                    returning j.id
                     """
                 ),
                 {
                     "job_id": job_id,
                     "owner_id": owner_id,
+                    "attempt_id": attempt_id,
                     "status": status,
                     "error_code": error_code,
                     "error_message": error_message,
                 },
             )
+        return result.scalar_one_or_none() is not None
 
-    async def create_output_artifact(
+    async def finalize_success(
         self,
         *,
         job_id: UUID,
         owner_id: UUID,
+        attempt_id: UUID,
         artifact_id: UUID,
         blob_name: str,
         mime_type: str,
         size_bytes: int,
         sha256: str,
-    ) -> UUID:
+    ) -> bool:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
-            inserted = await self._session.execute(
+            updated = await self._session.execute(
+                text(
+                    """
+                    update public.jobs j
+                    set status = 'succeeded', error_code = null, error_message = null,
+                        worker_attempt_id = null, worker_lease_expires_at = null
+                    from public.projects p
+                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
+                      and j.type = 'reconstruction' and j.status = 'running'
+                      and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
+                    returning j.project_id
+                    """
+                ),
+                {"job_id": job_id, "owner_id": owner_id, "attempt_id": attempt_id},
+            )
+            project_id = cast(UUID | None, updated.scalar_one_or_none())
+            if project_id is None:
+                return False
+            await self._session.execute(
                 text(
                     """
                     insert into public.artifacts (
                         id, project_id, producer_job_id, kind, blob_name, mime_type, size_bytes,
                         sha256, status, expires_at
                     )
-                    select :artifact_id, j.project_id, j.id, 'reconstructed_model', :blob_name,
-                           :mime_type, :size_bytes, :sha256, 'ready', null
-                    from public.jobs j
-                    join public.projects p on p.id = j.project_id
-                    where j.id = :job_id and p.owner_id = :owner_id and j.type = 'reconstruction'
-                    on conflict do nothing
-                    returning id
+                    values (:artifact_id, :project_id, :job_id, 'reconstructed_model', :blob_name,
+                           :mime_type, :size_bytes, :sha256, 'ready', null)
+                    on conflict (producer_job_id) where kind = 'reconstructed_model' do nothing
                     """
                 ),
                 {
                     "artifact_id": artifact_id,
                     "job_id": job_id,
-                    "owner_id": owner_id,
+                    "project_id": project_id,
                     "blob_name": blob_name,
                     "mime_type": mime_type,
                     "size_bytes": size_bytes,
                     "sha256": sha256,
                 },
             )
-            output_id: object | None = inserted.scalar_one_or_none()
-            if output_id is None:
-                existing = await self._session.execute(
-                    text(
-                        """
-                        select a.id
-                        from public.artifacts a
-                        join public.jobs j on j.id = a.producer_job_id
-                        join public.projects p on p.id = j.project_id
-                        where a.producer_job_id = :job_id
-                          and a.kind = 'reconstructed_model'
-                          and p.owner_id = :owner_id
-                        """
-                    ),
-                    {"job_id": job_id, "owner_id": owner_id},
-                )
-                output_id = existing.scalar_one()
-            return cast(UUID, output_id)
+        return True
 
-    async def mark_succeeded(self, *, job_id: UUID, owner_id: UUID) -> None:
+    async def mark_succeeded(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+    ) -> bool:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
-            await self._session.execute(
+            result = await self._session.execute(
                 text(
                     """
                     update public.jobs j
-                    set status = 'succeeded', error_code = null, error_message = null
+                    set status = 'succeeded', error_code = null, error_message = null,
+                        worker_attempt_id = null, worker_lease_expires_at = null
                     from public.projects p
                     where j.id = :job_id
                       and j.project_id = p.id
                       and p.owner_id = :owner_id
                       and j.type = 'reconstruction'
-                      and j.status in ('queued', 'running')
+                      and j.status = 'running'
+                      and j.worker_attempt_id = :attempt_id
+                      and j.worker_lease_expires_at > now()
+                    returning j.id
                     """
                 ),
-                {"job_id": job_id, "owner_id": owner_id},
+                {"job_id": job_id, "owner_id": owner_id, "attempt_id": attempt_id},
             )
+        return result.scalar_one_or_none() is not None
 
     async def _get_by_idempotency(
         self,

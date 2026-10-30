@@ -1,0 +1,6 @@
+resource_group_name  = "rg-image-to-lego-dev"
+storage_account_name = "storageimgtolego"
+container_name       = "tfstate"
+key                  = "image-to-lego-dev-application-compute.tfstate"
+use_azuread_auth     = true
+use_cli              = true

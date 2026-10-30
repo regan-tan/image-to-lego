@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -15,6 +16,14 @@ class ConversionQueueError(Exception):
 
 class ConversionQueue(Protocol):
     async def enqueue(self, *, job_id: UUID, owner_id: UUID) -> None: ...
+
+    async def schedule(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        scheduled_for: datetime,
+    ) -> None: ...
 
 
 class AzureServiceBusConversionQueue:
@@ -38,15 +47,33 @@ class AzureServiceBusConversionQueue:
         self._queue_name = queue_name
 
     async def enqueue(self, *, job_id: UUID, owner_id: UUID) -> None:
-        body = json.dumps({"jobId": str(job_id), "ownerId": str(owner_id)})
-        message = ServiceBusMessage(body, content_type="application/json")
+        message = _message(job_id=job_id, owner_id=owner_id)
         try:
             async with self._client.get_queue_sender(queue_name=self._queue_name) as sender:
                 await sender.send_messages(message)
         except ServiceBusError as error:
             raise ConversionQueueError("Could not publish the conversion job.") from error
 
+    async def schedule(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        scheduled_for: datetime,
+    ) -> None:
+        message = _message(job_id=job_id, owner_id=owner_id)
+        try:
+            async with self._client.get_queue_sender(queue_name=self._queue_name) as sender:
+                await sender.schedule_messages(message, schedule_time_utc=scheduled_for)
+        except ServiceBusError as error:
+            raise ConversionQueueError("Could not schedule the conversion job.") from error
+
     async def close(self) -> None:
         await self._client.close()
         if self._credential is not None:
             await self._credential.close()
+
+
+def _message(*, job_id: UUID, owner_id: UUID) -> ServiceBusMessage:
+    body = json.dumps({"jobId": str(job_id), "ownerId": str(owner_id)})
+    return ServiceBusMessage(body, content_type="application/json")

@@ -1,0 +1,6 @@
+resource_group_location          = "malaysiawest"
+storage_account_location         = "malaysiawest"
+servicebus_location              = "malaysiawest"
+storage_account_tier             = "Standard"
+storage_account_replication_type = "LRS"
+servicebus_sku                   = "Basic"
