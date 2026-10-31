@@ -125,7 +125,7 @@ If the compute import review fails after step 4, stop. Do not apply either root.
 
 | Terraform address | Resource ID suffix |
 | --- | --- |
-| `azurerm_service_plan.api` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.Web/serverfarms/ASP-rgimagetolegodev-8295` |
+| `azurerm_service_plan.api` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.Web/serverFarms/ASP-rgimagetolegodev-8295` |
 | `azurerm_linux_web_app.api` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.Web/sites/app-image-to-lego-api-dev-2b70703f` |
 | `azurerm_container_group.generation_worker` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-generation-dev` |
 | `azurerm_container_group.conversion_worker` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-conversion-dev` |
