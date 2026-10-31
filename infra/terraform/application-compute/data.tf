@@ -31,8 +31,8 @@ data "azurerm_user_assigned_identity" "frontend" {
 }
 
 locals {
-  backend_image  = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-backend:${var.backend_image_tag}"
-  frontend_image = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-frontend:${var.frontend_image_tag}"
+  worker_backend_image = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-backend:${var.worker_backend_image_tag}"
+  frontend_image       = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-frontend:${var.frontend_image_tag}"
   common_worker_environment = {
     APP_ENV                            = var.app_environment
     AZURE_STORAGE_ACCOUNT_URL          = "https://storageimgtolego.blob.core.windows.net"

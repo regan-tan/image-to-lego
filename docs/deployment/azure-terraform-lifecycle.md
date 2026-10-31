@@ -1,8 +1,8 @@
-# Azure Terraform lifecycle: tested deployment and safe reconciliation
+# Azure Terraform lifecycle: safe compute teardown and clean-room recreation
 
 ## Status and scope
 
-The following is the **tested development deployment**, not proof that Terraform can recreate it:
+The following is the current development deployment. The five resources have been imported into the separate compute state and a post-import reconciliation plan reported no changes. This is not proof that a deletion-and-recreation drill has occurred.
 
 | Component | Tested live resource | Terraform target |
 | --- | --- | --- |
@@ -11,9 +11,9 @@ The following is the **tested development deployment**, not proof that Terraform
 | Conversion | Stopped ACI `aci-image-to-lego-conversion-dev`, 1 vCPU/2 GB, `Never` restart | `azurerm_container_group.conversion_worker` |
 | Frontend | Container App `ca-frontend-image-to-lego-dev`, 0.25 vCPU/0.5 GiB, ingress 8080, min 0/max 1 | `azurerm_container_app.frontend` |
 
-The frontend image is `image-to-lego-frontend:dev-20261030-nginxfix`. Its `API_UPSTREAM` is the tested HTTPS App Service origin recorded in `application-compute/dev.tfvars.example`. Nginx continues to forward `/api` through `frontend/nginx.conf.template`; do not replace this with the obsolete `http://ca-api-image-to-lego-dev` address.
+The frontend image is `image-to-lego-frontend:dev-20261030-nginxfix`. Its `API_UPSTREAM` is derived from `azurerm_linux_web_app.api.default_hostname`, so a recreated App Service hostname is passed to the frontend automatically. Nginx continues to forward `/api` through `frontend/nginx.conf.template`; do not replace this with the obsolete `http://ca-api-image-to-lego-dev` address.
 
-The shared root owns the resource group, artifact Blob Storage, Service Bus queues, ACR, Key Vault, managed identities, role assignments, logging, and Container Apps environment. Its resources use `prevent_destroy`. The compute root reads those dependencies as data sources, so compute-only destroy/recreate cannot delete persistent data or the remote-state container.
+The shared root owns the resource group, Terraform backend storage, artifact Blob Storage, Service Bus queues, ACR, Key Vault, managed identities, role assignments, logging, and Container Apps environment. Its resources use `prevent_destroy`. The compute root reads those dependencies as data sources, so compute-only destroy/recreate cannot delete persistent data or the remote-state container. Supabase is external to Terraform and must be checked separately.
 
 ## Before reconciliation
 
@@ -106,7 +106,9 @@ if ($LASTEXITCODE -eq 0) {
 
 The final command must report that the resource was not found. Stop if the name does not exactly match the temporary `$smokeGroup`; never delete either existing worker group. Cleanup stops the temporary ACI billing and removes only its temporary configuration.
 
-## Reviewed frontend state handoff (not executed)
+## Historical frontend state handoff
+
+This handoff and the five configuration-driven imports are complete. It is retained as history only; do not re-run it against the current state. `application-compute/imports.tf` was intentionally retired after the successful imports so a later recreation creates resources instead of importing deleted IDs.
 
 Terraform cannot atomically transfer a resource between two remote state backends. The safe sequence avoids any interval where both states own the frontend; it accepts a short state-only interval where neither does. During that interval, run only the destination root's reviewed import plan/apply—never a normal reconciliation apply in either root.
 
@@ -119,9 +121,9 @@ Terraform cannot atomically transfer a resource between two remote state backend
 
 If the compute import review fails after step 4, stop. Do not apply either root. The live frontend remains available at its existing public URL because this sequence does not rename, recreate, or delete it. Diagnose the configuration and backend before continuing; any sensitive-state recovery procedure needs separate approval.
 
-## Required imports for existing compute (not executed)
+## Historical import record
 
-`application-compute/imports.tf` is the reviewed, configuration-driven import record. It contains these exact resource-ID forms, with only the runtime subscription ID supplied by `azurerm_client_config`:
+The retired `application-compute/imports.tf` used these exact resource-ID forms, with only the runtime subscription ID supplied by `azurerm_client_config`:
 
 | Terraform address | Resource ID suffix |
 | --- | --- |
@@ -131,7 +133,7 @@ If the compute import review fails after step 4, stop. Do not apply either root.
 | `azurerm_container_group.conversion_worker` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-conversion-dev` |
 | `azurerm_container_app.frontend` | `/resourceGroups/rg-image-to-lego-dev/providers/Microsoft.App/containerApps/ca-frontend-image-to-lego-dev` |
 
-This is safer than an ad hoc `state rm`/CLI import sequence because the source detachment and destination IDs are committed and reviewable. It is still not atomic across backends, so strict ordering and an import-only plan remain mandatory.
+This was safer than an ad hoc `state rm`/CLI import sequence because the source detachment and destination IDs were committed and reviewable. It was not atomic across backends, so the documented ordering was mandatory.
 
 The shared resources are already Terraform-managed under their existing addresses. If a shared resource must ever be adopted into a new state, use its existing state address and a read-only inventory first. Role-assignment IDs are not included here because their GUIDs have not been verified; obtain them through a reviewed read-only inventory rather than guessing IDs.
 
@@ -160,12 +162,12 @@ An image update is an application release, not a generic Terraform refresh. Befo
 
 ### Image identity and immutability gate
 
-The current Terraform configuration deploys images by `backend_image_tag` and `frontend_image_tag`, not by digest. A unique tag is useful release evidence but is not technically immutable unless ACR tag-overwrite controls or an approved operational policy prevent reuse. Before any release plan:
+The current Terraform configuration deploys images by `api_backend_image_tag`, `worker_backend_image_tag`, and `frontend_image_tag`, not by digest. A unique tag is useful release evidence but is not technically immutable unless ACR tag-overwrite controls or an approved operational policy prevent reuse. The worker tag is currently `bootstrap-898adc56df2e`; it is separate from the API tag, so selecting it for a future worker recreation cannot update the running API. Before any release plan:
 
 1. Build from an approved, clean, committed source revision and give the backend image a new release tag that will never be reused.
 2. Query and record the ACR digest for that exact `repository:tag`; do not print registry credentials.
 3. Confirm that the release tag is absent before publication and has not moved after publication.
-4. Use the deployed image tags from the read-only inventory for the import-only plan. Do **not** substitute the new backend tag until imports are complete; otherwise Terraform can combine imports with an update.
+4. Use the deployed API tag for reconciliation. Change an image variable only in a separately reviewed release or recreation plan.
 
 Stop if the team cannot enforce the never-reuse policy, cannot retain the digest as release evidence, or requires a cryptographic immutability guarantee. The current tag-only variables cannot provide that guarantee; a separately approved Terraform design change to deploy digest references is required.
 
@@ -177,17 +179,19 @@ The pre-bootstrap image `dev-20261029-205014` cannot run the new `python -m app.
 
 For an API-only image rollback, use a reviewed plan that restores a previously verified image reference and makes no database migration change. For a worker rollback, stop if the target image lacks `aci_bootstrap.py`, the required historic command/environment contract was not captured, or the Terraform plan changes anything other than the approved compute resources. Never infer the missing old command from a failed worker, and never roll back Supabase migrations automatically.
 
-### Import-only adoption versus recreation
+### Manually approved teardown and recreation
 
-`application-compute/imports.tf` is an adoption configuration. During the state handoff, its plan must contain exactly the five reviewed imports and no changes. After import, use a separate release plan for an explicit image update; do not combine either plan with worker recreation until queue work is drained/accounted for and generation submissions are paused.
+These commands are an operator runbook, not permission to execute them automatically. Save plans outside the repository; do not commit state, plans, CLI output containing settings, or Supabase credentials.
 
-The checked-in configuration is not a safe clean-room recreation configuration. If the compute root is destroyed while `imports.tf` remains present, a later plan will attempt to import resource IDs that no longer exist instead of creating them. A future teardown/recreation requires a separate approved change that retires the adoption-only import blocks after state adoption, an App Service setting inventory, verified image references, a bootstrap-capable worker rollback image, and a reviewed destroy plan. Stop if a destroy or recreation plan mentions shared resources, queues, Blob artifacts, Key Vault, ACR, identities, role assignments, logging, the Container Apps environment, or the state container.
+1. Preflight: obtain written approval; keep both workers stopped; pause generation submissions; account for active and dead-letter queue messages; record the current API/frontend URL and nonsecret App Service setting names. Confirm the exact tags exist with `az acr repository show --name itl2b70703f --image image-to-lego-backend:bootstrap-898adc56df2e` and the equivalent frontend query. Record digests without registry credentials.
+2. Confirm protected data before any destroy: use read-only `az storage container show`, `az servicebus queue show`, `az keyvault secret show --id <secret-version-id> --query id`, and `az identity show` calls; verify the expected artifact container, queues, secret versions, identities, and role assignments still exist. Use the Supabase dashboard or a read-only SQL connection to record migration versions and artifact/job counts. Never put a connection string in Terraform or this runbook.
+3. In `application-compute`, initialize only its existing distinct backend, run `terraform plan -destroy -out <private-destroy-plan>`, then run `scripts/Test-ComputePlan.ps1 -PlanPath <private-destroy-plan> -Mode destroy`. The gate accepts only deletion of the five listed compute resources. Stop if it reports any other address, including the resource group, state storage, Blob artifacts, Key Vault, ACR, Service Bus, identities, role assignments, logging, Container Apps environment, or any data source change presented as managed work.
+4. After a second human approves the saved plan, apply that exact saved destroy plan manually. A destroyed ACI loses its configuration and secure values; a stopped ACI retains its definition and does not start because `restart_policy` is `Never`.
+5. Recreate with the same reviewed variable file, including browser-safe `supabase_url` and `supabase_publishable_key`, the existing Key Vault secret names, and the verified image tags. Run `terraform plan -out <private-recreate-plan>`, then `scripts/Test-ComputePlan.ps1 -PlanPath <private-recreate-plan> -Mode recreate`. It must create exactly the five compute resources. A fresh API receives only its API identity. Fresh ACI groups receive no public IP, their assigned worker identity, ACR managed-identity pull, bootstrap command, Key Vault URI/secret names, Blob settings, and the two Service Bus queue names. AzureRM 4.81.0 refreshes the currently stopped imported groups without an IP type, so their narrow IP/port lifecycle ignores must remain until teardown; they do not affect fresh creation. The frontend derives its HTTPS API upstream from the recreated App Service hostname.
+6. After a second human approves the saved plan, apply that exact saved recreation plan manually. Do not start either worker as part of recreation. First run the conversion-only bootstrap smoke test above against a temporary ACI, then manually verify API health, frontend `/api` forwarding, browser Supabase sign-in/runtime config, Key Vault references, ACR pulls, private Blob access, and both stopped workers' configuration. Do not submit a generation job or invoke FAL during this verification.
+7. Roll back only with a separately reviewed plan to known-good image references that pass the worker bootstrap gate, or by restoring the five compute resources from a reviewed reconciliation plan. Do not roll back Supabase migrations automatically. If a plan shows a resource replacement or update that is not explicitly intended, stop and investigate.
 
-For a compute-only teardown, first drain or account for queued work, keep the workers stopped, verify retention of Blob artifacts and Supabase data, and review a compute-root destroy plan. It may delete the App Service plan/site, the two ACI resources, and the frontend after ownership handoff, but it must show no shared resource, queue, artifact store, Key Vault, ACR, identity, role assignment, logging resource, Container Apps environment, or state container. A destroyed ACI loses its configuration and secure values. A **stopped** ACI has not been destroyed, retains its definition, and does not start merely because its `restart_policy` is `Never`.
-
-Recreation is not approved until the live bootstrap command has been inventoried, the bootstrap-enabled backend image has been built and verified, Key Vault/RBAC access is confirmed, and a clean-room deployment has been tested. Recreating an ACI starts a new container group; it is not equivalent to leaving the current stopped group in place. Starting or stopping either worker remains an operational Azure action outside Terraform and outside this change.
-
-Rollback a compute configuration only by a reviewed import/reconciliation or a redeploy of a previously verified image tag/digest pair that satisfies the worker bootstrap gate. Do not roll back database migrations automatically. If a plan shows any replacement or update not explicitly intended, stop and investigate; imported state and live Azure configuration, not this repository alone, determine whether reconciliation is a no-op.
+`Test-ComputePlan.ps1` is a local saved-plan inventory test. It reads only Terraform's JSON rendering of a saved plan, prints only resource addresses/actions, and rejects shared or unexpected managed resources. Run its reconciliation mode after import or recreation: `terraform plan -out <private-reconcile-plan>` followed by `scripts/Test-ComputePlan.ps1 -PlanPath <private-reconcile-plan> -Mode reconcile`.
 
 ## Cost and data notes
 
