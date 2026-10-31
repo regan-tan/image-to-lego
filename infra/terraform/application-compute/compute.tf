@@ -22,14 +22,8 @@ resource "azurerm_linux_web_app" "api" {
   tags                                           = { environment = "dev", project = "image-to-lego" }
 
   identity {
-    type = "UserAssigned"
-    # The live API has all three runtime identities. Retain them during state
-    # adoption; removing the worker identities would change a live site.
-    identity_ids = [
-      data.azurerm_user_assigned_identity.api.id,
-      data.azurerm_user_assigned_identity.generation_worker.id,
-      data.azurerm_user_assigned_identity.conversion_worker.id,
-    ]
+    type         = "UserAssigned"
+    identity_ids = [data.azurerm_user_assigned_identity.api.id]
   }
 
   site_config {
@@ -40,7 +34,7 @@ resource "azurerm_linux_web_app" "api" {
     container_registry_managed_identity_client_id = data.azurerm_user_assigned_identity.api.client_id
 
     application_stack {
-      docker_image_name   = "image-to-lego-backend:${var.backend_image_tag}"
+      docker_image_name   = "image-to-lego-backend:${var.api_backend_image_tag}"
       docker_registry_url = "https://${data.azurerm_container_registry.backend.login_server}"
     }
   }
@@ -61,6 +55,9 @@ resource "azurerm_linux_web_app" "api" {
   lifecycle {
     ignore_changes = [
       app_settings,
+      # The adopted API still has worker identities. Preserve that live
+      # assignment until teardown; a newly created API gets only its own.
+      identity,
       key_vault_reference_identity_id,
       site_config[0].ip_restriction_default_action,
       site_config[0].scm_ip_restriction_default_action,
@@ -86,7 +83,7 @@ resource "azurerm_container_group" "generation_worker" {
   }
   container {
     name     = "generation"
-    image    = local.backend_image
+    image    = local.worker_backend_image
     cpu      = 1
     memory   = 2
     commands = ["python", "-m", "app.workers.aci_bootstrap", "generation"]
@@ -106,12 +103,15 @@ resource "azurerm_container_group" "generation_worker" {
       container[0].commands,
       container[0].environment_variables,
       container[0].secure_environment_variables,
+      # The adopted workers predate the bootstrap image. Retain their existing
+      # image and runtime contract until the approved compute teardown; a new
+      # container group uses the bootstrap-capable image declared above.
+      container[0].image,
       # AzureRM reads this Azure resource ID with a lowercase resourcegroups
       # segment but only accepts the canonical spelling as configuration.
       image_registry_credential[0].user_assigned_identity_id,
-      # Azure reports this stopped worker with no IP type, but AzureRM defaults
-      # an omitted value to Public and cannot configure None. Its derived port
-      # would otherwise force a replacement too.
+      # AzureRM 4.81.0 accepts None for a new group, but refreshes these
+      # imported stopped groups without it. Removing this guard replaces them.
       ip_address_type,
       exposed_port,
     ]
@@ -136,7 +136,7 @@ resource "azurerm_container_group" "conversion_worker" {
   }
   container {
     name     = "conversion"
-    image    = local.backend_image
+    image    = local.worker_backend_image
     cpu      = 1
     memory   = 2
     commands = ["python", "-m", "app.workers.aci_bootstrap", "conversion"]
@@ -152,6 +152,8 @@ resource "azurerm_container_group" "conversion_worker" {
       container[0].commands,
       container[0].environment_variables,
       container[0].secure_environment_variables,
+      # See the matching generation-worker explanation above.
+      container[0].image,
       image_registry_credential[0].user_assigned_identity_id,
       ip_address_type,
       exposed_port,
@@ -202,7 +204,7 @@ resource "azurerm_container_app" "frontend" {
       # nginx.conf.template forwards /api to this HTTPS App Service origin.
       env {
         name  = "API_UPSTREAM"
-        value = var.api_upstream
+        value = "https://${azurerm_linux_web_app.api.default_hostname}"
       }
       dynamic "env" {
         for_each = var.supabase_url == null ? [] : [var.supabase_url]

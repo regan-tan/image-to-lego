@@ -1,7 +1,7 @@
 # Browser-safe values only; never put DATABASE_URL, FAL_KEY, or registry credentials here.
-backend_image_tag  = "dev-20261029-205014"
+api_backend_image_tag    = "dev-20261029-205014"
+worker_backend_image_tag = "bootstrap-898adc56df2e"
 frontend_image_tag = "dev-20261030-nginxfix"
-api_upstream       = "https://app-image-to-lego-api-dev-2b70703f-gncbcjh9hua6hmek.malaysiawest-01.azurewebsites.net"
 # Required for a clean API recreation; also browser-safe for the frontend.
 # supabase_url = "https://your-project.supabase.co"
 # supabase_publishable_key = "your-browser-safe-publishable-key"

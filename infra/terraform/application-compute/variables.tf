@@ -6,17 +6,17 @@ variable "location" {
   type    = string
   default = "malaysiawest"
 }
-variable "backend_image_tag" {
+variable "api_backend_image_tag" {
   type    = string
   default = "dev-20261029-205014"
+}
+variable "worker_backend_image_tag" {
+  type    = string
+  default = "bootstrap-898adc56df2e"
 }
 variable "frontend_image_tag" {
   type    = string
   default = "dev-20261030-nginxfix"
-}
-variable "api_upstream" {
-  type    = string
-  default = "https://app-image-to-lego-api-dev-2b70703f-gncbcjh9hua6hmek.malaysiawest-01.azurewebsites.net"
 }
 variable "supabase_url" {
   type     = string
