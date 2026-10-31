@@ -54,6 +54,9 @@ try {
                 docker_image_name = "itl2b70703f.azurecr.io/image-to-lego-backend:$recoveryImageTag"
             })
         })
+        app_settings = @{
+            JOB_SUBMISSIONS_ENABLED = "false"
+        }
     }
     $positivePlans = @{
         reconcile = @()
@@ -142,13 +145,85 @@ try {
     )
     Assert-GateRejects "missing-api-image" "recovery"
 
+    $missingPauseSettingAfter = @{
+        site_config = @(@{
+            application_stack = @(@{
+                docker_image_name = "itl2b70703f.azurecr.io/image-to-lego-backend:$recoveryImageTag"
+            })
+        })
+        app_settings = @{}
+    }
+    Write-PlanFixture @(
+        (New-Change "azurerm_service_plan.api" @("create")),
+        (New-Change "azurerm_linux_web_app.api" @("create") $missingPauseSettingAfter),
+        (New-Change "azurerm_container_app.frontend" @("create"))
+    )
+    Assert-GateRejects "missing-pause-setting" "recovery"
+
+    $enabledPauseSettingAfter = @{
+        site_config = @(@{
+            application_stack = @(@{
+                docker_image_name = "itl2b70703f.azurecr.io/image-to-lego-backend:$recoveryImageTag"
+            })
+        })
+        app_settings = @{
+            JOB_SUBMISSIONS_ENABLED = "true"
+        }
+    }
+    Write-PlanFixture @(
+        (New-Change "azurerm_service_plan.api" @("create")),
+        (New-Change "azurerm_linux_web_app.api" @("create") $enabledPauseSettingAfter),
+        (New-Change "azurerm_container_app.frontend" @("create"))
+    )
+    Assert-GateRejects "enabled-pause-setting" "recovery"
+
+    $invalidPauseSettingAfter = @{
+        site_config = @(@{
+            application_stack = @(@{
+                docker_image_name = "itl2b70703f.azurecr.io/image-to-lego-backend:$recoveryImageTag"
+            })
+        })
+        app_settings = @{
+            JOB_SUBMISSIONS_ENABLED = $false
+        }
+    }
+    Write-PlanFixture @(
+        (New-Change "azurerm_service_plan.api" @("create")),
+        (New-Change "azurerm_linux_web_app.api" @("create") $invalidPauseSettingAfter),
+        (New-Change "azurerm_container_app.frontend" @("create"))
+    )
+    Assert-GateRejects "invalid-pause-setting" "recovery"
+
+    $unknownPauseSettingAfter = @{
+        site_config = @(@{
+            application_stack = @(@{
+                docker_image_name = "itl2b70703f.azurecr.io/image-to-lego-backend:$recoveryImageTag"
+            })
+        })
+        app_settings = @{
+            JOB_SUBMISSIONS_ENABLED = "false"
+        }
+    }
+    $unknownPauseSettingChange = New-Change "azurerm_linux_web_app.api" @("create") $unknownPauseSettingAfter
+    $unknownPauseSettingChange.change.after_unknown = @{
+        app_settings = @{
+            JOB_SUBMISSIONS_ENABLED = $true
+        }
+    }
+    Write-PlanFixture @(
+        (New-Change "azurerm_service_plan.api" @("create")),
+        $unknownPauseSettingChange,
+        (New-Change "azurerm_container_app.frontend" @("create"))
+    )
+    Assert-GateRejects "unknown-pause-setting" "recovery"
+
     "not-json" | Set-Content -LiteralPath $fixturePath
     Assert-GateRejects "malformed-json" "reconcile"
 
     Set-Content -LiteralPath $terraformPath -Value "@echo off`r`nexit /b 1" -NoNewline
     Assert-GateRejects "terraform-failure" "reconcile"
 
-    Write-Output "PLAN_GATE_TESTS_OK positive=4 negative=10"
+    Write-Output "PLAN_GATE_TESTS_OK positive=4 negative=14"
 } finally {
     Remove-Item -LiteralPath $testDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }
