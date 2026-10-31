@@ -3,7 +3,7 @@
 # removed block; otherwise two state backends would claim the same resource.
 import {
   to = azurerm_service_plan.api
-  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.Web/serverfarms/ASP-rgimagetolegodev-8295"
+  id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.Web/serverFarms/ASP-rgimagetolegodev-8295"
 }
 
 import {
