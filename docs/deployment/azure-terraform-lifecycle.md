@@ -162,7 +162,11 @@ An image update is an application release, not a generic Terraform refresh. Befo
 
 ### Image identity and immutability gate
 
-The current Terraform configuration deploys images by `api_backend_image_tag`, `worker_backend_image_tag`, and `frontend_image_tag`, not by digest. A unique tag is useful release evidence but is not technically immutable unless ACR tag-overwrite controls or an approved operational policy prevent reuse. The worker tag is currently `bootstrap-898adc56df2e`; it is separate from the API tag, so selecting it for a future worker recreation cannot update the running API. Before any release plan:
+The current Terraform configuration deploys images by `api_backend_image_tag`, `worker_backend_image_tag`, and `frontend_image_tag`, not by digest. A unique tag is useful release evidence but is not technically immutable unless ACR tag-overwrite controls or an approved operational policy prevent reuse. The worker tag is currently `bootstrap-898adc56df2e`; it is separate from the API tag, so selecting it for a future worker recreation cannot update the running API.
+
+`dev-20261029-205014` predates the `JOB_SUBMISSIONS_ENABLED` submission gate and **must not** be used for recovery. The checked-in source contains the gate, but this repository cannot prove that an existing ACR image contains it. Before any recovery plan, build the reviewed source revision, publish it under a previously unused API release tag, and record the ACR repository digest beside the release approval. Then run the focused offline tests that prove both submission endpoints return 503 without calling their repositories or queues. Do not change `api_backend_image_tag` in the adoption configuration or deploy that image before the separately approved compute teardown.
+
+Before any release or recovery plan:
 
 1. Build from an approved, clean, committed source revision and give the backend image a new release tag that will never be reused.
 2. Query and record the ACR digest for that exact `repository:tag`; do not print registry credentials.
@@ -187,9 +191,62 @@ These commands are an operator runbook, not permission to execute them automatic
 2. Confirm protected data before any destroy: use read-only `az storage container show`, `az servicebus queue show`, `az keyvault secret show --id <secret-version-id> --query id`, and `az identity show` calls; verify the expected artifact container, queues, secret versions, identities, and role assignments still exist. Use the Supabase dashboard or a read-only SQL connection to record migration versions and artifact/job counts. Never put a connection string in Terraform or this runbook.
 3. In `application-compute`, initialize only its existing distinct backend, run `terraform plan -destroy -out <private-destroy-plan>`, then run `scripts/Test-ComputePlan.ps1 -PlanPath <private-destroy-plan> -Mode destroy`. The gate accepts only deletion of the five listed compute resources. Stop if it reports any other address, including the resource group, state storage, Blob artifacts, Key Vault, ACR, Service Bus, identities, role assignments, logging, Container Apps environment, or any data source change presented as managed work.
 4. After a second human approves the saved plan, apply that exact saved destroy plan manually. A destroyed ACI loses its configuration and secure values; a stopped ACI retains its definition and does not start because `restart_policy` is `Never`.
-5. Recreate with the same reviewed variable file, including browser-safe `supabase_url` and `supabase_publishable_key`, the existing Key Vault secret names, and the verified image tags. Run `terraform plan -out <private-recreate-plan>`, then `scripts/Test-ComputePlan.ps1 -PlanPath <private-recreate-plan> -Mode recreate`. It must create exactly the five compute resources. A fresh API receives only its API identity. Fresh ACI groups receive no public IP, their assigned worker identity, ACR managed-identity pull, bootstrap command, Key Vault URI/secret names, Blob settings, and the two Service Bus queue names. AzureRM 4.81.0 refreshes the currently stopped imported groups without an IP type, so their narrow IP/port lifecycle ignores must remain until teardown; they do not affect fresh creation. The frontend derives its HTTPS API upstream from the recreated App Service hostname.
-6. After a second human approves the saved plan, apply that exact saved recreation plan manually. Do not start either worker as part of recreation. First run the conversion-only bootstrap smoke test above against a temporary ACI, then manually verify API health, frontend `/api` forwarding, browser Supabase sign-in/runtime config, Key Vault references, ACR pulls, private Blob access, and both stopped workers' configuration. Do not submit a generation job or invoke FAL during this verification.
-7. Roll back only with a separately reviewed plan to known-good image references that pass the worker bootstrap gate, or by restoring the five compute resources from a reviewed reconciliation plan. Do not roll back Supabase migrations automatically. If a plan shows a resource replacement or update that is not explicitly intended, stop and investigate.
+5. **Stage 1 — recovery without workers.** Recreate with the same reviewed variable file, including browser-safe `supabase_url` and `supabase_publishable_key`, the existing Key Vault secret names, and the verified image tags, but set `job_submissions_enabled=false`. `api_backend_image_tag` must be the approved unique, newly published tag that contains the submission gate; it must not be `dev-20261029-205014`. Save a plan that is explicitly limited to the non-worker resources:
+
+   ```powershell
+   terraform plan `
+     -var="api_backend_image_tag=<approved-new-api-tag>" `
+     -var="job_submissions_enabled=false" `
+     -target=azurerm_service_plan.api `
+     -target=azurerm_linux_web_app.api `
+     -target=azurerm_container_app.frontend `
+     -out <private-recovery-plan>
+   scripts/Test-ComputePlan.ps1 `
+     -PlanPath <private-recovery-plan> `
+     -Mode recovery `
+     -ExpectedApiImageTag <approved-new-api-tag>
+   ```
+
+   The gate requires exactly three `create` actions: `azurerm_service_plan.api`, `azurerm_linux_web_app.api`, and `azurerm_container_app.frontend`. It rejects either ACI address, so this stage cannot create or start a worker. A fresh API receives only its API identity; the frontend derives its HTTPS API upstream from the recreated App Service hostname. After two people approve the saved plan, apply that exact plan manually.
+6. **Verify the pause and queue baseline.** Before considering workers, make an authenticated request for each submission endpoint using a disposable/non-production request body. Both `POST /api/v1/reconstructions` and `POST /api/v1/conversions` must return `503` with `Job submissions are temporarily paused.`; neither may create a durable job or send a message. Confirm the API's deployed image tag and recorded ACR digest are the approved gate-image release. With read-only Service Bus queries, record active, scheduled, and transfer-dead-letter counts for both queues. Generation and conversion active counts must both be zero; scheduled counts must both be zero. Record the conversion dead-letter count separately: the two known expired historical messages are not active work and must not be replayed, completed, or removed in this procedure. Stop if any count changes unexpectedly, a submission is accepted, either ACI exists/runs, the image evidence differs, or the pause setting cannot be verified.
+7. **Stage 2 — create workers while submissions remain paused.** Keep `job_submissions_enabled=false` and plan only the two ACI groups:
+
+   ```powershell
+   terraform plan `
+     -var="api_backend_image_tag=<approved-new-api-tag>" `
+     -var="job_submissions_enabled=false" `
+     -target=azurerm_container_group.generation_worker `
+     -target=azurerm_container_group.conversion_worker `
+     -out <private-workers-plan>
+   scripts/Test-ComputePlan.ps1 -PlanPath <private-workers-plan> -Mode workers
+   ```
+
+   The gate requires exactly two `create` actions: `azurerm_container_group.generation_worker` and `azurerm_container_group.conversion_worker`. This is the first plan allowed to start workers, but the API remains paused. After two people approve the saved plan, apply that exact plan manually. Verify both workers are ready using their non-processing readiness evidence and recheck queue counts. Do not submit a generation job or invoke FAL as part of this stage.
+8. **Stage 3 — operationally enable submissions after worker readiness.** `app_settings` is intentionally ignored during adoption to preserve the existing unknown settings map, so Terraform does not own individual App Service settings after creation. Do not force an API replacement merely to change this setting. Use the separate `scripts/Set-JobSubmissions.ps1` operational control. Its default mode is read-only; it is hard-coded to the development App Service, requires the exact approved resource ID and current setting value, and cannot write unless `-Apply` is supplied. It changes only `JOB_SUBMISSIONS_ENABLED`; App Service restarts when this setting changes.
+
+   ```powershell
+   # Read-only preflight. Copy the ID from a reviewed az webapp show result.
+   scripts/Set-JobSubmissions.ps1 `
+     -ApprovedResourceId <approved-api-resource-id> `
+     -ExpectedCurrentValue false `
+     -DesiredValue true `
+     -ApprovalReference <change-ticket>
+
+   # Separately approved write; this restarts the App Service.
+   scripts/Set-JobSubmissions.ps1 `
+     -ApprovedResourceId <approved-api-resource-id> `
+     -ExpectedCurrentValue false `
+     -DesiredValue true `
+     -ApprovalReference <change-ticket> `
+     -Apply
+   ```
+
+   Record the script's verified setting result and wait for the restart to complete. Then make authenticated reconstruction and conversion requests with a disposable body and confirm they no longer return the paused 503 response. Recheck active/scheduled queue counts immediately before permitting normal traffic. To re-pause, run the same control with `-ExpectedCurrentValue true -DesiredValue false`, then verify both endpoints again return 503 without creating jobs or messages. Terraform's ignored `app_settings` lifecycle safeguard deliberately preserves this operational value through normal plans; every future clean-room recovery must still explicitly create the API with `job_submissions_enabled=false` in Stage 1.
+9. After Stage 3, run an un-targeted refresh-enabled plan and `scripts/Test-ComputePlan.ps1 -PlanPath <private-reconcile-plan> -Mode reconcile`. It must have zero managed changes, proving the complete five-resource deployment reconciles without drift. Roll back only with a separately reviewed plan to known-good image references that pass the worker bootstrap gate; do not roll back Supabase migrations automatically. If a plan shows a resource replacement or update that is not explicitly intended, stop and investigate.
+
+### Targeting limitation
+
+Terraform `-target` is intentionally used here only for recovery sequencing. It is not a normal reconciliation method: it can omit unrelated changes and does not prove the complete graph is converged. Every targeted apply must use its reviewed saved plan, and Stage 3 must be followed by the un-targeted reconciliation in step 9. Targeting cannot prove that the published image contains the gate, that workers are healthy, or that no external sender enqueues a message between queue inspection and activation.
 
 `Test-ComputePlan.ps1` is a local saved-plan inventory test. It reads only Terraform's JSON rendering of a saved plan, prints only resource addresses/actions, and rejects shared or unexpected managed resources. Run its reconciliation mode after import or recreation: `terraform plan -out <private-reconcile-plan>` followed by `scripts/Test-ComputePlan.ps1 -PlanPath <private-reconcile-plan> -Mode reconcile`.
 

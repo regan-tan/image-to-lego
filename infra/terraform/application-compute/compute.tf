@@ -46,6 +46,7 @@ resource "azurerm_linux_web_app" "api" {
     {
       AZURE_CLIENT_ID                = data.azurerm_user_assigned_identity.api.client_id
       DATABASE_URL                   = "@Microsoft.KeyVault(SecretUri=${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.database_url_secret_name})"
+      JOB_SUBMISSIONS_ENABLED        = tostring(var.job_submissions_enabled)
       WEBSITES_PORT                  = "8000"
       WEBSITE_SKIP_RUNNING_KUDUAGENT = "true"
     },
