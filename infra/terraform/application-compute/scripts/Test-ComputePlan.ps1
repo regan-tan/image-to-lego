@@ -43,6 +43,8 @@ $allComputeAddresses = @(
 )
 $allowed = [System.Collections.Generic.HashSet[string]]::new([string[]]$allComputeAddresses)
 $legacyApiImageTag = "dev-20261029-205014"
+$jobSubmissionsSettingName = "JOB_SUBMISSIONS_ENABLED"
+$pausedJobSubmissionsValue = "false"
 
 $managedChanges = @()
 foreach ($change in @($resourceChangesProperty.Value)) {
@@ -120,6 +122,34 @@ if ($Mode -eq "recovery") {
     $imageName = [string]$apiChange.change.after.site_config[0].application_stack[0].docker_image_name
     if (-not $imageName.EndsWith(":$ExpectedApiImageTag", [System.StringComparison]::Ordinal)) {
         throw "$Mode API image does not match ExpectedApiImageTag."
+    }
+
+    $appSettingsProperty = $apiChange.change.after.PSObject.Properties["app_settings"]
+    if ($null -eq $appSettingsProperty -or $null -eq $appSettingsProperty.Value) {
+        throw "$Mode API plan must explicitly set $jobSubmissionsSettingName to $pausedJobSubmissionsValue."
+    }
+    $jobSubmissionsSetting = $appSettingsProperty.Value.PSObject.Properties[$jobSubmissionsSettingName]
+    if (
+        $null -eq $jobSubmissionsSetting -or
+        $jobSubmissionsSetting.Value -isnot [string] -or
+        $jobSubmissionsSetting.Value -cne $pausedJobSubmissionsValue
+    ) {
+        throw "$Mode API plan must explicitly set $jobSubmissionsSettingName to the string $pausedJobSubmissionsValue."
+    }
+
+    $afterUnknownProperty = $apiChange.change.PSObject.Properties["after_unknown"]
+    $appSettingsUnknown = $null
+    if ($null -ne $afterUnknownProperty -and $null -ne $afterUnknownProperty.Value) {
+        $appSettingsUnknown = $afterUnknownProperty.Value.PSObject.Properties["app_settings"]
+    }
+    if ($null -ne $appSettingsUnknown) {
+        if ($appSettingsUnknown.Value -is [bool] -and $appSettingsUnknown.Value) {
+            throw "$Mode API plan leaves $jobSubmissionsSettingName unknown."
+        }
+        $unknownJobSubmissionsSetting = $appSettingsUnknown.Value.PSObject.Properties[$jobSubmissionsSettingName]
+        if ($null -ne $unknownJobSubmissionsSetting -and $unknownJobSubmissionsSetting.Value) {
+            throw "$Mode API plan leaves $jobSubmissionsSettingName unknown."
+        }
     }
 }
 
