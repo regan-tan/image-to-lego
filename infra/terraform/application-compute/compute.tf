@@ -22,7 +22,7 @@ resource "azurerm_linux_web_app" "api" {
   tags                                           = { environment = "dev", project = "image-to-lego" }
 
   identity {
-    type = "UserAssigned"
+    type         = "UserAssigned"
     identity_ids = [data.azurerm_user_assigned_identity.api.id]
   }
 
