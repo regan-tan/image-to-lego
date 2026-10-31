@@ -40,3 +40,10 @@ variable "app_environment" {
   type    = string
   default = "development"
 }
+
+# New APIs must start paused. The existing App Service settings map is ignored
+# during adoption, so changing this default cannot modify the live API.
+variable "job_submissions_enabled" {
+  type    = bool
+  default = false
+}

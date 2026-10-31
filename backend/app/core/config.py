@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     azure_service_bus_namespace: str | None = None
     azure_service_bus_queue: str | None = None
     azure_service_bus_generation_queue: str | None = None
+    job_submissions_enabled: bool = True
     service_bus_max_lock_renewal_seconds: int = Field(
         default=SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS,
         ge=60,

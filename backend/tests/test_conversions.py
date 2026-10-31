@@ -259,6 +259,32 @@ async def test_conversion_create_and_exact_replay_publish_once(
 
 
 @pytest.mark.asyncio
+async def test_conversion_submission_pause_rejects_before_creating_a_job() -> None:
+    repository = FakeConversionRepository()
+    queue = FakeConversionQueue()
+    original_initiation = repository.initiation
+    app = create_app(Settings(job_submissions_enabled=False))
+
+    async def current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(str(OWNER_ID), None, None, None)
+
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_conversion_repository] = lambda: repository
+    app.dependency_overrides[get_conversion_queue] = lambda: queue
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Job submissions are temporarily paused."}
+    assert repository.initiation is original_initiation
+    assert queue.enqueued == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("algorithm_version", "expected_version"),
     [
