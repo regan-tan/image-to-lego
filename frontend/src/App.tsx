@@ -39,7 +39,8 @@ export default function App() {
       if (nextSession && isSessionIdle(nextSession)) {
         expireSession();
       } else {
-        setSession(nextSession);
+        // Supabase can update session.user in place when metadata changes.
+        setSession(nextSession ? { ...nextSession } : null);
         if (nextSession) setSessionExpired(false);
         if (!nextSession) queryClient.clear();
       }

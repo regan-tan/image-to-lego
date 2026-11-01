@@ -325,7 +325,15 @@ works" dialog and an account menu):
 
 - `/workspace` lists the user's projects with a status badge each, or shows an empty state on first visit;
 - `/projects/:projectId` shows one project's progress (Photo → 3D model → LEGO build) and its next action;
-- `/profile` shows the verified profile returned by `GET /api/v1/profile`.
+- `/profile` shows the verified profile returned by `GET /api/v1/profile` and lets users save a display name.
+
+Display names are trimmed and limited to 1–80 characters. The browser saves only
+`full_name` through Supabase Auth's `updateUser` API, which persists user metadata;
+no separate profile table is required. It then refreshes the session because the
+profile endpoint reads the name from verified JWT metadata. Successful saves update
+the cached profile and account menu. If session refresh fails after the metadata
+was saved, the UI reports that partial result and asks the user to sign in again.
+Display names are presentation data and are never used for authorization.
 
 Supabase restores the browser session after refresh; unauthenticated requests for protected routes
 redirect to `/login`.

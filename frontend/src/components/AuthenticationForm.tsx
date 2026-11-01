@@ -123,14 +123,14 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
       <div className="auth-card">
         <div className="auth-card__topbar">
           <Link to="/" className="auth-brand" aria-label="Image to LEGO home">
-            <span aria-hidden="true">▦</span>
-            Image to <strong>LEGO</strong>
+            <img className="auth-brand__mark" src="/favicon.svg" alt="" width="28" height="28" />
+            <span>Image to <strong>LEGO</strong></span>
           </Link>
           <Link to="/" className="auth-home-link">← Back to home</Link>
         </div>
 
         <div className="auth-card__content">
-          <p className="eyebrow">{isLogin ? "Welcome back" : "Join the studio"}</p>
+          {!isLogin ? <p className="eyebrow">Join the studio</p> : null}
           <h1 id="auth-title">{heading}</h1>
           <p className="summary">{summary}</p>
 
@@ -188,7 +188,7 @@ export function AuthenticationForm({ mode, onAuthenticated }: AuthenticationForm
       <div className="auth-art" aria-hidden="true">
         <h2>Big ideas<br />start<br />small<span>.</span></h2>
         <img className="auth-art__cat" src="/cat.svg" alt="" />
-        <p>From image → to bricks / 2026</p>
+        <p>From image → to LEGO / 2026</p>
       </div>
     </section>
   );

@@ -6,7 +6,8 @@ import { supabase } from "../lib/supabase";
 import { AccountMenu } from "./AccountMenu";
 import type { AppLayoutContext } from "./appLayoutContext";
 import { HowItWorksDialog } from "./HowItWorksDialog";
-import { HelpIcon, LogoMark, PlusIcon } from "./Icons";
+import { LogoMark, PlusIcon } from "./Icons";
+import { Dialog } from "./Dialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 
 interface AppLayoutProps {
@@ -20,21 +21,31 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState(false);
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [isSignOutOpen, setIsSignOutOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const displayName: unknown = session.user.user_metadata?.full_name ?? session.user.user_metadata?.name;
 
   async function handleSignOut() {
     const client = supabase;
-    if (!client) {
+    if (!client || isSigningOut) {
       return;
     }
 
     setSignOutError(null);
-    const { error } = await client.auth.signOut();
-    if (error) {
+    setIsSigningOut(true);
+    try {
+      const { error } = await client.auth.signOut();
+      if (error) {
+        setSignOutError("We could not sign you out. Please try again.");
+        return;
+      }
+      onSignedOut();
+      navigate("/login", { replace: true });
+    } catch {
       setSignOutError("We could not sign you out. Please try again.");
-      return;
+    } finally {
+      setIsSigningOut(false);
     }
-    onSignedOut();
-    navigate("/login", { replace: true });
   }
 
   const layoutContext: AppLayoutContext = {
@@ -48,37 +59,35 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="app-header__inner">
-          <Link to="/" className="app-header__brand" aria-label="Image to LEGO home">
-            <LogoMark />
-            <span className="app-header__brand-name">Image to LEGO</span>
-          </Link>
-          <div className="app-header__actions">
-            <button type="button" className="header-link" onClick={layoutContext.openHowItWorks}>
-              <HelpIcon />
-              How it works
-            </button>
-            <AccountMenu email={session.user.email} onSignOut={() => void handleSignOut()} />
-          </div>
-        </div>
-      </header>
-      {signOutError ? <p className="form-error page-alert" role="alert">{signOutError}</p> : null}
       <div className="app-workspace">
         <aside className="app-sidebar" aria-label="Workspace navigation">
           <Link className="app-sidebar__brand" to="/" aria-label="Image to LEGO home"><LogoMark /> <span>IMAGE → LEGO</span></Link>
           <p className="app-sidebar__section">Workspace</p>
           <nav className="app-sidebar__nav">
-            <Link to="/workspace" className={location.pathname === "/workspace" ? "is-active" : ""}>All projects</Link>
-            <Link to="/workspace" className={location.pathname.startsWith("/projects/") ? "is-active" : ""}>3D studio</Link>
+            <Link to="/workspace" className={location.pathname === "/workspace" ? "is-active" : ""} aria-current={location.pathname === "/workspace" ? "page" : undefined}>All projects</Link>
             <button type="button" aria-label="Create a new project" onClick={layoutContext.openNewProject}><PlusIcon size={16} /> New project</button>
           </nav>
-          <p className="app-sidebar__section">Preferences</p>
-          <nav className="app-sidebar__nav"><Link to="/profile" aria-label="Open profile" className={location.pathname === "/profile" ? "is-active" : ""}>My profile</Link><button type="button" onClick={layoutContext.openHowItWorks}><HelpIcon size={16} /> About this app</button></nav>
-          <button type="button" aria-label="Sign out of workspace" className="app-sidebar__signout" onClick={() => void handleSignOut()}>Sign out</button>
+          <AccountMenu
+            email={session.user.email}
+            name={typeof displayName === "string" ? displayName : undefined}
+            onAbout={layoutContext.openHowItWorks}
+            onSignOut={() => {
+              setSignOutError(null);
+              setIsSignOutOpen(true);
+            }}
+          />
         </aside>
         <main className="page"><Outlet context={layoutContext} /></main>
       </div>
+      <Dialog isOpen={isSignOutOpen} onClose={() => {
+        if (!isSigningOut) setIsSignOutOpen(false);
+      }} title="Sign out?" description="Are you sure you want to sign out of your account?">
+        {signOutError ? <p className="form-error" role="alert">{signOutError}</p> : null}
+        <div className="dialog__actions">
+          <button type="button" className="button button--secondary" disabled={isSigningOut} onClick={() => setIsSignOutOpen(false)}>No, stay signed in</button>
+          <button type="button" className="button" disabled={isSigningOut} onClick={() => void handleSignOut()}>{isSigningOut ? "Signing out…" : "Yes, sign out"}</button>
+        </div>
+      </Dialog>
       <HowItWorksDialog
         isOpen={isHowItWorksOpen}
         onClose={() => setIsHowItWorksOpen(false)}

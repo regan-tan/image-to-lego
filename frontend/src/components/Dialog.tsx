@@ -8,6 +8,7 @@ interface DialogProps {
   title: string;
   description?: string;
   size?: "medium" | "large";
+  className?: string;
   children: ReactNode;
 }
 
@@ -15,7 +16,7 @@ interface DialogProps {
  * Modal built on the native <dialog> element, which provides focus trapping, Escape to close,
  * an inert background and focus restoration without extra code.
  */
-export function Dialog({ isOpen, onClose, title, description, size = "medium", children }: DialogProps) {
+export function Dialog({ isOpen, onClose, title, description, size = "medium", className, children }: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -35,7 +36,7 @@ export function Dialog({ isOpen, onClose, title, description, size = "medium", c
   return (
     <dialog
       ref={dialogRef}
-      className={`dialog dialog--${size}`}
+      className={`dialog dialog--${size}${className ? ` ${className}` : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       onClose={onClose}

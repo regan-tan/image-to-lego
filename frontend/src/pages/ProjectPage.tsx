@@ -7,7 +7,7 @@ import { useAppLayout } from "../components/appLayoutContext";
 import { BrickProgress } from "../components/BrickProgress";
 import { BuildGuideWorkspace } from "../components/BuildGuideWorkspace";
 import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
-import { ArrowLeftIcon, TrashIcon } from "../components/Icons";
+import { TrashIcon } from "../components/Icons";
 import { ProjectPreview } from "../components/ProjectPreview";
 import type { PreviewView } from "../components/ProjectPreview";
 import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
@@ -72,10 +72,17 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
 
   return (
     <div className={`page__container studio-page${currentLegoModel ? " page__container--completed" : ""}${resultView === "guide" ? " studio-page--guide" : ""}${resultView === "parts" ? " studio-page--parts" : ""}`}>
-      <Link to="/workspace" className="back-link">
-        <ArrowLeftIcon size={16} />
-        All projects
-      </Link>
+      <nav className="project-breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><Link to="/workspace" className="back-link">All projects</Link></li>
+          {project.data ? (
+            <li>
+              <span aria-hidden="true">/</span>
+              <span aria-current="page">{project.data.name}</span>
+            </li>
+          ) : null}
+        </ol>
+      </nav>
 
       {project.isPending ? <p className="status status--pending" role="status">Loading project…</p> : null}
 
