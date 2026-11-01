@@ -171,13 +171,15 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/image_to_lego_test
           REQUIRE_POSTGRES_INTEGRATION: "true"
         run: |
-          set -euo pipefail
-          output="$(uv run pytest -q -rA tests/test_worker_release_postgres.py)"
+          set -uo pipefail
+          output="$(uv run pytest -q -rA tests/test_worker_release_postgres.py 2>&1)"
+          pytest_status=$?
           printf '%s\n' "$output"
           if grep --fixed-strings --quiet "SKIPPED" <<< "$output"; then
             echo "PostgreSQL integration tests must not be skipped in CI." >&2
             exit 1
           fi
+          exit "$pytest_status"
 
   frontend:
     name: Frontend

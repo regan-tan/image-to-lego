@@ -68,6 +68,16 @@ async def postgres_database() -> str:
             provider_job_id text,
             unique (project_id, type, idempotency_key)
         );
+        create function public.set_updated_at()
+        returns trigger
+        language plpgsql
+        set search_path = ''
+        as $$
+        begin
+            new.updated_at = now();
+            return new;
+        end;
+        $$;
         """
     )
     migration_directory = Path(__file__).parents[2] / "supabase" / "migrations"
