@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -10,7 +10,6 @@ from app.api.dependencies import CurrentOwnerId
 from app.core.database import DatabaseSession
 from app.core.errors import ApplicationError
 from app.domain.jobs import JobStatusRecord, ReconstructionJob
-from app.providers.generation_queue import GenerationQueue
 from app.repositories.jobs import JobRepository
 from app.repositories.reconstruction import ReconstructionRepository
 from app.repositories.sqlalchemy_jobs import SqlAlchemyJobRepository
@@ -58,21 +57,10 @@ def get_job_repository(session: DatabaseSession) -> JobRepository:
     return SqlAlchemyJobRepository(session)
 
 
-def get_generation_queue(request: Request) -> GenerationQueue:
-    queue = cast(GenerationQueue | None, getattr(request.app.state, "generation_queue", None))
-    if queue is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Generation processing is not configured.",
-        )
-    return queue
-
-
 ReconstructionRepositoryDependency = Annotated[
     ReconstructionRepository,
     Depends(get_reconstruction_repository),
 ]
-GenerationQueueDependency = Annotated[GenerationQueue, Depends(get_generation_queue)]
 JobRepositoryDependency = Annotated[JobRepository, Depends(get_job_repository)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
@@ -84,7 +72,6 @@ async def create_reconstruction(
     owner_id: CurrentOwnerId,
     idempotency_key: IdempotencyKey,
     repository: ReconstructionRepositoryDependency,
-    generation_queue: GenerationQueueDependency,
 ) -> JSONResponse:
     if not http_request.app.state.settings.job_submissions_enabled:
         raise HTTPException(
@@ -99,7 +86,6 @@ async def create_reconstruction(
     try:
         reconstruction, created = await ReconstructionInitiationService(
             repository=repository,
-            generation_queue=generation_queue,
         ).initiate(
             owner_id=owner_id,
             project_id=request.project_id,
@@ -157,6 +143,6 @@ def _http_error(error: ApplicationError) -> HTTPException:
         "idempotency_conflict",
     }:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.message)
-    if error.code == "generation_queue_unavailable":
+    if error.code == "release_draining":
         return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.message)
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=error.message)

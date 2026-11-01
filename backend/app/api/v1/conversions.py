@@ -1,4 +1,4 @@
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -9,7 +9,6 @@ from app.api.dependencies import CurrentOwnerId
 from app.core.database import DatabaseSession
 from app.core.errors import ApplicationError
 from app.domain.jobs import ConversionJob
-from app.providers.conversion_queue import ConversionQueue
 from app.repositories.conversion import ConversionRepository
 from app.repositories.sqlalchemy_conversion import SqlAlchemyConversionRepository
 from app.services.conversion import ConversionInitiationService, ConversionRequest
@@ -43,18 +42,7 @@ def get_conversion_repository(session: DatabaseSession) -> ConversionRepository:
     return SqlAlchemyConversionRepository(session)
 
 
-def get_conversion_queue(request: Request) -> ConversionQueue:
-    queue = cast(ConversionQueue | None, getattr(request.app.state, "conversion_queue", None))
-    if queue is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Conversion processing is not configured.",
-        )
-    return queue
-
-
 ConversionRepositoryDependency = Annotated[ConversionRepository, Depends(get_conversion_repository)]
-ConversionQueueDependency = Annotated[ConversionQueue, Depends(get_conversion_queue)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
@@ -65,7 +53,6 @@ async def create_conversion(
     owner_id: CurrentOwnerId,
     idempotency_key: IdempotencyKey,
     repository: ConversionRepositoryDependency,
-    conversion_queue: ConversionQueueDependency,
 ) -> JSONResponse:
     if not http_request.app.state.settings.job_submissions_enabled:
         raise HTTPException(
@@ -80,7 +67,6 @@ async def create_conversion(
     try:
         conversion, created = await ConversionInitiationService(
             repository=repository,
-            conversion_queue=conversion_queue,
         ).initiate(
             owner_id=owner_id,
             request=ConversionRequest(
@@ -117,6 +103,6 @@ def _http_error(error: ApplicationError) -> HTTPException:
         "idempotency_conflict",
     }:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.message)
-    if error.code == "conversion_queue_unavailable":
+    if error.code == "release_draining":
         return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.message)
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=error.message)

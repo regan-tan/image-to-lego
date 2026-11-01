@@ -4,6 +4,23 @@ This is the release procedure for the existing development environment. It uses 
 
 Nothing in this document authorizes a Terraform apply or a deployment. The initial identity setup and every release run require the normal human review process.
 
+## Current inactive release boundary
+
+The release controller, atomic submission admission, transactional submission outbox, and fenced
+dispatcher logic are implemented and tested offline. They are not an operational Azure release
+system. In particular, there is no reliable scheduled dispatcher runtime or live dispatcher database
+credential. **Do not deploy the current API changes without a functioning dispatcher:** newly
+accepted jobs persist a pending outbox intent and will not reach Service Bus until a dispatcher
+publishes it.
+
+Before the next rollout milestone, a reviewed operator must complete the production migration rollout,
+grant the dispatcher only its private `image_to_lego_outbox_dispatcher` role membership, configure
+and verify reliable dispatcher scheduling, establish real Azure worker-readiness evidence, implement
+the actual Azure release-controller adapters, and approve controlled deployment activation. Older
+deployed worker images must not be replaced before the reviewed bootstrap sequence has completed.
+The workflow's `RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"` value is hard-coded; repository
+variables cannot activate Azure mutations.
+
 ## One-time Azure setup
 
 From `infra/terraform/shared`, initialize the existing shared backend and review a normal plan. It must add only the GitHub deployment identity, its main-branch OIDC credential, and the role assignments in `github_actions.tf`; it must not replace or change existing shared resources. A reviewed operator applies that plan manually.

@@ -33,6 +33,13 @@ class SqlAlchemyConversionRepository:
     ) -> ConversionInitiation:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
+            admitted = await self._session.scalar(
+                text("select public.worker_release_admit_submission()")
+            )
+            if admitted is not True:
+                return ConversionInitiation(
+                    rejection=ConversionInitiationRejection.RELEASE_DRAINING
+                )
             project = await self._session.execute(
                 text(
                     "select id from public.projects where id = :project_id and owner_id = :owner_id"
@@ -140,6 +147,10 @@ class SqlAlchemyConversionRepository:
                     "algorithm_version": algorithm_version,
                 },
             )
+            await self._session.execute(
+                text("select public.submission_outbox_create(:job_id, :owner_id, 1)"),
+                {"job_id": job_id, "owner_id": owner_id},
+            )
             return ConversionInitiation(
                 conversion=ConversionJob(
                     job=_job_from_row(row),
@@ -150,24 +161,6 @@ class SqlAlchemyConversionRepository:
                     algorithm_version=algorithm_version,
                 ),
                 created=True,
-            )
-
-    async def mark_queue_publish_failed(self, *, job_id: UUID, owner_id: UUID) -> None:
-        async with self._session.begin():
-            await set_database_owner(self._session, owner_id)
-            await self._session.execute(
-                text(
-                    """
-                    update public.jobs j
-                    set status = 'failed', error_code = 'conversion_queue_unavailable',
-                        error_message = 'Conversion could not be queued. Please start it again.'
-                    from public.projects p
-                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
-                      and j.type = 'conversion' and j.status = 'queued'
-                      and j.worker_attempt_id is null
-                    """
-                ),
-                {"job_id": job_id, "owner_id": owner_id},
             )
 
     async def get_for_worker(
@@ -220,6 +213,13 @@ class SqlAlchemyConversionRepository:
         row = result.mappings().one()
         status = AttemptAcquisitionStatus(cast(str, row["status"]))
         return AttemptAcquisition(status=status, attempt_id=cast(UUID | None, row["attempt_id"]))
+
+    async def is_release_draining(self) -> bool:
+        async with self._session.begin():
+            result = await self._session.execute(
+                text("select public.worker_release_is_draining()")
+            )
+        return bool(result.scalar_one())
 
     async def renew_attempt(
         self,

@@ -9,6 +9,7 @@ SERVICE_BUS_MAX_LOCK_RENEWAL_LIMIT_SECONDS = 60 * 60
 WORKER_JOB_LEASE_SECONDS = 120
 WORKER_JOB_LEASE_RENEWAL_SECONDS = 30
 WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS = 5
+WORKER_RELEASE_DRAIN_POLL_SECONDS = 5
 
 
 class Settings(BaseSettings):
@@ -49,6 +50,11 @@ class Settings(BaseSettings):
     )
     worker_job_lease_recovery_buffer_seconds: int = Field(
         default=WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS,
+        ge=1,
+        le=60,
+    )
+    worker_release_drain_poll_seconds: int = Field(
+        default=WORKER_RELEASE_DRAIN_POLL_SECONDS,
         ge=1,
         le=60,
     )

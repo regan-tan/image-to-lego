@@ -9,6 +9,7 @@ from app.repositories.worker_attempt import AttemptAcquisition
 
 
 class ConversionInitiationRejection(StrEnum):
+    RELEASE_DRAINING = "release_draining"
     NOT_FOUND = "not_found"
     WRONG_ARTIFACT_KIND = "wrong_artifact_kind"
     SOURCE_NOT_READY = "source_not_ready"
@@ -35,8 +36,6 @@ class ConversionRepository(Protocol):
         idempotency_key: str,
     ) -> ConversionInitiation: ...
 
-    async def mark_queue_publish_failed(self, *, job_id: UUID, owner_id: UUID) -> None: ...
-
     async def get_for_worker(
         self,
         *,
@@ -51,6 +50,8 @@ class ConversionRepository(Protocol):
         owner_id: UUID,
         lease_seconds: int,
     ) -> AttemptAcquisition: ...
+
+    async def is_release_draining(self) -> bool: ...
 
     async def recovery_time(
         self,

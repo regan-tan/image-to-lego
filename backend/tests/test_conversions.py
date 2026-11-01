@@ -8,7 +8,7 @@ import httpx
 import pytest
 import trimesh
 
-from app.api.v1.conversions import get_conversion_queue, get_conversion_repository
+from app.api.v1.conversions import get_conversion_repository
 from app.api.v1.reconstructions import get_job_repository
 from app.conversion import Axis, BrickPlacement, ConversionSettings, GridPosition, convert_glb
 from app.conversion.colors import COLORS_BY_ID
@@ -20,7 +20,6 @@ from app.domain.artifacts import Artifact, ArtifactStatus
 from app.domain.jobs import ConversionJob, Job, JobStatus, JobType, WorkerConversionJob
 from app.main import create_app
 from app.providers.blob_storage import BlobStorageError, StoredBlobProperties
-from app.providers.conversion_queue import ConversionQueueError
 from app.repositories.conversion import ConversionInitiation, ConversionInitiationRejection
 from app.workers.conversion_worker import ConversionJobProcessor, serialize_lego_model
 
@@ -70,7 +69,6 @@ def conversion_job(
 class FakeConversionRepository:
     def __init__(self) -> None:
         self.initiation = ConversionInitiation(conversion=conversion_job(), created=True)
-        self.queue_failures = 0
         self.worker_job: WorkerConversionJob | None = None
         self.claimed = True
         self.claims = 0
@@ -82,9 +80,6 @@ class FakeConversionRepository:
     async def create_or_get(self, **kwargs: object) -> ConversionInitiation:
         self.create_requests.append(kwargs)
         return self.initiation
-
-    async def mark_queue_publish_failed(self, **_: object) -> None:
-        self.queue_failures += 1
 
     async def get_for_owner(self, *, job_id: UUID, owner_id: UUID) -> ConversionJob | None:
         conversion = self.initiation.conversion
@@ -119,17 +114,6 @@ class FakeConversionRepository:
 
     async def mark_succeeded(self, **_: object) -> None:
         self.succeeded += 1
-
-
-class FakeConversionQueue:
-    def __init__(self, *, should_fail: bool = False) -> None:
-        self.should_fail = should_fail
-        self.enqueued: list[tuple[UUID, UUID]] = []
-
-    async def enqueue(self, *, job_id: UUID, owner_id: UUID) -> None:
-        if self.should_fail:
-            raise ConversionQueueError("unavailable")
-        self.enqueued.append((job_id, owner_id))
 
 
 class FakeBlobStorage:
@@ -207,9 +191,8 @@ def worker_job(
 
 
 @pytest.fixture
-def api_context() -> tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue]:
+def api_context() -> tuple[httpx.AsyncClient, FakeConversionRepository]:
     repository = FakeConversionRepository()
-    queue = FakeConversionQueue()
     app = create_app(Settings())
 
     async def current_user() -> AuthenticatedUser:
@@ -217,12 +200,10 @@ def api_context() -> tuple[httpx.AsyncClient, FakeConversionRepository, FakeConv
 
     app.dependency_overrides[get_current_user] = current_user
     app.dependency_overrides[get_conversion_repository] = lambda: repository
-    app.dependency_overrides[get_conversion_queue] = lambda: queue
     app.dependency_overrides[get_job_repository] = lambda: repository
     return (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test"),
         repository,
-        queue,
     )
 
 
@@ -238,10 +219,10 @@ def request_body(**overrides: str | int) -> dict[str, str | int]:
 
 
 @pytest.mark.asyncio
-async def test_conversion_create_and_exact_replay_publish_once(
-    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
+async def test_conversion_create_and_exact_replay_are_durable_requests(
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
 ) -> None:
-    client, repository, queue = api_context
+    client, repository = api_context
     created = await client.post(
         "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
     )
@@ -255,13 +236,11 @@ async def test_conversion_create_and_exact_replay_publish_once(
     await client.aclose()
     assert created.status_code == 201
     assert replayed.status_code == 200
-    assert len(queue.enqueued) == 1
 
 
 @pytest.mark.asyncio
 async def test_conversion_submission_pause_rejects_before_creating_a_job() -> None:
     repository = FakeConversionRepository()
-    queue = FakeConversionQueue()
     original_initiation = repository.initiation
     app = create_app(Settings(job_submissions_enabled=False))
 
@@ -270,7 +249,6 @@ async def test_conversion_submission_pause_rejects_before_creating_a_job() -> No
 
     app.dependency_overrides[get_current_user] = current_user
     app.dependency_overrides[get_conversion_repository] = lambda: repository
-    app.dependency_overrides[get_conversion_queue] = lambda: queue
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -281,7 +259,6 @@ async def test_conversion_submission_pause_rejects_before_creating_a_job() -> No
     assert response.status_code == 503
     assert response.json() == {"detail": "Job submissions are temporarily paused."}
     assert repository.initiation is original_initiation
-    assert queue.enqueued == []
 
 
 @pytest.mark.asyncio
@@ -294,11 +271,11 @@ async def test_conversion_submission_pause_rejects_before_creating_a_job() -> No
     ],
 )
 async def test_conversion_request_persists_requested_algorithm_version(
-    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
     algorithm_version: str | None,
     expected_version: str,
 ) -> None:
-    client, repository, _ = api_context
+    client, repository = api_context
     body = request_body()
     if algorithm_version is not None:
         body["algorithmVersion"] = algorithm_version
@@ -323,11 +300,11 @@ async def test_conversion_request_persists_requested_algorithm_version(
     ],
 )
 async def test_conversion_rejects_other_owner_invalid_or_not_ready_source(
-    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
     rejection: ConversionInitiationRejection,
     expected_status: int,
 ) -> None:
-    client, repository, _ = api_context
+    client, repository = api_context
     repository.initiation = ConversionInitiation(rejection=rejection)
     response = await client.post(
         "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
@@ -337,24 +314,10 @@ async def test_conversion_rejects_other_owner_invalid_or_not_ready_source(
 
 
 @pytest.mark.asyncio
-async def test_conversion_queue_failure_marks_new_job_failed(
-    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
-) -> None:
-    client, repository, queue = api_context
-    queue.should_fail = True
-    response = await client.post(
-        "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
-    )
-    await client.aclose()
-    assert response.status_code == 503
-    assert repository.queue_failures == 1
-
-
-@pytest.mark.asyncio
 async def test_get_job_returns_a_conversion_status_for_its_owner(
-    api_context: tuple[httpx.AsyncClient, FakeConversionRepository, FakeConversionQueue],
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
 ) -> None:
-    client, repository, _ = api_context
+    client, repository = api_context
     conversion = repository.initiation.conversion
     assert conversion is not None
     response = await client.get(f"/api/v1/jobs/{conversion.job.id}")

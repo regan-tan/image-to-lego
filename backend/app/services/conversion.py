@@ -4,7 +4,6 @@ from uuid import UUID
 from app.conversion.core import MAX_TARGET_PARTS
 from app.core.errors import ApplicationError
 from app.domain.jobs import ConversionJob
-from app.providers.conversion_queue import ConversionQueue, ConversionQueueError
 from app.repositories.conversion import ConversionInitiationRejection, ConversionRepository
 
 MAX_IDEMPOTENCY_KEY_LENGTH = 200
@@ -20,16 +19,14 @@ class ConversionRequest:
 
 
 class ConversionInitiationService:
-    """Creates a durable conversion job before publishing its tiny queue message."""
+    """Creates a conversion job and durable publication intent."""
 
     def __init__(
         self,
         *,
         repository: ConversionRepository,
-        conversion_queue: ConversionQueue,
     ) -> None:
         self._repository = repository
-        self._conversion_queue = conversion_queue
 
     async def initiate(
         self,
@@ -68,6 +65,14 @@ class ConversionInitiationService:
                 code="conversion_source_not_found",
                 message="The project or reconstructed model does not exist.",
             )
+        if created.rejection is ConversionInitiationRejection.RELEASE_DRAINING:
+            raise ApplicationError(
+                code="release_draining",
+                message=(
+                    "Job submissions are temporarily paused for maintenance. "
+                    "Please retry later."
+                ),
+            )
         if created.rejection is ConversionInitiationRejection.WRONG_ARTIFACT_KIND:
             raise ApplicationError(
                 code="invalid_conversion_source",
@@ -87,18 +92,4 @@ class ConversionInitiationService:
             raise RuntimeError("Conversion repository returned no result.")
         if not created.created:
             return created.conversion, False
-        try:
-            await self._conversion_queue.enqueue(
-                job_id=created.conversion.job.id,
-                owner_id=owner_id,
-            )
-        except ConversionQueueError as error:
-            await self._repository.mark_queue_publish_failed(
-                job_id=created.conversion.job.id,
-                owner_id=owner_id,
-            )
-            raise ApplicationError(
-                code="conversion_queue_unavailable",
-                message="Conversion could not be started. Please try again.",
-            ) from error
         return created.conversion, True

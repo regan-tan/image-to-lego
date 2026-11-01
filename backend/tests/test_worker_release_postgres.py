@@ -16,6 +16,9 @@ MIGRATIONS = (
     "20261029000000_worker_job_leases.sql",
     "20261101000000_worker_release_gate.sql",
     "20261102000000_durable_worker_release_coordination.sql",
+    "20261103000000_worker_release_drain_status.sql",
+    "20261104000000_submission_release_admission.sql",
+    "20261105000000_submission_outbox.sql",
 )
 TEST_DATABASE_NAME = "image_to_lego_test"
 LOCAL_TEST_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -54,13 +57,16 @@ async def postgres_database() -> str:
         """
         drop schema public cascade;
         create schema public;
+        create extension if not exists pgcrypto;
         create table public.projects (id uuid primary key, owner_id uuid not null);
         create table public.jobs (
             id uuid primary key,
             project_id uuid not null references public.projects(id),
             type text not null,
             status text not null,
-            provider_job_id text
+            idempotency_key text,
+            provider_job_id text,
+            unique (project_id, type, idempotency_key)
         );
         """
     )
@@ -76,7 +82,8 @@ async def database(postgres_database: str) -> str:
     connection = await asyncpg.connect(postgres_database)
     await connection.execute(
         """
-        truncate public.jobs, public.projects, public.worker_release_audit;
+        truncate public.submission_outbox, public.jobs, public.projects,
+                 public.worker_release_audit;
         update public.worker_release_state
         set state = 'open', release_id = null, controller_id = null,
             controller_heartbeat_expires_at = null;
@@ -113,16 +120,26 @@ async def _acquire_with_lease(
 ) -> str:
     row = await connection.fetchrow(
         "select status from public.worker_release_try_acquire_attempt($1, $2, $3, $4, $5)",
-        job_id, owner_id, job_type, uuid4(), lease_seconds,
+        job_id,
+        owner_id,
+        job_type,
+        uuid4(),
+        lease_seconds,
     )
     assert row is not None
     return str(row["status"])
 
 
 async def _begin(connection: object, release_id: UUID, controller_id: UUID) -> int:
-    return int(await connection.fetchval(
-        "select public.worker_release_begin($1, $2, 60)", release_id, controller_id
-    ))
+    return int(
+        await connection.fetchval(
+            "select public.worker_release_begin($1, $2, 60)", release_id, controller_id
+        )
+    )
+
+
+async def _admit(connection: object) -> bool:
+    return bool(await connection.fetchval("select public.worker_release_admit_submission()"))
 
 
 async def _transition_to_quiescent(
@@ -136,9 +153,7 @@ async def _transition_to_quiescent(
     )
 
 
-async def _heartbeat(
-    connection: object, release_id: UUID, controller_id: UUID, token: int
-) -> None:
+async def _heartbeat(connection: object, release_id: UUID, controller_id: UUID, token: int) -> None:
     await connection.execute(
         "select public.worker_release_heartbeat($1, $2, $3, 60)",
         release_id,
@@ -158,6 +173,20 @@ async def _expire_controller_heartbeat(connection: object) -> None:
 
 async def _release_state(connection: object) -> str:
     return str(await connection.fetchval("select state from public.worker_release_state"))
+
+
+async def _create_outbox(connection: object, job_id: UUID, owner_id: UUID) -> UUID:
+    return UUID(
+        await connection.fetchval(
+            "select public.submission_outbox_create($1, $2, 1)", job_id, owner_id
+        )
+    )
+
+
+async def _claim_outbox(connection: object, dispatcher_id: UUID) -> object:
+    return await connection.fetchrow(
+        "select * from public.submission_outbox_claim($1, 60)", dispatcher_id
+    )
 
 
 def test_read_migration_sql_accepts_utf8_with_and_without_bom() -> None:
@@ -197,6 +226,71 @@ async def test_missing_release_singleton_cannot_admit_worker_attempt(database: s
         await connection.execute(
             "insert into public.worker_release_state (singleton, state) values (true, 'open')"
         )
+
+
+@pytest.mark.asyncio
+async def test_open_gate_admits_submission(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        assert await _admit(connection) is True
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_draining_gate_rejects_submission(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        await _begin(connection, uuid4(), uuid4())
+        assert await _admit(connection) is False
+        assert await _release_state(connection) == "draining"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_admission_lock_serializes_with_draining(database: str) -> None:
+    admission, controller = await asyncpg.connect(database), await asyncpg.connect(database)
+    try:
+        transaction = admission.transaction()
+        await transaction.start()
+        assert await _admit(admission) is True
+        release_task = asyncio.create_task(_begin(controller, uuid4(), uuid4()))
+        await asyncio.wait_for(asyncio.sleep(0), timeout=1)
+        assert not release_task.done()
+        await transaction.commit()
+        await asyncio.wait_for(release_task, timeout=1)
+        assert await _admit(admission) is False
+    finally:
+        await admission.close()
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_release_singleton_fails_closed_for_submission(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute("delete from public.worker_release_state where singleton = true")
+        with pytest.raises(asyncpg.PostgresError, match="cannot be proven"):
+            await _admit(connection)
+    finally:
+        await connection.execute(
+            "insert into public.worker_release_state (singleton, state) values (true, 'open')"
+        )
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_idle_worker_drain_status_is_durable_and_fails_closed(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        assert await connection.fetchval("select public.worker_release_is_draining()") is False
+        await _begin(connection, uuid4(), uuid4())
+        assert await connection.fetchval("select public.worker_release_is_draining()") is True
+        await connection.execute("delete from public.worker_release_state where singleton = true")
+        with pytest.raises(asyncpg.PostgresError):
+            await connection.fetchval("select public.worker_release_is_draining()")
+    finally:
         await connection.close()
 
 
@@ -448,6 +542,164 @@ async def test_privileges_prevent_unauthorized_release_state_changes(database: s
 
 
 @pytest.mark.asyncio
+async def test_outbox_claim_and_delivery_are_fenced(database: str) -> None:
+    job_id, owner_id = await _create_job(database, "reconstruction")
+    connection = await asyncpg.connect(database)
+    try:
+        outbox_id = await _create_outbox(connection, job_id, owner_id)
+        dispatcher_id = uuid4()
+        claim = await _claim_outbox(connection, dispatcher_id)
+        assert claim is not None
+        assert claim["status"] == "claimed"
+        assert claim["outbox_id"] == outbox_id
+        assert claim["message_type"] == "reconstruction_job"
+        assert claim["owner_id"] == owner_id
+        assert (await _claim_outbox(connection, uuid4()))["status"] == "empty"
+
+        token = int(claim["dispatch_fencing_token"])
+        assert await connection.fetchval(
+            "select public.submission_outbox_begin_send($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+        assert not await connection.fetchval(
+            "select public.submission_outbox_record_delivered($1, $2, $3)",
+            outbox_id,
+            uuid4(),
+            token,
+        )
+        assert await connection.fetchval(
+            "select public.submission_outbox_record_delivered($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+        assert await connection.fetchval(
+            "select status = 'delivered' from public.submission_outbox where id = $1", outbox_id
+        )
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_draining_rejects_outbox_send_and_pending_work_can_resume(database: str) -> None:
+    job_id, owner_id = await _create_job(database, "conversion")
+    connection = await asyncpg.connect(database)
+    try:
+        outbox_id = await _create_outbox(connection, job_id, owner_id)
+        dispatcher_id = uuid4()
+        claim = await _claim_outbox(connection, dispatcher_id)
+        assert claim is not None
+        token = int(claim["dispatch_fencing_token"])
+
+        release_id, controller_id = uuid4(), uuid4()
+        release_token = await _begin(connection, release_id, controller_id)
+        assert not await connection.fetchval(
+            "select public.submission_outbox_begin_send($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+        assert await connection.fetchval(
+            "select public.submission_outbox_release_unstarted_claim($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+        assert await connection.fetchval(
+            "select status = 'pending' from public.submission_outbox where id = $1", outbox_id
+        )
+        await _transition_to_quiescent(connection, release_id, controller_id, release_token)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_or_uncertain_outbox_publication_blocks_quiescence(database: str) -> None:
+    job_id, owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        outbox_id = await _create_outbox(connection, job_id, owner_id)
+        dispatcher_id = uuid4()
+        claim = await _claim_outbox(connection, dispatcher_id)
+        assert claim is not None
+        token = int(claim["dispatch_fencing_token"])
+        assert await connection.fetchval(
+            "select public.submission_outbox_begin_send($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+
+        release_id, controller_id = uuid4(), uuid4()
+        release_token = await _begin(connection, release_id, controller_id)
+        with pytest.raises(asyncpg.PostgresError, match="publications are still active"):
+            await _transition_to_quiescent(connection, release_id, controller_id, release_token)
+
+        assert await connection.fetchval(
+            "select public.submission_outbox_record_uncertain($1, $2, $3, $4)",
+            outbox_id,
+            dispatcher_id,
+            token,
+            "test timeout after send started",
+        )
+        with pytest.raises(asyncpg.PostgresError, match="publications are still active"):
+            await _transition_to_quiescent(connection, release_id, controller_id, release_token)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_known_outbox_failure_returns_intent_to_pending(database: str) -> None:
+    job_id, owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        outbox_id = await _create_outbox(connection, job_id, owner_id)
+        dispatcher_id = uuid4()
+        claim = await _claim_outbox(connection, dispatcher_id)
+        assert claim is not None
+        token = int(claim["dispatch_fencing_token"])
+        assert await connection.fetchval(
+            "select public.submission_outbox_begin_send($1, $2, $3)",
+            outbox_id,
+            dispatcher_id,
+            token,
+        )
+        assert await connection.fetchval(
+            "select public.submission_outbox_record_known_failure($1, $2, $3, $4, $5, now())",
+            outbox_id,
+            dispatcher_id,
+            token,
+            "service_bus_unavailable",
+            "Service Bus rejected the send before accepting it.",
+        )
+        counts = await connection.fetchrow(
+            "select * from public.submission_outbox_publication_counts()"
+        )
+        assert counts is not None
+        assert counts["pending_count"] == 1
+        assert counts["in_flight_count"] == 0
+        assert counts["attention_required_count"] == 0
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_role_cannot_read_or_dispatch_outbox(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute("set role authenticated")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await connection.fetch("select * from public.submission_outbox")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await _claim_outbox(connection, uuid4())
+        await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_role_can_acquire_an_attempt(database: str) -> None:
     job_id, owner_id = await _create_job(database)
     connection = await asyncpg.connect(database)
@@ -473,5 +725,183 @@ async def test_authenticated_role_cannot_acquire_own_or_another_users_attempt(
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await _acquire(connection, other_job_id, other_owner_id, "reconstruction")
         await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+async def _create_job_with_outbox(
+    connection: object,
+    *,
+    project_id: UUID,
+    owner_id: UUID,
+    job_type: str,
+    idempotency_key: str,
+) -> UUID | None:
+    async with connection.transaction():
+        admitted = await _admit(connection)
+        if not admitted:
+            return None
+        job_id = uuid4()
+        inserted = await connection.fetchval(
+            """
+            insert into public.jobs (id, project_id, type, status, idempotency_key)
+            values ($1, $2, $3, 'queued', $4)
+            on conflict (project_id, type, idempotency_key) do nothing
+            returning id
+            """,
+            job_id,
+            project_id,
+            job_type,
+            idempotency_key,
+        )
+        if inserted is None:
+            return await connection.fetchval(
+                """
+                select id from public.jobs
+                where project_id = $1 and type = $2 and idempotency_key = $3
+                """,
+                project_id,
+                job_type,
+                idempotency_key,
+            )
+        await _create_outbox(connection, job_id, owner_id)
+        return UUID(inserted)
+
+
+@pytest.mark.asyncio
+async def test_reconstruction_job_and_outbox_intent_commit_together(database: str) -> None:
+    project_id, owner_id = uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        job_id = await _create_job_with_outbox(
+            connection,
+            project_id=project_id,
+            owner_id=owner_id,
+            job_type="reconstruction",
+            idempotency_key="reconstruction-key",
+        )
+        assert job_id is not None
+        assert await connection.fetchval(
+            "select count(*) from public.jobs where id = $1", job_id
+        ) == 1
+        assert await connection.fetchval(
+            "select count(*) from public.submission_outbox where job_id = $1", job_id
+        ) == 1
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_conversion_job_and_outbox_intent_commit_together(database: str) -> None:
+    project_id, owner_id = uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        job_id = await _create_job_with_outbox(
+            connection,
+            project_id=project_id,
+            owner_id=owner_id,
+            job_type="conversion",
+            idempotency_key="conversion-key",
+        )
+        assert job_id is not None
+        assert await connection.fetchval(
+            "select count(*) from public.jobs where id = $1", job_id
+        ) == 1
+        assert await connection.fetchval(
+            "select count(*) from public.submission_outbox where job_id = $1", job_id
+        ) == 1
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_job_and_outbox_roll_back_together(database: str) -> None:
+    project_id, owner_id, job_id = uuid4(), uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        with pytest.raises(RuntimeError, match="force rollback"):
+            async with connection.transaction():
+                assert await _admit(connection) is True
+                await connection.execute(
+                    """
+                    insert into public.jobs (id, project_id, type, status, idempotency_key)
+                    values ($1, $2, 'reconstruction', 'queued', 'rollback-key')
+                    """,
+                    job_id,
+                    project_id,
+                )
+                await _create_outbox(connection, job_id, owner_id)
+                raise RuntimeError("force rollback")
+        job_count = await connection.fetchval(
+            "select count(*) from public.jobs where id = $1", job_id
+        )
+        assert job_count == 0
+        assert (
+            await connection.fetchval(
+                "select count(*) from public.submission_outbox where job_id = $1", job_id
+            )
+            == 0
+        )
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_replay_does_not_duplicate_outbox_intent(database: str) -> None:
+    project_id, owner_id = uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        first_job_id = await _create_job_with_outbox(
+            connection,
+            project_id=project_id,
+            owner_id=owner_id,
+            job_type="reconstruction",
+            idempotency_key="replay-key",
+        )
+        replayed_job_id = await _create_job_with_outbox(
+            connection,
+            project_id=project_id,
+            owner_id=owner_id,
+            job_type="reconstruction",
+            idempotency_key="replay-key",
+        )
+        assert first_job_id == replayed_job_id
+        assert await connection.fetchval(
+            "select count(*) from public.submission_outbox where job_id = $1", first_job_id
+        ) == 1
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_draining_prevents_job_and_outbox_creation(database: str) -> None:
+    project_id, owner_id = uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        await _begin(connection, uuid4(), uuid4())
+        job_id = await _create_job_with_outbox(
+            connection,
+            project_id=project_id,
+            owner_id=owner_id,
+            job_type="conversion",
+            idempotency_key="draining-key",
+        )
+        assert job_id is None
+        assert await connection.fetchval("select count(*) from public.jobs") == 0
+        assert await connection.fetchval("select count(*) from public.submission_outbox") == 0
     finally:
         await connection.close()
