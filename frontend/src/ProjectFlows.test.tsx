@@ -672,6 +672,27 @@ describe("project flows", () => {
     expect(api.posts("/api/v1/conversions")).toHaveLength(0);
   });
 
+  it("does not flash conversion controls while restoring a saved LEGO build", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+        latestLegoModel: { artifactId: LEGO_ARTIFACT_ID },
+      }),
+      delayedLegoArtifactId: LEGO_ARTIFACT_ID,
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+    expect(await screen.findByText("Loading saved LEGO model...")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your 3D model is ready" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Convert to LEGO" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("model-viewer")).not.toBeInTheDocument();
+    await waitFor(() => expect(api.readUrlRequests(LEGO_ARTIFACT_ID)).toHaveLength(1));
+    api.resolveDelayedLegoModel();
+    expect(await screen.findByRole("heading", { name: "Your LEGO build" })).toBeInTheDocument();
+    expect(api.posts("/api/v1/conversions")).toHaveLength(0);
+  });
+
   it("rehydrates a saved LEGO model without starting a conversion", async () => {
     const api = installFakeApi({
       project: projectDetail({
@@ -728,8 +749,8 @@ describe("project flows", () => {
 
     expect(screen.getByRole("heading", { name: "Build guide" })).toBeInTheDocument();
     expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
-    expect(screen.getByText("1 added this step · 1 of 4 parts built")).toBeInTheDocument();
-    expect(screen.getByText("Step 1")).toBeInTheDocument();
+    expect(screen.getByText("1 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Step 1. Click to jump to a step" })).toBeInTheDocument();
     expect(screen.getByText("Red")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
@@ -739,7 +760,7 @@ describe("project flows", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Step 2 of 3")).toBeInTheDocument();
-    expect(screen.getByText("2 added this step · 3 of 4 parts built")).toBeInTheDocument();
+    expect(screen.getByText("3 of 4 parts built")).toBeInTheDocument();
     expect(screen.getByText("Blue")).toBeInTheDocument();
     expect(screen.getByText("Yellow")).toBeInTheDocument();
     expect(within(screen.getByTestId("build-guide-viewer")).getByTestId("lego-model-viewer")).toHaveAttribute("data-placement-stages", "previous,current,current,future");
@@ -977,7 +998,7 @@ describe("project flows", () => {
     api.resolveDelayedLegoModel();
 
     expect(await screen.findByText("Step 1 of 2")).toBeInTheDocument();
-    expect(screen.getByText("1 added this step · 1 of 2 parts built")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 parts built")).toBeInTheDocument();
     expect(screen.getByText("Black")).toBeInTheDocument();
     expect(screen.queryByText("Red")).not.toBeInTheDocument();
   });

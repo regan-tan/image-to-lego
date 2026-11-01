@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { deriveLegoBuildSteps } from "../legoBuildInstructions";
@@ -74,7 +74,7 @@ describe("part thumbnail list integration", () => {
     expect(within(rows.at(-1)!).getByText("part-19")).toBeInTheDocument();
   });
 
-  it("keeps complete inventory available while explaining that a legacy artifact cannot be purchase-ready", () => {
+  it("keeps one inventory export and shows verification guidance in a dismissible tooltip", () => {
     const partsList = createLegoPartsList(model());
     const { container } = render(
       <PartsListWorkspace
@@ -84,9 +84,52 @@ describe("part thumbnail list integration", () => {
       />,
     );
 
-    expect(within(container).getByText(/Purchase-ready export requires a surface-grid-v4 model artifact/)).toBeInTheDocument();
-    expect(within(container).getByRole("button", { name: "Download purchase-ready CSV" })).toBeDisabled();
-    expect(within(container).getByRole("button", { name: "Download parts list (.csv)" })).toBeEnabled();
+    const view = within(container);
+    expect(view.queryByRole("button", { name: "Download purchase-ready CSV" })).not.toBeInTheDocument();
+    expect(view.getAllByRole("button", { name: "Download parts list (.csv)" })).toHaveLength(1);
+    expect(view.getByRole("button", { name: "Download parts list (.csv)" })).toBeEnabled();
+    expect(view.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    const info = view.getByRole("button", { name: "About parts list verification" });
+    fireEvent.mouseEnter(info);
+    expect(view.getByRole("tooltip")).toHaveTextContent("The CSV includes the complete model inventory");
+    expect(view.getByRole("tooltip")).toHaveTextContent("does not confirm current availability, stock, pricing, or sellers");
+    expect(view.getByRole("tooltip")).toHaveTextContent("additional verification");
+    fireEvent.mouseLeave(info);
+    expect(view.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    fireEvent.focus(info);
+    expect(info).toHaveAttribute("aria-describedby", view.getByRole("tooltip").id);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(view.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    fireEvent.click(info);
+    expect(view.getByRole("tooltip")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(view.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("edits the step number, validates the range, and supports cancellation", () => {
+    const buildModel = model();
+    const steps = deriveLegoBuildSteps(buildModel);
+    const onStepChange = vi.fn();
+    const { container, unmount } = render(<BuildGuideWorkspace model={buildModel} steps={steps} currentStepIndex={0} onStepChange={onStepChange} />);
+    const view = within(container);
+    fireEvent.click(view.getByRole("button", { name: /Step 1. Click to jump/ }));
+    const input = view.getByRole("spinbutton", { name: "Step number" });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "999" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(onStepChange).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(onStepChange).toHaveBeenCalledWith(1);
+    fireEvent.click(view.getByRole("button", { name: /Step 1. Click to jump/ }));
+    fireEvent.keyDown(view.getByRole("spinbutton"), { key: "Escape" });
+    expect(view.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(onStepChange).toHaveBeenCalledTimes(1);
+    expect(view.queryByRole("slider")).not.toBeInTheDocument();
+    unmount();
   });
 
   it("adds thumbnails only for the selected step's grouped parts", () => {

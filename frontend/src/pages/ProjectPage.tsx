@@ -132,65 +132,71 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
             projectId={project.data.id}
             projectName={project.data.name}
           />
-          {currentLegoModel ? null : (
-            <BrickProgress
-              status={project.data.status}
-              conversionStatus={conversionStatus}
-            />
-          )}
-          {currentLegoModel ? (
-            <div className="result-view-toggle project-tabs" role="group" aria-label="Completed build view">
-              <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>Overview</button>
-              <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
-              <button type="button" aria-pressed={resultView === "guide"} onClick={() => setResultView("guide")}>Build guide</button>
-            </div>
-          ) : null}
-          <div className={`project-layout${currentLegoModel && resultView === "model" ? " project-layout--completed" : ""}${currentLegoModel && resultView !== "model" ? " project-layout--hidden" : ""}`}>
-            {currentLegoModel === null || resultView === "model" ? (
-              <ProjectPreview
-                key={`preview-${project.data.id}`}
+          {persistedLegoArtifactId !== null && persistedLegoModel.isPending && currentLegoModel === null ? (
+            <p className="status status--pending" role="status">Loading saved LEGO model...</p>
+          ) : (
+            <>
+            {currentLegoModel ? null : (
+              <BrickProgress
+                status={project.data.status}
+                conversionStatus={conversionStatus}
+              />
+            )}
+            {currentLegoModel ? (
+              <div className="result-view-toggle project-tabs" role="group" aria-label="Completed build view">
+                <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>Overview</button>
+                <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
+                <button type="button" aria-pressed={resultView === "guide"} onClick={() => setResultView("guide")}>Build guide</button>
+              </div>
+            ) : null}
+            <div className={`project-layout${currentLegoModel && resultView === "model" ? " project-layout--completed" : ""}${currentLegoModel && resultView !== "model" ? " project-layout--hidden" : ""}`}>
+              {currentLegoModel === null || resultView === "model" ? (
+                <ProjectPreview
+                  key={`preview-${project.data.id}`}
+                  project={project.data}
+                  accessToken={session.access_token}
+                  userId={session.user.id}
+                  legoModel={currentLegoModel}
+                  view={currentPreviewView}
+                  onViewChange={setPreviewView}
+                />
+              ) : null}
+              {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
+              <ProjectStatusPanel
+                key={`status-${project.data.id}`}
                 project={project.data}
                 accessToken={session.access_token}
                 userId={session.user.id}
+                onConversionStatusChange={setConversionStatus}
                 legoModel={currentLegoModel}
-                view={currentPreviewView}
-                onViewChange={setPreviewView}
+                partsList={partsList}
+                onLegoModelLoaded={handleLegoModelLoaded}
+                isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
+                hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
+                buildComplexity={buildComplexity}
+                onBuildComplexityChange={setSelectedBuildComplexity}
+                onViewFullPartsList={() => setResultView("parts")}
+                onOpenBuildGuide={() => setResultView("guide")}
+                isVisible={currentLegoModel === null || resultView === "model"}
+              />
+            </div>
+            {currentLegoModel && resultView === "parts" && partsList ? (
+              <PartsListWorkspace
+                partsList={partsList}
+                algorithmVersion={currentLegoModel.metadata.algorithmVersion}
+                partColorVerificationVersion={currentLegoModel.metadata.partColorVerificationVersion}
               />
             ) : null}
-            {/* Keyed by project so panel state (replacing a photo, retry keys) never leaks between projects. */}
-            <ProjectStatusPanel
-              key={`status-${project.data.id}`}
-              project={project.data}
-              accessToken={session.access_token}
-              userId={session.user.id}
-              onConversionStatusChange={setConversionStatus}
-              legoModel={currentLegoModel}
-              partsList={partsList}
-              onLegoModelLoaded={handleLegoModelLoaded}
-              isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
-              hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
-              buildComplexity={buildComplexity}
-              onBuildComplexityChange={setSelectedBuildComplexity}
-              onViewFullPartsList={() => setResultView("parts")}
-              onOpenBuildGuide={() => setResultView("guide")}
-              isVisible={currentLegoModel === null || resultView === "model"}
-            />
-          </div>
-          {currentLegoModel && resultView === "parts" && partsList ? (
-            <PartsListWorkspace
-              partsList={partsList}
-              algorithmVersion={currentLegoModel.metadata.algorithmVersion}
-              partColorVerificationVersion={currentLegoModel.metadata.partColorVerificationVersion}
-            />
-          ) : null}
-          {currentLegoModel && resultView === "guide" ? (
-            <BuildGuideWorkspace
-              model={currentLegoModel}
-              steps={buildSteps}
-              currentStepIndex={buildStepIndex}
-              onStepChange={setBuildStepIndex}
-            />
-          ) : null}
+            {currentLegoModel && resultView === "guide" ? (
+              <BuildGuideWorkspace
+                model={currentLegoModel}
+                steps={buildSteps}
+                currentStepIndex={buildStepIndex}
+                onStepChange={setBuildStepIndex}
+              />
+            ) : null}
+          </>
+          )}
         </>
       ) : null}
     </div>
