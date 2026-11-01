@@ -50,7 +50,7 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
     <div className="app">
       <header className="app-header">
         <div className="app-header__inner">
-          <Link to="/workspace" className="app-header__brand" aria-label="Image to LEGO, all projects">
+          <Link to="/" className="app-header__brand" aria-label="Image to LEGO home">
             <LogoMark />
             <span className="app-header__brand-name">Image to LEGO</span>
           </Link>
@@ -66,7 +66,7 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
       {signOutError ? <p className="form-error page-alert" role="alert">{signOutError}</p> : null}
       <div className="app-workspace">
         <aside className="app-sidebar" aria-label="Workspace navigation">
-          <Link className="app-sidebar__brand" to="/workspace"><LogoMark /> <span>IMAGE → LEGO</span></Link>
+          <Link className="app-sidebar__brand" to="/" aria-label="Image to LEGO home"><LogoMark /> <span>IMAGE → LEGO</span></Link>
           <p className="app-sidebar__section">Workspace</p>
           <nav className="app-sidebar__nav">
             <Link to="/workspace" className={location.pathname === "/workspace" ? "is-active" : ""}>All projects</Link>
