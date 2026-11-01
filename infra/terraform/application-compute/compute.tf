@@ -198,9 +198,11 @@ resource "azurerm_container_app" "frontend" {
       image  = local.frontend_image
       cpu    = 0.25
       memory = "0.5Gi"
+      # API client paths already begin with /api/v1. A /api base would
+      # duplicate the prefix and cause 404s through the Nginx proxy.
       env {
         name  = "VITE_API_BASE_URL"
-        value = "/api"
+        value = ""
       }
       # nginx.conf.template forwards /api to this HTTPS App Service origin.
       env {
@@ -225,11 +227,10 @@ resource "azurerm_container_app" "frontend" {
   }
 
   lifecycle {
-    # The current frontend was built with a public absolute API URL and
-    # Supabase build settings. They must remain unchanged while adopting its
-    # state. The declared /api value remains the intended clean-room contract;
-    # retire this narrowly scoped safeguard only in a separately reviewed
-    # frontend release that verifies its built runtime configuration.
+    # Preserve existing frontend environment settings during reconciliation.
+    # The empty API base above is the clean-room creation contract; the live
+    # frontend was separately corrected and verified. Remove this safeguard
+    # only with a reviewed frontend release and runtime configuration test.
     ignore_changes = [
       ingress[0].traffic_weight,
       # The live Container App predates provider validation and stores zero
