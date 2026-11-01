@@ -172,10 +172,12 @@ jobs:
           REQUIRE_POSTGRES_INTEGRATION: "true"
         run: |
           set -uo pipefail
-          output="$(uv run pytest -q -rA tests/test_worker_release_postgres.py 2>&1)"
-          pytest_status=$?
-          printf '%s\n' "$output"
-          if grep --fixed-strings --quiet "SKIPPED" <<< "$output"; then
+          pytest_output="$RUNNER_TEMP/postgres-pytest-output.txt"
+          set +e
+          uv run pytest -q -rA tests/test_worker_release_postgres.py 2>&1 | tee "$pytest_output"
+          pytest_status=${PIPESTATUS[0]}
+          set -e
+          if grep --fixed-strings --quiet "SKIPPED" "$pytest_output"; then
             echo "PostgreSQL integration tests must not be skipped in CI." >&2
             exit 1
           fi

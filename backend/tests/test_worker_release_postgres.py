@@ -94,6 +94,9 @@ async def database(postgres_database: str) -> str:
         """
         truncate public.submission_outbox, public.jobs, public.projects,
                  public.worker_release_audit;
+        insert into public.worker_release_state (singleton, state)
+        values (true, 'open')
+        on conflict (singleton) do nothing;
         update public.worker_release_state
         set state = 'open', release_id = null, controller_id = null,
             controller_heartbeat_expires_at = null;
@@ -186,10 +189,8 @@ async def _release_state(connection: object) -> str:
 
 
 async def _create_outbox(connection: object, job_id: UUID, owner_id: UUID) -> UUID:
-    return UUID(
-        await connection.fetchval(
-            "select public.submission_outbox_create($1, $2, 1)", job_id, owner_id
-        )
+    return await connection.fetchval(
+        "select public.submission_outbox_create($1, $2, 1)", job_id, owner_id
     )
 
 
@@ -236,6 +237,7 @@ async def test_missing_release_singleton_cannot_admit_worker_attempt(database: s
         await connection.execute(
             "insert into public.worker_release_state (singleton, state) values (true, 'open')"
         )
+        await connection.close()
 
 
 @pytest.mark.asyncio
@@ -677,7 +679,11 @@ async def test_known_outbox_failure_returns_intent_to_pending(database: str) -> 
             token,
         )
         assert await connection.fetchval(
-            "select public.submission_outbox_record_known_failure($1, $2, $3, $4, $5, now())",
+            """
+            select public.submission_outbox_record_known_failure(
+                $1, $2, $3, $4, $5, statement_timestamp() + interval '1 second'
+            )
+            """,
             outbox_id,
             dispatcher_id,
             token,
@@ -774,7 +780,7 @@ async def _create_job_with_outbox(
                 idempotency_key,
             )
         await _create_outbox(connection, job_id, owner_id)
-        return UUID(inserted)
+        return inserted
 
 
 @pytest.mark.asyncio
