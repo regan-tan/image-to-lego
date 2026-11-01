@@ -180,8 +180,9 @@ BEGIN
         RETURNING o.id, o.job_id, o.owner_id, o.message_type, o.schema_version,
                   o.dispatch_fencing_token, o.claim_expires_at
     )
-    SELECT 'claimed'::text, id, job_id, owner_id, message_type, schema_version,
-           dispatch_fencing_token, claim_expires_at
+    SELECT 'claimed'::text, claimed.id, claimed.job_id, claimed.owner_id,
+           claimed.message_type, claimed.schema_version,
+           claimed.dispatch_fencing_token, claimed.claim_expires_at
     FROM claimed;
 
     IF NOT FOUND THEN
