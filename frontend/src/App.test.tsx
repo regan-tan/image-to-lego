@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { Session } from "@supabase/supabase-js";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { IDLE_TIMEOUT_MS, idleSessionKey } from "./idleSession";
 
 const authMock = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -42,13 +43,14 @@ function renderApp(initialRoute: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <MemoryRouter initialEntries={[initialRoute]}>
       <QueryClientProvider client={client}>
         <App />
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  return { ...view, client };
 }
 
 function mockSignedOutSession() {
@@ -100,6 +102,7 @@ function mockSignedInSession() {
 
 describe("App", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.stubGlobal("fetch", vi.fn());
     mockSignedOutSession();
     authMock.signUp.mockResolvedValue({ data: { session: null }, error: null });
@@ -110,6 +113,8 @@ describe("App", () => {
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -119,6 +124,35 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: /Your ideas.*Made of.*bricks/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Get started/ })).toHaveAttribute("href", "/login");
+  });
+
+  it("locks an expired saved session before loading private project data", async () => {
+    mockSignedInSession();
+    localStorage.setItem(idleSessionKey(session), String(Date.now() - IDLE_TIMEOUT_MS));
+    renderApp("/workspace");
+
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(screen.getByText(/Your session expired after 10 minutes/)).toBeInTheDocument();
+    expect(authMock.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("logs out an idle user and removes cached private data", async () => {
+    mockSignedInSession();
+    mockApi();
+    const { client } = renderApp("/workspace");
+    await screen.findByRole("heading", { name: "Your creations." });
+    client.setQueryData(["private-test-data"], { secret: "private" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+
+    await act(async () => {
+      vi.setSystemTime(Date.now() + IDLE_TIMEOUT_MS);
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(screen.getByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(authMock.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(client.getQueryData(["private-test-data"])).toBeUndefined();
   });
 
   it("renders the login page", async () => {

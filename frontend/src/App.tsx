@@ -1,9 +1,11 @@
 import type { Session } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { AppLayout } from "./components/AppLayout";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { idleSessionKey, isSessionIdle, watchIdleSession } from "./idleSession";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -12,8 +14,17 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { SignupPage } from "./pages/SignupPage";
 
 export default function App() {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(() => supabase !== null);
+
+  const expireSession = useCallback(() => {
+    setSession(null);
+    setSessionExpired(true);
+    queryClient.clear();
+  }, [queryClient]);
 
   useEffect(() => {
     const client = supabase;
@@ -22,12 +33,22 @@ export default function App() {
     }
 
     let isMounted = true;
+
+    function restoreSession(nextSession: Session | null) {
+      if (!isMounted) return;
+      if (nextSession && isSessionIdle(nextSession)) {
+        expireSession();
+      } else {
+        setSession(nextSession);
+        if (nextSession) setSessionExpired(false);
+        if (!nextSession) queryClient.clear();
+      }
+      setIsLoadingSession(false);
+    }
+
     void client.auth.getSession().then(
       ({ data }) => {
-        if (isMounted) {
-          setSession(data.session);
-          setIsLoadingSession(false);
-        }
+        restoreSession(data.session);
       },
       () => {
         if (isMounted) {
@@ -36,22 +57,53 @@ export default function App() {
       },
     );
     const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setIsLoadingSession(false);
+      restoreSession(nextSession);
     });
     return () => {
       isMounted = false;
       data.subscription.unsubscribe();
     };
-  }, []);
+  }, [queryClient, expireSession]);
+
+  useEffect(() => {
+    if (!session) return;
+    return watchIdleSession(session, expireSession);
+  }, [session, expireSession]);
+
+  useEffect(() => {
+    if (!sessionExpired || !supabase) return;
+    let isMounted = true;
+    // Run outside onAuthStateChange to avoid taking the auth lock recursively.
+    void supabase.auth.signOut({ scope: "local" }).then(
+      ({ error }) => {
+        if (isMounted) setSignOutFailed(Boolean(error));
+      },
+      () => {
+        if (isMounted) setSignOutFailed(true);
+      },
+    );
+    return () => {
+      isMounted = false;
+    };
+  }, [sessionExpired]);
+
+  function handleAuthenticated(nextSession: Session) {
+    localStorage.setItem(idleSessionKey(nextSession), String(Date.now()));
+    setSessionExpired(false);
+    setSignOutFailed(false);
+    setSession(nextSession);
+  }
 
   return (
+    <>
+    {sessionExpired && !session ? <p className="status" role="status">Your session expired after 10 minutes of inactivity. Please sign in again.</p> : null}
+    {sessionExpired && signOutFailed ? <p className="form-error" role="alert">We could not finish signing out. Reconnect and reload to try again. Your workspace remains locked.</p> : null}
     <Routes>
       <Route path="/" element={<LandingPage isAuthenticated={session !== null} />} />
       {isSupabaseConfigured ? (
         <>
-          <Route path="login" element={session ? <Navigate to="/workspace" replace /> : <LoginPage onAuthenticated={setSession} />} />
-          <Route path="signup" element={session ? <Navigate to="/workspace" replace /> : <SignupPage onAuthenticated={setSession} />} />
+          <Route path="login" element={session ? <Navigate to="/workspace" replace /> : <LoginPage onAuthenticated={handleAuthenticated} />} />
+          <Route path="signup" element={session ? <Navigate to="/workspace" replace /> : <SignupPage onAuthenticated={handleAuthenticated} />} />
           <Route element={<ProtectedApp session={session} isLoadingSession={isLoadingSession} onSignedOut={() => setSession(null)} />}>
             <Route path="workspace" element={<ProjectsPage />} />
             <Route path="projects/:projectId" element={<ProjectPage />} />
@@ -63,6 +115,7 @@ export default function App() {
       )}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }
 

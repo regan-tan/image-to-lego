@@ -1,5 +1,14 @@
 # Image to LEGO
 
+The browser signs users out after 10 minutes without pointer, keyboard, touch, or
+scroll activity. The activity timestamp survives reloads and is shared across tabs;
+background polling and token refreshes do not extend it. Existing sessions without
+an activity timestamp start their idle clock on their first visit after this change.
+Expiry clears private query data and requests sign-out for the current Supabase
+session. This is a browser convenience/privacy control, not server-enforced session
+revocation: already-issued access tokens remain valid until their expiry. No paid
+Supabase session settings are required.
+
 Image to LEGO is a university capstone project for turning a source image into an inspectable, downloadable LEGO model. The intended system combines authenticated project management, AI-assisted image-to-3D reconstruction, asynchronous geometry conversion, artifact storage, and a browser-based 3D experience.
 
 ## Current implementation status
