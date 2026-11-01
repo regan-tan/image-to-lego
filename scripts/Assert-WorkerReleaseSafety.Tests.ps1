@@ -37,8 +37,10 @@ $idleParameters = @{
 }
 
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"
-Assert-GateSucceeds -ExpectedAction "update" -Parameters $parameters
+Assert-GateFails -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Stopped"
+Assert-GateSucceeds -ExpectedAction "recreate" -Parameters $parameters
+$parameters = $idleParameters.Clone(); $parameters.WorkerState = "Succeeded"
 Assert-GateSucceeds -ExpectedAction "recreate" -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.ActiveWorkerAttempts = 1
 Assert-GateFails -Parameters $parameters

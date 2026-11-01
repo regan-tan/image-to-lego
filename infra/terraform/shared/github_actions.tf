@@ -46,7 +46,7 @@ resource "azurerm_role_assignment" "github_deployment_api_plan_reader" {
 
 resource "azurerm_role_assignment" "github_deployment_frontend" {
   scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.App/containerApps/ca-frontend-image-to-lego-dev"
-  role_definition_name = "Container App Contributor"
+  role_definition_name = "Container Apps Contributor"
   principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
 
   lifecycle { prevent_destroy = true }
@@ -54,7 +54,7 @@ resource "azurerm_role_assignment" "github_deployment_frontend" {
 
 resource "azurerm_role_assignment" "github_deployment_generation_worker" {
   scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-generation-dev"
-  role_definition_name = "Container Instance Contributor"
+  role_definition_name = "Azure Container Instances Contributor Role"
   principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
 
   lifecycle { prevent_destroy = true }
@@ -62,7 +62,7 @@ resource "azurerm_role_assignment" "github_deployment_generation_worker" {
 
 resource "azurerm_role_assignment" "github_deployment_conversion_worker" {
   scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-conversion-dev"
-  role_definition_name = "Container Instance Contributor"
+  role_definition_name = "Azure Container Instances Contributor Role"
   principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
 
   lifecycle { prevent_destroy = true }

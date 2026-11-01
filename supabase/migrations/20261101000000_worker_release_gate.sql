@@ -5,7 +5,7 @@ CREATE OR REPLACE FUNCTION public.worker_release_active_attempt_count()
 RETURNS integer
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog
 AS $$
     SELECT count(*)::integer
     FROM public.jobs

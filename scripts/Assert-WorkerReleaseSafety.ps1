@@ -41,9 +41,11 @@ if (-not $BootstrapContractMatches) {
 }
 
 switch ($WorkerState) {
-    "Running" { "update" }
     "Stopped" { "recreate" }
     "Succeeded" { "recreate" }
     "Failed" { "recreate" }
     "Terminated" { "recreate" }
+    "Running" {
+        throw "A running ACI worker is not replaced automatically. A separately approved maintenance procedure is required before it can be recreated."
+    }
 }

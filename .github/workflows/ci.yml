@@ -31,31 +31,42 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       terraform: ${{ steps.filter.outputs.terraform }}
+      application: ${{ steps.filter.outputs.application }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Detect changed areas
         id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"
             echo "terraform=true" >> "$GITHUB_OUTPUT"
+            echo "application=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # On pull requests HEAD is GitHub's merge commit; its first parent is the base branch.
-          changed_files="$(git diff --name-only HEAD^1 HEAD)"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # On pull requests HEAD is GitHub's merge commit; its first parent is the base branch.
+            changed_files="$(git diff --name-only HEAD^1 HEAD)"
+          elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            changed_files="$(git diff-tree --no-commit-id --name-only -r "$AFTER_SHA")"
+          else
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")"
+          fi
           echo "Changed files:"
           echo "$changed_files"
 
           backend=false
           frontend=false
           terraform=false
+          application=false
           if grep -qE '^(backend/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
             backend=true
           fi
@@ -65,9 +76,17 @@ jobs:
           if grep -qE '^(infra/terraform/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
             terraform=true
           fi
+          if grep -qE '^(backend/|frontend/)' <<< "$changed_files"; then
+            application=true
+          fi
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
           echo "terraform=$terraform" >> "$GITHUB_OUTPUT"
+          echo "application=$application" >> "$GITHUB_OUTPUT"
+          if [ "$application" = "false" ]; then
+            echo "### Application deployment not required" >> "$GITHUB_STEP_SUMMARY"
+            echo "No backend or frontend source changed; Azure deployment was not requested." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   backend:
     name: Backend
@@ -179,12 +198,16 @@ jobs:
 
   deploy-development:
     name: Deploy development
-    needs: [backend, backend-image, frontend, terraform, release-safety]
+    needs: [changes, backend, backend-image, frontend, terraform, release-safety]
     if: >-
+      always() &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) &&
-      needs.backend.result == 'success' && needs.backend-image.result == 'success' &&
-      needs.frontend.result == 'success' && needs.terraform.result == 'success' &&
+      needs.changes.result == 'success' && needs.changes.outputs.application == 'true' &&
+      (needs.backend.result == 'success' || needs.backend.result == 'skipped') &&
+      (needs.backend-image.result == 'success' || needs.backend-image.result == 'skipped') &&
+      (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
+      (needs.terraform.result == 'success' || needs.terraform.result == 'skipped') &&
       needs.release-safety.result == 'success'
     runs-on: ubuntu-latest
     concurrency:
@@ -204,18 +227,43 @@ jobs:
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ACI_WORKER_RELEASES_ENABLED: ${{ vars.ACI_WORKER_RELEASES_ENABLED }}
+      AZURE_COMPUTE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_COMPUTE_DEPLOYMENTS_ENABLED }}
       DEPLOYMENT_DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}
       RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+      - name: Check release mode
+        id: release-mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$AZURE_COMPUTE_DEPLOYMENTS_ENABLED" == "true" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true is required before a manual redeployment or rollback." >&2
+            exit 1
+          fi
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Azure deployment intentionally disabled
+          - Commit: \`$RELEASE_SHA\`
+          - CI validation completed, but no Azure image was published and no compute resource was changed.
+          - Set \`AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true\` only after reviewed compute restoration.
+          EOF
       - name: Log in to Azure with GitHub OIDC
+        if: steps.release-mode.outputs.enabled == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ env.AZURE_DEPLOYMENT_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
       - name: Preflight compute and release safety
+        if: steps.release-mode.outputs.enabled == 'true'
         id: preflight
         shell: bash
         run: |
@@ -237,11 +285,10 @@ jobs:
             fi
           done
           if ((${#missing[@]})); then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "### Deployment skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "Compute was deliberately removed or is unavailable; no image was published or resource changed." >> "$GITHUB_STEP_SUMMARY"
+            echo "### Deployment prerequisite missing" >> "$GITHUB_STEP_SUMMARY"
+            echo "Compute is unavailable; no image was published or resource changed." >> "$GITHUB_STEP_SUMMARY"
             printf '%s\n' "${missing[@]}" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            exit 1
           fi
 
           if [[ "$ACI_WORKER_RELEASES_ENABLED" != "true" ]]; then
@@ -264,6 +311,7 @@ jobs:
             echo "The worker release lease query returned an invalid count." >&2
             exit 1
           fi
+          registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
           namespace="image-to-lego-bus-dev-01"
           queue_counts="$(az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name generation --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv; az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name conversion --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv)"
           active_messages="$(awk '{active += $1} END {print active}' <<< "$queue_counts")"
@@ -308,7 +356,14 @@ jobs:
             fi
             actual_environment_names="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].environmentVariables[].name' --output tsv | sort)"
             required_environment_names="$(printf '%s\n' "${required_environment_names[@]}" | sort)"
-            if [[ "$actual_environment_names" != "$required_environment_names" ]] || ! az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json | jq -e --arg identity "$identity_id" '(.identity.userAssignedIdentities | keys | map(ascii_downcase) == [$identity | ascii_downcase]) and (.imageRegistryCredentials | length == 1) and ((.imageRegistryCredentials[0].identity | ascii_downcase) == ($identity | ascii_downcase))' >/dev/null; then
+            secure_environment_names="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].secureEnvironmentVariables[].name' --output tsv | sort)"
+            worker_image="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].image' --output tsv)"
+            worker_image_tag="${worker_image##*:}"
+            if [[ "$worker_image" != "$registry_server/image-to-lego-backend:"* || ! "$worker_image_tag" =~ ^[0-9a-f]{40}$ ]] || ! az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$worker_image_tag" --only-show-errors >/dev/null 2>&1; then
+              echo "$worker_name has no recoverable immutable backend image; refusing to delete it." >&2
+              exit 1
+            fi
+            if [[ "$actual_environment_names" != "$required_environment_names" || -n "$secure_environment_names" ]] || ! az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json | jq -e --arg identity "$identity_id" '(.identity.userAssignedIdentities | keys | map(ascii_downcase) == [$identity | ascii_downcase]) and (.imageRegistryCredentials | length == 1) and ((.imageRegistryCredentials[0].identity | ascii_downcase) == ($identity | ascii_downcase))' >/dev/null; then
               echo "$worker_name is missing part of the reviewed identity, ACR, or environment bootstrap contract." >&2
               exit 1
             fi
@@ -316,13 +371,12 @@ jobs:
             echo "${worker_kind}_client_id=$client_id" >> "$GITHUB_OUTPUT"
             echo "${worker_kind}_action=$action" >> "$GITHUB_OUTPUT"
           done
-          echo "skip=false" >> "$GITHUB_OUTPUT"
       - name: Install Container Apps CLI extension
-        if: steps.preflight.outputs.skip != 'true'
+        if: steps.release-mode.outputs.enabled == 'true'
         shell: bash
         run: az extension add --name containerapp --upgrade --yes
       - name: Verify automatic-release tags are unused
-        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -333,13 +387,13 @@ jobs:
             fi
           done
       - name: Log in to Azure Container Registry
-        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         run: az acr login --name "$AZURE_ACR_NAME"
       - name: Set up Docker Buildx
-        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         uses: docker/setup-buildx-action@v4
       - name: Build and publish immutable release images
-        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -347,7 +401,7 @@ jobs:
           docker buildx build --push --tag "$registry_server/image-to-lego-backend:$RELEASE_SHA" backend
           docker buildx build --push --file frontend/Dockerfile --tag "$registry_server/image-to-lego-frontend:$RELEASE_SHA" .
       - name: Resolve published release images
-        if: steps.preflight.outputs.skip != 'true'
+        if: steps.release-mode.outputs.enabled == 'true'
         id: images
         shell: bash
         run: |
@@ -363,7 +417,7 @@ jobs:
           echo "backend_digest=$backend_digest" >> "$GITHUB_OUTPUT"
           echo "frontend_digest=$frontend_digest" >> "$GITHUB_OUTPUT"
       - name: Deploy API, workers, and frontend
-        if: steps.preflight.outputs.skip != 'true'
+        if: steps.release-mode.outputs.enabled == 'true'
         shell: bash
         env:
           REGISTRY_SERVER: ${{ steps.images.outputs.registry_server }}
@@ -401,7 +455,7 @@ jobs:
           az containerapp update --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --image "$frontend_image"
           completed+=("frontend")
       - name: Verify health and report versions
-        if: steps.preflight.outputs.skip != 'true'
+        if: steps.release-mode.outputs.enabled == 'true'
         shell: bash
         env:
           REGISTRY_SERVER: ${{ steps.images.outputs.registry_server }}

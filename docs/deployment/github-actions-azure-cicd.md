@@ -58,22 +58,37 @@ Do not create an Azure credential for each collaborator. Anyone authorized to me
 
 ## Worker bootstrap prerequisite
 
-ACI has no revision mechanism: changing an image recreates the container group. Before enabling worker releases, complete the bootstrap inventory and conversion-only smoke test in the [Terraform lifecycle runbook](azure-terraform-lifecycle.md). Confirm both live groups use the checked-in `app.workers.aci_bootstrap` command and all required nonsecret environment names.
+ACI has no revision mechanism. Updating a running ACI group restarts its containers, so this workflow never does it automatically. Before enabling worker releases, complete the bootstrap inventory and conversion-only smoke test in the [Terraform lifecycle runbook](azure-terraform-lifecycle.md). Confirm both live groups use the checked-in `app.workers.aci_bootstrap` command and all required nonsecret environment names.
 
 Only after that reviewed evidence exists, set GitHub repository variable `ACI_WORKER_RELEASES_ENABLED` to `true`. Until then, the deployment fails before publishing images or changing compute. This is deliberate: it prevents the workflow from replacing adopted worker configuration whose command or secure settings have not been verified.
 
 Apply the committed `20261101000000_worker_release_gate.sql` migration separately, then create a dedicated login with only membership in `github_release_gate` and store its connection string as the GitHub Actions secret `DEPLOYMENT_DATABASE_URL`. This login can call only the worker-lease aggregate; it cannot read job rows. Do not use the application database secret for this purpose.
 
+When either worker is running, a release intentionally fails after its read-only preflight. Do not stop a worker based on that snapshot: the current protocol has no durable release lock that closes the interval between a queue receive and its database lease claim. This PR can recreate a worker only when it is already stopped under a separately approved maintenance procedure that establishes no active job. Designing that transition safely is an unresolved architecture change, not an operator shortcut.
+
+## Intentional compute downtime
+
+Set the GitHub repository variable `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=false` before a reviewed compute teardown. Pushes to `main` continue to run all CI validation and finish with an explicit **Azure deployment intentionally disabled** summary; they do not log in to Azure, build/publish ACR images, or change compute. This lets collaborators merge reviewed code without a misleading deployment success or unnecessary Azure cost.
+
+After a reviewed Terraform restoration and resource inventory, set `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true`. If this variable is true and a required compute resource is missing, the release fails before publishing an image. A manual rollback/redeployment (`workflow_dispatch`) also fails while the variable is false, so it cannot be mistaken for a completed release.
+
+## API, frontend, and worker release boundary
+
+The current backend image contains both the API and workers, but the codebase has no version-negotiation or durable worker-draining protocol. A new API can create durable work that an older worker image may not understand, and a running worker can receive a queue message after a preflight snapshot but before claiming its database lease. Therefore this workflow does **not** automatically deploy API/frontend changes separately from workers yet.
+
+The safe current policy is to validate every merge, publish and deploy the complete approved release only when both workers are already stopped and the worker gate is satisfied. A truly automatic split release, or a safe transition from running workers to stopped workers, would require an approved architecture change: a durable release lock checked atomically by worker lease acquisition, worker/API compatibility versioning for durable jobs and artifacts, and regression tests for mixed-version operation. Those controls are not added by this PR.
+
 ## Automated release behavior
 
-Every push to `main`, including a merge by any authorized collaborator, runs all backend and frontend CI checks first. A successful run then:
+Every push to `main`, including a merge by any authorized collaborator, runs the validation relevant to its changed areas. Documentation-only and Terraform-only pushes do not request an Azure application deployment. A backend or frontend change can continue to a complete release only when the following gates succeed:
 
 1. Logs into Azure with GitHub OIDC.
-2. Verifies that all five Terraform-managed compute resources still exist. If compute was deliberately destroyed, it records a successful skip and makes no image or resource change.
-3. Requires `JOB_SUBMISSIONS_ENABLED=false`, no unexpired durable worker lease, and zero active or scheduled messages on both worker queues. It additionally proves the only queue senders are the reviewed API and worker identities, so paused submissions cannot race in a new job. It never treats `Running` as proof of processing: a running but proven-idle worker is updated in place; stopped/terminal workers are deleted then recreated; missing workers cause the whole release to skip.
-4. Builds and pushes backend and frontend images tagged with the full commit SHA. Existing tags are rejected rather than overwritten, then their ACR digests are recorded in the workflow summary.
-5. Updates the App Service container image, both ACI workers with the full Terraform bootstrap contract (managed identities, ACR identity, Key Vault settings, restart policy, commands, and environment), and the frontend Container App image. If any mutation fails, the run reports the completed components as a partial release rather than claiming success.
-6. Checks API `/health`, frontend HTTPS availability, and that each replacement worker reaches `Running`; it reports image tags, digests, and URLs.
+2. Requires `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true`. When it is false, the workflow records that CI completed without an Azure deployment, image publication, or resource change. A manual rollback/redeployment fails in this mode.
+3. Verifies that all five Terraform-managed compute resources still exist. If compute was deliberately destroyed or is unavailable while releases are enabled, it fails before publishing an image or changing a resource.
+4. Requires `JOB_SUBMISSIONS_ENABLED=false`, no unexpired durable worker lease, and zero active or scheduled messages on both worker queues. It additionally proves the only queue senders are the reviewed API and worker identities, so paused submissions cannot race in a new job. Empty queues alone are never sufficient evidence of safety. A running worker is never updated automatically because ACI updates restart every container and a lease/queue snapshot cannot close the receive-to-claim race. The workflow only deletes and recreates workers that were already stopped or terminal, match the reviewed bootstrap contract, have no secure environment variables, and have an existing immutable release image available for restoration. Missing compute is a failed prerequisite, not a successful release skip.
+5. Builds and pushes backend and frontend images tagged with the full commit SHA. Existing tags are rejected rather than overwritten, then their ACR digests are recorded in the workflow summary.
+6. Updates the App Service container image, both ACI workers with the full Terraform bootstrap contract (managed identities, ACR identity, Key Vault settings, restart policy, commands, and environment), and the frontend Container App image. If any mutation fails, the run reports the completed components as a partial release rather than claiming success.
+7. Checks API `/health`, frontend HTTPS availability, and that each replacement worker reaches `Running`; it reports image tags, digests, and URLs.
 
 The deployment job has its own non-cancelling concurrency group. A newer merge waits rather than interrupting a release already changing Azure resources. The workflow does not run Terraform apply and does not run Supabase migrations.
 
