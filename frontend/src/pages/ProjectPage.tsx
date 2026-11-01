@@ -71,7 +71,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   );
 
   return (
-    <div className={`page__container studio-page${currentLegoModel ? " page__container--completed" : ""}${resultView === "guide" ? " studio-page--guide" : ""}${resultView === "parts" ? " studio-page--parts" : ""}`}>
+    <div className={`page__container studio-page${currentLegoModel ? " page__container--completed" : ""}${currentLegoModel && resultView === "model" ? " studio-page--overview" : ""}${resultView === "guide" ? " studio-page--guide" : ""}${resultView === "parts" ? " studio-page--parts" : ""}`}>
       <nav className="project-breadcrumb" aria-label="Breadcrumb">
         <ol>
           <li><Link to="/workspace" className="back-link">All projects</Link></li>
@@ -108,7 +108,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
         <>
           <div className="page-heading studio-page__heading">
             <div className="page-heading__title-row">
-              <div><p className="eyebrow">Project studio</p><h1>{project.data.name}</h1><p className="page-heading__meta">From a single image to a brick-built possibility.</p></div>
+              <div><h1>{project.data.name}</h1><p className="page-heading__meta">From your photo to your next LEGO creation.</p></div>
               <StatusBadge
                 status={project.data.status}
                 conversionStatus={conversionStatus}
@@ -140,7 +140,7 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
           )}
           {currentLegoModel ? (
             <div className="result-view-toggle project-tabs" role="group" aria-label="Completed build view">
-              <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>LEGO model</button>
+              <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>Overview</button>
               <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
               <button type="button" aria-pressed={resultView === "guide"} onClick={() => setResultView("guide")}>Build guide</button>
             </div>

@@ -293,20 +293,18 @@ export function ProjectStatusPanel({
       {project.status === "model_ready" ? (
         <>
           <PanelIntro
-            title={legoModel ? "Project details" : "Your 3D model is ready"}
+            title={legoModel ? "Your LEGO build" : "Your 3D model is ready"}
             text={legoModel
-              ? "Use the model, parts list, or build guide to review your build."
-              : "Next, you’ll be able to turn it into a LEGO build with a parts list and building steps."}
+              ? "Explore your model, review the parts, or follow your build guide."
+              : "Choose a build complexity, then convert your model to LEGO."}
           />
           {legoModel ? <h3 className="visually-hidden">Your LEGO model is ready</h3> : null}
-          {legoModel ? (
-            <ProjectInspectorSummary
-              project={project}
-              accessToken={accessToken}
-              userId={userId}
-            />
-          ) : null}
           {legoModel ? <LegoMetrics model={legoModel} partsList={partsList} /> : null}
+          {legoModel ? (
+            <button type="button" className="button button--yellow side-panel__open-guide" onClick={onOpenBuildGuide}>
+              Open build guide
+            </button>
+          ) : null}
           <BuildComplexitySelector
             value={buildComplexity}
             onChange={onBuildComplexityChange}
@@ -317,7 +315,7 @@ export function ProjectStatusPanel({
           <div className="side-panel__actions">
             <button
               type="button"
-              className="button button--large"
+              className={`button button--large${legoModel ? " button--secondary" : ""}`}
               onClick={handleConvert}
               disabled={!modelArtifactId || isRehydratingLegoModel || conversionIsRunning}
             >
@@ -331,7 +329,7 @@ export function ProjectStatusPanel({
             {modelArtifactId ? (
               <button
                 type="button"
-                className="button button--secondary"
+                className={legoModel ? "model-download-action" : "button button--secondary"}
                 onClick={() => modelDownload.mutate(modelArtifactId)}
                 disabled={modelDownload.isPending}
               >
@@ -364,11 +362,7 @@ export function ProjectStatusPanel({
               <button type="button" className="button button--secondary" onClick={handleConvert}>Try conversion again</button>
             </div>
           ) : null}
-          {legoModel ? (
-            <button type="button" className="button button--yellow side-panel__open-guide" onClick={onOpenBuildGuide}>
-              Open build guide
-            </button>
-          ) : null}
+          {legoModel ? <ProjectInspectorSummary project={project} accessToken={accessToken} userId={userId} /> : null}
           {legoModel && partsList ? (
             <PartsListSummary partsList={partsList} onViewFullPartsList={onViewFullPartsList} />
           ) : null}
@@ -489,7 +483,6 @@ function ProjectInspectorSummary({
         <span className="project-summary__placeholder"><BrickIcon size={25} /></span>
       )}
       <dl>
-        <div><dt>Project</dt><dd>{project.name}</dd></div>
         <div><dt>Uploaded</dt><dd>{sourceImage ? uploadDateFormat.format(new Date(sourceImage.createdAt)) : "—"}</dd></div>
         <div><dt>Source</dt><dd>{sourceImage ? `${sourceType} · ${fileSizeFormat.format(sourceImage.sizeBytes / 1_000_000)}` : sourceType}</dd></div>
       </dl>
@@ -534,7 +527,7 @@ function BuildComplexitySelector({
           </label>
         ))}
       </div>
-      <p id={helpId}>{compact ? "Final part count may vary." : "Choose how detailed you want the LEGO build to be. Final part count may vary."}</p>
+      <p id={helpId}>{compact ? "Changes apply when you convert again. Final part count may vary." : "Choose how detailed you want the LEGO build to be. Final part count may vary."}</p>
     </fieldset>
   );
 }

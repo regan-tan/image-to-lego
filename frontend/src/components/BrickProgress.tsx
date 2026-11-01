@@ -21,7 +21,7 @@ const SCREEN_READER_STATE: Record<StepState, string> = {
   upcoming: "not started",
 };
 
-/** The three project steps drawn as LEGO bricks that fill in as each step completes. */
+/** The three workflow stages, separate from the project's current status. */
 export function BrickProgress({
   status,
   conversionStatus,
@@ -31,7 +31,10 @@ export function BrickProgress({
 }) {
   const states = conversionStatus === "queued" || conversionStatus === "running"
     ? ["done", "done", "current"] as const
+    : conversionStatus === "failed" ? ["done", "done", "failed"] as const
     : STEP_STATES[status];
+  const processing = status === "generating" || conversionStatus === "queued" || conversionStatus === "running";
+  const currentStatus = processing ? "generating" : conversionStatus === "failed" ? "failed" : status;
   return (
     <ol className="brick-progress" aria-label="Progress">
       {STEP_LABELS.map((label, index) => {
@@ -40,13 +43,12 @@ export function BrickProgress({
           <li
             key={label}
             className={`brick-step brick-step--${state}`}
+            data-status={state === "done" ? "model_ready" : state === "upcoming" ? "needs_photo" : currentStatus}
             aria-current={state === "current" || state === "failed" ? "step" : undefined}
           >
-            <span className="brick-step__stud brick-step__stud--left" aria-hidden="true" />
-            <span className="brick-step__stud brick-step__stud--right" aria-hidden="true" />
-            {state === "done" ? <CheckIcon size={15} /> : null}
-            {state === "failed" ? <AlertIcon size={15} /> : null}
-            {state === "current" && status === "generating" ? <SpinnerIcon size={15} /> : null}
+            <span className="brick-step__marker" aria-hidden="true">
+              {state === "done" ? <CheckIcon size={14} /> : state === "failed" ? <AlertIcon size={14} /> : state === "current" && processing ? <SpinnerIcon size={14} /> : index + 1}
+            </span>
             {label}
             <span className="visually-hidden">, {SCREEN_READER_STATE[state]}</span>
           </li>
