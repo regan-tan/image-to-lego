@@ -16,7 +16,10 @@ PostgreSQL is the release coordinator. The singleton `worker_release_state` row 
 before a job row in every lease acquisition and release transition. Its states are `open`,
 `draining`, `quiescent`, `deploying`, `verifying`, and `blocked`. A controller receives a
 monotonically increasing fencing token when it changes `open` to `draining`; every later
-transition and heartbeat must present the same release ID, controller ID, and token.
+transition and heartbeat must present the same release ID, controller ID, and token. A
+controller whose heartbeat expires is fenced immediately: it cannot begin again, transition,
+or renew. Only worker_release_recover can issue a newer token, and it moves the gate to
+blocked; expiry never reopens admission.
 
 Workers call `worker_release_try_acquire_attempt`. In one short transaction it locks the
 release row, rejects a non-open gate as `release_blocked`, or claims the eligible job lease.
@@ -26,8 +29,9 @@ delivery, and a release block. Database failures propagate; they never become an
 On `release_blocked`, a worker exits without completing, abandoning, or dead-lettering the
 received message. Its receiver closes and the broker redelivers later. An attempt already
 acquired before draining continues normally; workers do not cancel conversion threads or fal
-requests. `quiescent` additionally requires no unexpired attempts and no reconstruction that
-is `running` without a persisted provider ID. A persisted provider ID is safe to resume by
+requests. `quiescent` additionally requires every durable attempt marker to be cleared, not
+merely that leases have expired, and no reconstruction that is `running` without a persisted
+provider ID. A persisted provider ID is safe to resume by
 polling, while an unconfirmed submission blocks release progress.
 
 Queue messages now carry version `1`; workers also accept the legacy unversioned shape.

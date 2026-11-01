@@ -105,9 +105,15 @@ async def _create_job(database_url: str, job_type: str = "reconstruction") -> tu
 
 
 async def _acquire(connection: object, job_id: UUID, owner_id: UUID, job_type: str) -> str:
+    return await _acquire_with_lease(connection, job_id, owner_id, job_type, 60)
+
+
+async def _acquire_with_lease(
+    connection: object, job_id: UUID, owner_id: UUID, job_type: str, lease_seconds: int
+) -> str:
     row = await connection.fetchrow(
-        "select status from public.worker_release_try_acquire_attempt($1, $2, $3, $4, 60)",
-        job_id, owner_id, job_type, uuid4(),
+        "select status from public.worker_release_try_acquire_attempt($1, $2, $3, $4, $5)",
+        job_id, owner_id, job_type, uuid4(), lease_seconds,
     )
     assert row is not None
     return str(row["status"])
@@ -124,6 +130,17 @@ async def _transition_to_quiescent(
 ) -> None:
     await connection.execute(
         "select public.worker_release_transition($1, $2, $3, 'quiescent')",
+        release_id,
+        controller_id,
+        token,
+    )
+
+
+async def _heartbeat(
+    connection: object, release_id: UUID, controller_id: UUID, token: int
+) -> None:
+    await connection.execute(
+        "select public.worker_release_heartbeat($1, $2, $3, 60)",
         release_id,
         controller_id,
         token,
@@ -163,6 +180,24 @@ def test_read_migration_sql_accepts_utf8_with_and_without_bom() -> None:
 def test_disposable_database_guard_rejects_non_test_targets(database_url: str) -> None:
     with pytest.raises(RuntimeError, match="local disposable"):
         _require_disposable_database_url(database_url)
+
+
+@pytest.mark.asyncio
+async def test_missing_release_singleton_cannot_admit_worker_attempt(database: str) -> None:
+    job_id, owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute("delete from public.worker_release_state where singleton = true")
+        with pytest.raises(asyncpg.PostgresError, match="cannot be proven"):
+            await _acquire(connection, job_id, owner_id, "reconstruction")
+        assert await connection.fetchval(
+            "select worker_attempt_id is null from public.jobs where id = $1", job_id
+        )
+    finally:
+        await connection.execute(
+            "insert into public.worker_release_state (singleton, state) values (true, 'open')"
+        )
+        await connection.close()
 
 
 @pytest.mark.asyncio
@@ -266,6 +301,82 @@ async def test_crashed_controller_does_not_reopen_the_gate(database: str) -> Non
         with pytest.raises(asyncpg.PostgresError):
             await _begin(connection, uuid4(), uuid4())
         assert await _release_state(connection) == "draining"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_expired_controller_cannot_transition_or_renew_without_recovery(
+    database: str,
+) -> None:
+    release_id, controller_id = uuid4(), uuid4()
+    connection = await asyncpg.connect(database)
+    try:
+        token = await _begin(connection, release_id, controller_id)
+        await _expire_controller_heartbeat(connection)
+        with pytest.raises(asyncpg.PostgresError, match="heartbeat expired"):
+            await connection.execute(
+                "select public.worker_release_transition($1, $2, $3, 'blocked')",
+                release_id,
+                controller_id,
+                token,
+            )
+        with pytest.raises(asyncpg.PostgresError, match="Stale or unauthorized"):
+            await _heartbeat(connection, release_id, controller_id, token)
+        recovered_token = await connection.fetchval(
+            "select public.worker_release_recover($1, 60, 'expired controller')", uuid4()
+        )
+        assert recovered_token > token
+        with pytest.raises(asyncpg.PostgresError, match="Stale or unauthorized"):
+            await _transition_to_quiescent(connection, release_id, controller_id, token)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_fences_concurrent_stale_controller_operation(database: str) -> None:
+    release_id, controller_id = uuid4(), uuid4()
+    controller = await asyncpg.connect(database)
+    recovery = await asyncpg.connect(database)
+    try:
+        token = await _begin(controller, release_id, controller_id)
+        await _expire_controller_heartbeat(controller)
+        results = await asyncio.gather(
+            recovery.fetchval(
+                "select public.worker_release_recover($1, 60, 'concurrent recovery')", uuid4()
+            ),
+            _heartbeat(controller, release_id, controller_id, token),
+            return_exceptions=True,
+        )
+        assert isinstance(results[0], int)
+        assert results[0] > token
+        assert isinstance(results[1], asyncpg.PostgresError)
+        assert await _release_state(recovery) == "blocked"
+    finally:
+        await controller.close()
+        await recovery.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_function_arguments_are_rejected(database: str) -> None:
+    job_id, owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        for job_type, lease_seconds in (
+            ("invalid", 60),
+            ("reconstruction", 0),
+            ("conversion", 601),
+        ):
+            with pytest.raises(asyncpg.PostgresError, match="parameters are invalid"):
+                await _acquire_with_lease(connection, job_id, owner_id, job_type, lease_seconds)
+        with pytest.raises(asyncpg.PostgresError, match="parameters are invalid"):
+            await connection.fetchval(
+                "select public.worker_release_begin($1, $2, $3)", uuid4(), uuid4(), 3601
+            )
+        with pytest.raises(asyncpg.PostgresError, match="parameters are invalid"):
+            await connection.fetchval(
+                "select public.worker_release_begin($1, $2, 60)", None, uuid4()
+            )
     finally:
         await connection.close()
 

@@ -47,12 +47,16 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
+    v_max_lease_seconds constant integer := 600;
     v_state text;
     v_attempt_id uuid;
     v_job_exists boolean;
     v_lease_held boolean;
 BEGIN
-    IF p_job_type NOT IN ('reconstruction', 'conversion') OR p_lease_seconds <= 0 THEN
+    IF p_job_id IS NULL OR p_owner_id IS NULL OR p_attempt_id IS NULL
+       OR p_job_type NOT IN ('reconstruction', 'conversion')
+       OR p_lease_seconds IS NULL OR p_lease_seconds <= 0
+       OR p_lease_seconds > v_max_lease_seconds THEN
         RAISE EXCEPTION 'Worker attempt parameters are invalid';
     END IF;
     -- All controllers lock this singleton before they inspect live attempts.
@@ -63,6 +67,9 @@ BEGIN
     WHERE singleton = true
     FOR UPDATE;
 
+    IF NOT FOUND OR v_state IS NULL THEN
+        RAISE EXCEPTION 'Worker release state cannot be proven';
+    END IF;
     IF v_state <> 'open' THEN
         RETURN QUERY SELECT 'release_blocked'::text, NULL::uuid;
         RETURN;
@@ -129,12 +136,18 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
+    v_max_heartbeat_seconds constant integer := 3600;
     v_release public.worker_release_state%ROWTYPE;
 BEGIN
-    IF p_heartbeat_seconds <= 0 THEN
-        RAISE EXCEPTION 'Release heartbeat must be positive';
+    IF p_release_id IS NULL OR p_controller_id IS NULL
+       OR p_heartbeat_seconds IS NULL OR p_heartbeat_seconds <= 0
+       OR p_heartbeat_seconds > v_max_heartbeat_seconds THEN
+        RAISE EXCEPTION 'Release controller parameters are invalid';
     END IF;
     SELECT * INTO v_release FROM public.worker_release_state WHERE singleton = true FOR UPDATE;
+    IF NOT FOUND OR v_release.state IS NULL THEN
+        RAISE EXCEPTION 'Worker release state cannot be proven';
+    END IF;
     IF v_release.state = 'open' THEN
         UPDATE public.worker_release_state
         SET state = 'draining', release_id = p_release_id, controller_id = p_controller_id,
@@ -151,6 +164,10 @@ BEGIN
     END IF;
     IF v_release.release_id = p_release_id AND v_release.controller_id = p_controller_id
        AND v_release.state = 'draining' THEN
+        IF v_release.controller_heartbeat_expires_at IS NULL
+           OR v_release.controller_heartbeat_expires_at <= statement_timestamp() THEN
+            RAISE EXCEPTION 'Release controller heartbeat expired; recovery is required';
+        END IF;
         RETURN v_release.fencing_token;
     END IF;
     RAISE EXCEPTION 'Release gate is owned by another controller or requires recovery';
@@ -175,9 +192,22 @@ DECLARE
     v_unconfirmed_submissions integer;
 BEGIN
     SELECT * INTO v_release FROM public.worker_release_state WHERE singleton = true FOR UPDATE;
-    IF v_release.release_id <> p_release_id OR v_release.controller_id <> p_controller_id
-       OR v_release.fencing_token <> p_fencing_token THEN
+    IF NOT FOUND OR v_release.state IS NULL THEN
+        RAISE EXCEPTION 'Worker release state cannot be proven';
+    END IF;
+    IF p_release_id IS NULL OR p_controller_id IS NULL OR p_fencing_token IS NULL
+       OR p_fencing_token < 0 OR p_to_state IS NULL
+       OR p_to_state NOT IN ('open', 'quiescent', 'deploying', 'verifying', 'blocked') THEN
+        RAISE EXCEPTION 'Release transition parameters are invalid';
+    END IF;
+    IF v_release.release_id IS DISTINCT FROM p_release_id
+       OR v_release.controller_id IS DISTINCT FROM p_controller_id
+       OR v_release.fencing_token IS DISTINCT FROM p_fencing_token THEN
         RAISE EXCEPTION 'Stale or unauthorized release controller';
+    END IF;
+    IF v_release.controller_heartbeat_expires_at IS NULL
+       OR v_release.controller_heartbeat_expires_at <= statement_timestamp() THEN
+        RAISE EXCEPTION 'Release controller heartbeat expired; recovery is required';
     END IF;
     IF p_to_state = 'quiescent' AND v_release.state IN ('draining', 'blocked') THEN
         -- An expired lease proves that another worker may recover the job; it does
@@ -225,13 +255,19 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
+    v_max_heartbeat_seconds constant integer := 3600;
     v_release public.worker_release_state%ROWTYPE;
 BEGIN
-    IF p_heartbeat_seconds <= 0 THEN
-        RAISE EXCEPTION 'Release heartbeat must be positive';
+    IF p_controller_id IS NULL OR p_heartbeat_seconds IS NULL OR p_heartbeat_seconds <= 0
+       OR p_heartbeat_seconds > v_max_heartbeat_seconds THEN
+        RAISE EXCEPTION 'Release controller parameters are invalid';
     END IF;
     SELECT * INTO v_release FROM public.worker_release_state WHERE singleton = true FOR UPDATE;
-    IF v_release.state = 'open' OR v_release.controller_heartbeat_expires_at >= statement_timestamp() THEN
+    IF NOT FOUND OR v_release.state IS NULL THEN
+        RAISE EXCEPTION 'Worker release state cannot be proven';
+    END IF;
+    IF v_release.state = 'open'
+       OR v_release.controller_heartbeat_expires_at > statement_timestamp() THEN
         RAISE EXCEPTION 'Release recovery is not authorized while a controller is healthy';
     END IF;
     UPDATE public.worker_release_state
@@ -256,15 +292,20 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+    v_max_heartbeat_seconds constant integer := 3600;
 BEGIN
-    IF p_heartbeat_seconds <= 0 THEN
-        RAISE EXCEPTION 'Release heartbeat must be positive';
+    IF p_release_id IS NULL OR p_controller_id IS NULL OR p_fencing_token IS NULL
+       OR p_fencing_token < 0 OR p_heartbeat_seconds IS NULL OR p_heartbeat_seconds <= 0
+       OR p_heartbeat_seconds > v_max_heartbeat_seconds THEN
+        RAISE EXCEPTION 'Release controller parameters are invalid';
     END IF;
     UPDATE public.worker_release_state
     SET controller_heartbeat_expires_at = statement_timestamp() + make_interval(secs => p_heartbeat_seconds),
         changed_at = statement_timestamp()
     WHERE singleton = true AND release_id = p_release_id AND controller_id = p_controller_id
-      AND fencing_token = p_fencing_token AND state <> 'open';
+      AND fencing_token = p_fencing_token AND state <> 'open'
+      AND controller_heartbeat_expires_at > statement_timestamp();
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Stale or unauthorized release controller';
     END IF;

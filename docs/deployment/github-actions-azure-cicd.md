@@ -68,6 +68,11 @@ adds the gate-aware protocol but does not enable it in GitHub Actions. A future 
 must have only membership in `github_release_coordinator`; do not use the application database
 secret for release coordination.
 
+If that controller's heartbeat expires, it is fenced: it cannot renew, resume, transition, or
+reopen the gate. A separately authenticated recovery controller must call
+worker_release_recover, receive a newer token, and proceed from `blocked`. Expiry itself never
+admits work or reopens the gate.
+
 Automatic release remains disabled. The durable protocol now closes the receive-to-lease-claim
 race for gate-aware workers, but old worker images do not observe it. Do not use a controller
 until an operator has proved every active worker image contains this protocol and completed the
