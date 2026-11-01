@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { InspirationCarousel } from "../components/InspirationCarousel";
 
 interface LandingPageProps {
   isAuthenticated: boolean;
@@ -34,7 +35,6 @@ export function LandingPage({ isAuthenticated }: LandingPageProps) {
             <Link className="landing__button landing__button--primary" to={destination} state={destinationState}>Start creating <span aria-hidden="true">↗</span></Link>
             <a className="landing__button landing__button--secondary" href="#how-it-works">See how it works <span aria-hidden="true">↘</span></a>
           </div>
-          <p className="landing__journey">01 / 03 <span>Upload image</span><i /> <span>Generate model</span><i /> <span>Build</span></p>
         </div>
         <div className="landing__art-panel"><BrickCat /></div>
       </section>
@@ -43,14 +43,76 @@ export function LandingPage({ isAuthenticated }: LandingPageProps) {
         <p className="landing__eyebrow">How it works</p>
         <div className="landing__process-heading">
           <h2 id="process-title">Three steps to<br />something amazing.</h2>
-          <p>Simple from<br />start to finish<br />/ 001–003</p>
         </div>
         <ol className="landing__steps">
-          <li><span className="landing__step-icon" aria-hidden="true">↥</span><p>01 — Upload</p><h3>Start with a photo.</h3><span>Choose a clear picture of anything that sparks your curiosity.</span></li>
-          <li><span className="landing__step-icon" aria-hidden="true">◇</span><p>02 — Reconstruct</p><h3>See it in 3D.</h3><span>Generate an approximate 3D representation using AI reconstruction.</span></li>
-          <li><span className="landing__step-icon" aria-hidden="true">▦</span><p>03 — Build</p><h3>Make it brick by brick.</h3><span>Explore the LEGO-style conversion, part inventory, and build guide.</span></li>
+          <li>
+            <div className="landing__step-art landing__step-art--photo" aria-hidden="true">
+              <span className="landing__step-number">01</span>
+              <svg viewBox="0 0 240 150" fill="none" focusable="false">
+                <rect x="69" y="25" width="112" height="100" rx="10" fill="#e0d6a3" transform="rotate(9 125 75)" />
+                <g transform="rotate(-8 120 75)" stroke="#252822" strokeWidth="3" strokeLinejoin="round">
+                  <rect x="58" y="22" width="116" height="108" rx="9" fill="#fffefa" />
+                  <rect x="68" y="32" width="96" height="72" rx="4" fill="#ffe27b" />
+                  <circle cx="92" cy="52" r="9" fill="#fffefa" />
+                  <path d="m68 93 28-27 19 18 20-24 29 33v11H68Z" fill="#7e9570" />
+                  <path d="M96 117h40" strokeLinecap="round" />
+                </g>
+                <path d="M193 49V31m-9 9h18" stroke="#252822" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="landing__step-copy">
+              <p className="landing__step-label">Upload</p>
+              <h3>Start with a photo.</h3>
+              <p>Pick one object you love. A clear photo is all you need to get started.</p>
+            </div>
+          </li>
+          <li>
+            <div className="landing__step-art landing__step-art--model" aria-hidden="true">
+              <span className="landing__step-number">02</span>
+              <svg viewBox="0 0 240 150" fill="none" focusable="false">
+                <ellipse cx="123" cy="125" rx="64" ry="10" fill="#11120f" />
+                <g stroke="#ffe27b" strokeWidth="3" strokeLinejoin="round">
+                  <path d="m120 21 53 30-53 31-53-31Z" fill="#535343" />
+                  <path d="M67 51v58l53 30V82Z" fill="#34372e" />
+                  <path d="M120 82v57l53-30V51Z" fill="#77714c" />
+                  <path d="m94 36 53 31v57m0-88L94 67v57M67 80l53 30 53-30" strokeWidth="1.5" opacity=".6" />
+                </g>
+                <path d="M192 31v20m-10-10h20M43 88v12m-6-6h12" stroke="#ffe27b" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="landing__step-copy">
+              <p className="landing__step-label">Reconstruct</p>
+              <h3>A whole new dimension.</h3>
+              <p>Let AI turn your image into an approximate 3D model. Rotate it and take a look.</p>
+            </div>
+          </li>
+          <li>
+            <div className="landing__step-art landing__step-art--bricks" aria-hidden="true">
+              <span className="landing__step-number">03</span>
+              <svg viewBox="0 0 240 150" fill="none" focusable="false">
+                <g stroke="#252822" strokeWidth="3" strokeLinejoin="round">
+                  <path d="m61 93 60-26 61 26-60 27Z" fill="#fffefa" />
+                  <path d="M61 93v25l61 26v-24Z" fill="#e5e5d9" />
+                  <path d="M122 120v24l60-26V93Z" fill="#bfc2b3" />
+                  <path d="m61 53 60-26 61 26-60 27Z" fill="#ffe785" />
+                  <path d="M61 53v25l61 26V80Z" fill="#ffd744" />
+                  <path d="M122 80v24l60-26V53Z" fill="#d8ae25" />
+                  <path d="M91 44v9c0 8 24 8 24 0v-9m14 0v9c0 8 24 8 24 0v-9" fill="#ffd744" />
+                  <ellipse cx="103" cy="44" rx="12" ry="5" fill="#fff0a5" />
+                  <ellipse cx="141" cy="44" rx="12" ry="5" fill="#fff0a5" />
+                </g>
+              </svg>
+            </div>
+            <div className="landing__step-copy">
+              <p className="landing__step-label">Build</p>
+              <h3>Bring on the bricks.</h3>
+              <p>Explore your LEGO-style model, find your pieces, and follow the build guide.</p>
+            </div>
+          </li>
         </ol>
       </section>
+
+      <InspirationCarousel />
 
       <section className="landing__closing" id="about" aria-labelledby="closing-title">
         <p className="landing__eyebrow">Let’s make something</p>
