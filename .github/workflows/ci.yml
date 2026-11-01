@@ -4,13 +4,22 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Previously published 40-character commit SHA to redeploy.
+        required: true
+        type: string
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull-request validation may be superseded, but a main-branch release must
+  # never be cancelled after it has changed Azure resources.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Skips unaffected jobs with job-level `if` rather than workflow `paths`, because GitHub
@@ -133,7 +142,7 @@ jobs:
   terraform:
     name: Terraform
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.terraform == 'true'
+    if: needs.changes.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -155,3 +164,297 @@ jobs:
         run: terraform init -backend=false
       - name: Validate configuration
         run: terraform validate
+
+  release-safety:
+    name: Release safety checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Verify release safeguards
+        shell: pwsh
+        run: |
+          ./scripts/Assert-WorkerReleaseSafety.Tests.ps1
+          ./scripts/Test-ReleaseWorkflow.ps1
+
+  deploy-development:
+    name: Deploy development
+    needs: [backend, backend-image, frontend, terraform, release-safety]
+    if: >-
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) &&
+      needs.backend.result == 'success' && needs.backend-image.result == 'success' &&
+      needs.frontend.result == 'success' && needs.terraform.result == 'success' &&
+      needs.release-safety.result == 'success'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: azure-development-deployment
+      # A release is a stateful operation. Never cancel a running deployment in
+      # favor of a later push; the later run waits and deploys its own SHA.
+      cancel-in-progress: false
+    env:
+      AZURE_RESOURCE_GROUP: rg-image-to-lego-dev
+      AZURE_ACR_NAME: itl2b70703f
+      AZURE_API_NAME: app-image-to-lego-api-dev-2b70703f
+      AZURE_FRONTEND_NAME: ca-frontend-image-to-lego-dev
+      AZURE_GENERATION_WORKER_NAME: aci-image-to-lego-generation-dev
+      AZURE_CONVERSION_WORKER_NAME: aci-image-to-lego-conversion-dev
+      AZURE_KEY_VAULT_URL: https://kv-itl-2b70703f.vault.azure.net/
+      AZURE_DEPLOYMENT_CLIENT_ID: ${{ vars.AZURE_DEPLOYMENT_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ACI_WORKER_RELEASES_ENABLED: ${{ vars.ACI_WORKER_RELEASES_ENABLED }}
+      DEPLOYMENT_DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}
+      RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Log in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_DEPLOYMENT_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Preflight compute and release safety
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+
+          subscription_resource="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers"
+          resources=(
+            "$subscription_resource/Microsoft.Web/serverFarms/ASP-rgimagetolegodev-8295"
+            "$subscription_resource/Microsoft.Web/sites/$AZURE_API_NAME"
+            "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_GENERATION_WORKER_NAME"
+            "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_CONVERSION_WORKER_NAME"
+            "$subscription_resource/Microsoft.App/containerApps/$AZURE_FRONTEND_NAME"
+          )
+          missing=()
+          for resource_id in "${resources[@]}"; do
+            if ! az resource show --ids "$resource_id" --only-show-errors >/dev/null 2>&1; then
+              missing+=("$resource_id")
+            fi
+          done
+          if ((${#missing[@]})); then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "### Deployment skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Compute was deliberately removed or is unavailable; no image was published or resource changed." >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "${missing[@]}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "$ACI_WORKER_RELEASES_ENABLED" != "true" ]]; then
+            echo "Set ACI_WORKER_RELEASES_ENABLED=true only after the bootstrap inventory and smoke test in the lifecycle runbook." >&2
+            exit 1
+          fi
+
+          submissions_enabled="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)"
+          if [[ "$submissions_enabled" != "false" ]]; then
+            echo "JOB_SUBMISSIONS_ENABLED must remain false for automated releases." >&2
+            exit 1
+          fi
+
+          if [[ -z "$DEPLOYMENT_DATABASE_URL" ]] || ! command -v psql >/dev/null; then
+            echo "DEPLOYMENT_DATABASE_URL and psql are required to prove no worker lease is in flight." >&2
+            exit 1
+          fi
+          active_attempts="$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -c 'select public.worker_release_active_attempt_count();')"
+          if [[ ! "$active_attempts" =~ ^[0-9]+$ ]]; then
+            echo "The worker release lease query returned an invalid count." >&2
+            exit 1
+          fi
+          namespace="image-to-lego-bus-dev-01"
+          queue_counts="$(az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name generation --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv; az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name conversion --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv)"
+          active_messages="$(awk '{active += $1} END {print active}' <<< "$queue_counts")"
+          scheduled_messages="$(awk '{scheduled += $2} END {print scheduled}' <<< "$queue_counts")"
+
+          api_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-api-dev --query principalId --output tsv)"
+          generation_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-generation-dev --query principalId --output tsv)"
+          conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
+          queue_senders_verified=true
+          for expected in "generation:$api_principal_id:$generation_principal_id" "conversion:$api_principal_id:$conversion_principal_id"; do
+            queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
+            actual_ids="$(az role assignment list --all --include-inherited --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
+            wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
+            [[ "$actual_ids" == "$wanted_ids" ]] || queue_senders_verified=false
+          done
+
+          for worker in "$AZURE_GENERATION_WORKER_NAME:generation" "$AZURE_CONVERSION_WORKER_NAME:conversion"; do
+            worker_name="${worker%%:*}"
+            worker_kind="${worker##*:}"
+            worker_state="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "instanceView.state" --output tsv)"
+            case "$worker_state" in
+              Running|Stopped|Succeeded|Failed|Terminated) ;;
+              *)
+                echo "$worker_name is $worker_state. It is not an ACI state covered by the release policy." >&2
+                exit 1
+                ;;
+            esac
+            restart_policy="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "restartPolicy" --output tsv)"
+            command="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "join(' ', containers[0].command)" --output tsv)"
+            client_id="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "containers[0].environmentVariables[?name=='AZURE_CLIENT_ID'].value | [0]" --output tsv)"
+            if [[ "$restart_policy" != "Never" || "$command" != "python -m app.workers.aci_bootstrap $worker_kind" || -z "$client_id" ]]; then
+              echo "$worker_name does not match the reviewed bootstrap contract; refusing to replace it." >&2
+              exit 1
+            fi
+            identity_name="id-image-to-lego-${worker_kind}-dev"
+            identity_id="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$identity_name"
+            required_environment_names=(APP_ENV AZURE_STORAGE_ACCOUNT_URL AZURE_STORAGE_CONTAINER AZURE_SERVICE_BUS_NAMESPACE AZURE_SERVICE_BUS_QUEUE AZURE_SERVICE_BUS_GENERATION_QUEUE AZURE_CLIENT_ID AZURE_KEY_VAULT_URL DATABASE_URL_SECRET_NAME)
+            if [[ "$worker_kind" == "generation" ]]; then
+              required_environment_names+=(FAL_KEY_SECRET_NAME)
+            else
+              required_environment_names+=(AZURE_TOKEN_CREDENTIALS)
+            fi
+            actual_environment_names="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].environmentVariables[].name' --output tsv | sort)"
+            required_environment_names="$(printf '%s\n' "${required_environment_names[@]}" | sort)"
+            if [[ "$actual_environment_names" != "$required_environment_names" ]] || ! az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json | jq -e --arg identity "$identity_id" '(.identity.userAssignedIdentities | keys | map(ascii_downcase) == [$identity | ascii_downcase]) and (.imageRegistryCredentials | length == 1) and ((.imageRegistryCredentials[0].identity | ascii_downcase) == ($identity | ascii_downcase))' >/dev/null; then
+              echo "$worker_name is missing part of the reviewed identity, ACR, or environment bootstrap contract." >&2
+              exit 1
+            fi
+            action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches true)"
+            echo "${worker_kind}_client_id=$client_id" >> "$GITHUB_OUTPUT"
+            echo "${worker_kind}_action=$action" >> "$GITHUB_OUTPUT"
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+      - name: Install Container Apps CLI extension
+        if: steps.preflight.outputs.skip != 'true'
+        shell: bash
+        run: az extension add --name containerapp --upgrade --yes
+      - name: Verify automatic-release tags are unused
+        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repository in image-to-lego-backend image-to-lego-frontend; do
+            if az acr repository show --name "$AZURE_ACR_NAME" --image "$repository:$RELEASE_SHA" --only-show-errors >/dev/null 2>&1; then
+              echo "Refusing to overwrite existing $repository:$RELEASE_SHA." >&2
+              exit 1
+            fi
+          done
+      - name: Log in to Azure Container Registry
+        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        run: az acr login --name "$AZURE_ACR_NAME"
+      - name: Set up Docker Buildx
+        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        uses: docker/setup-buildx-action@v4
+      - name: Build and publish immutable release images
+        if: steps.preflight.outputs.skip != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          docker buildx build --push --tag "$registry_server/image-to-lego-backend:$RELEASE_SHA" backend
+          docker buildx build --push --file frontend/Dockerfile --tag "$registry_server/image-to-lego-frontend:$RELEASE_SHA" .
+      - name: Resolve published release images
+        if: steps.preflight.outputs.skip != 'true'
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full 40-character lowercase commit SHA." >&2
+            exit 1
+          fi
+          registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          backend_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv)"
+          frontend_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-frontend:$RELEASE_SHA" --query digest --output tsv)"
+          echo "registry_server=$registry_server" >> "$GITHUB_OUTPUT"
+          echo "backend_digest=$backend_digest" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=$frontend_digest" >> "$GITHUB_OUTPUT"
+      - name: Deploy API, workers, and frontend
+        if: steps.preflight.outputs.skip != 'true'
+        shell: bash
+        env:
+          REGISTRY_SERVER: ${{ steps.images.outputs.registry_server }}
+          GENERATION_CLIENT_ID: ${{ steps.preflight.outputs.generation_client_id }}
+          CONVERSION_CLIENT_ID: ${{ steps.preflight.outputs.conversion_client_id }}
+          GENERATION_ACTION: ${{ steps.preflight.outputs.generation_action }}
+          CONVERSION_ACTION: ${{ steps.preflight.outputs.conversion_action }}
+        run: |
+          set -euo pipefail
+          completed=()
+          report_partial_release() {
+            echo "### Partial release" >> "$GITHUB_STEP_SUMMARY"
+            echo "Completed: ${completed[*]:-none}. Remaining components retain their prior image." >> "$GITHUB_STEP_SUMMARY"
+            echo "Use workflow_dispatch with the previous approved 40-character SHA after resolving the failure." >> "$GITHUB_STEP_SUMMARY"
+          }
+          trap report_partial_release ERR
+          backend_image="$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA"
+          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
+          identity_base="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
+
+          az webapp config container set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --container-image-name "$backend_image" --container-registry-url "https://$REGISTRY_SERVER"
+          az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME"
+          completed+=("API")
+
+          if [[ "$GENERATION_ACTION" == "recreate" ]]; then
+            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --yes
+          fi
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --ip-address None --assign-identity "$identity_base/id-image-to-lego-generation-dev" --acr-identity "$identity_base/id-image-to-lego-generation-dev" --registry-login-server "$REGISTRY_SERVER" --command-line python -m app.workers.aci_bootstrap generation --environment-variables "APP_ENV=development" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$GENERATION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "DATABASE_URL_SECRET_NAME=database-url" "FAL_KEY_SECRET_NAME=fal-key"
+          completed+=("generation worker")
+          if [[ "$CONVERSION_ACTION" == "recreate" ]]; then
+            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --yes
+          fi
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --ip-address None --assign-identity "$identity_base/id-image-to-lego-conversion-dev" --acr-identity "$identity_base/id-image-to-lego-conversion-dev" --registry-login-server "$REGISTRY_SERVER" --command-line python -m app.workers.aci_bootstrap conversion --environment-variables "APP_ENV=development" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$CONVERSION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential" "DATABASE_URL_SECRET_NAME=database-url"
+          completed+=("conversion worker")
+          az containerapp update --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --image "$frontend_image"
+          completed+=("frontend")
+      - name: Verify health and report versions
+        if: steps.preflight.outputs.skip != 'true'
+        shell: bash
+        env:
+          REGISTRY_SERVER: ${{ steps.images.outputs.registry_server }}
+          BACKEND_DIGEST: ${{ steps.images.outputs.backend_digest }}
+          FRONTEND_DIGEST: ${{ steps.images.outputs.frontend_digest }}
+        run: |
+          set -euo pipefail
+          api_hostname="$(az webapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query defaultHostName --output tsv)"
+          frontend_fqdn="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --query properties.configuration.ingress.fqdn --output tsv)"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error --max-time 15 "https://$api_hostname/health"; then
+              break
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              echo "API health check did not succeed." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          curl --fail --silent --show-error --max-time 30 "https://$frontend_fqdn/" >/dev/null
+          backend_image="$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA"
+          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
+          if ! az webapp config container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --output json | grep --fixed-strings --quiet "$backend_image"; then
+            echo "API image configuration does not report the requested release image." >&2
+            exit 1
+          fi
+          if [[ "$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --query 'properties.template.containers[0].image' --output tsv)" != "$frontend_image" ]]; then
+            echo "Frontend image configuration does not report the requested release image." >&2
+            exit 1
+          fi
+          for worker in "$AZURE_GENERATION_WORKER_NAME" "$AZURE_CONVERSION_WORKER_NAME"; do
+            for attempt in {1..30}; do
+              worker_state="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker" --query "instanceView.state" --output tsv)"
+              if [[ "$worker_state" == "Running" ]]; then
+                break
+              fi
+              if [[ "$attempt" == "30" ]]; then
+                echo "$worker did not start successfully (state: $worker_state)." >&2
+                exit 1
+              fi
+              sleep 5
+            done
+            if [[ "$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker" --query 'containers[0].image' --output tsv)" != "$backend_image" ]]; then
+              echo "$worker image configuration does not report the requested release image." >&2
+              exit 1
+            fi
+          done
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Development deployment complete
+          - Commit: \`$RELEASE_SHA\`
+          - Backend image: \`$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA\` ($BACKEND_DIGEST)
+          - Frontend image: \`$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA\` ($FRONTEND_DIGEST)
+          - API health: https://$api_hostname/health
+          - Frontend: https://$frontend_fqdn/
+          - Database migrations: not run by this workflow.
+          EOF

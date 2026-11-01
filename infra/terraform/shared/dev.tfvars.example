@@ -4,3 +4,7 @@ servicebus_location              = "malaysiawest"
 storage_account_tier             = "Standard"
 storage_account_replication_type = "LRS"
 servicebus_sku                   = "Basic"
+
+# Verified from this repository's creation date and immutable GitHub IDs.
+# This value is not a secret.
+github_oidc_subject = "repo:regan-tan@108611909/image-to-lego@1406660565:ref:refs/heads/main"

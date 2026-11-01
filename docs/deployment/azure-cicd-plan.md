@@ -6,6 +6,7 @@
 > Its safe Terraform reconciliation and the distinction between tested deployment and untested
 > recreation are recorded in [the Terraform lifecycle runbook](azure-terraform-lifecycle.md).
 > This note does not amend an accepted architecture decision; that requires team review.
+> For the executable App Service/ACI release process, use [GitHub Actions Azure release setup](github-actions-azure-cicd.md), not the historical Container Apps commands below.
 
 ## Status and scope
 

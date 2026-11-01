@@ -36,8 +36,10 @@ surface-only brick model using source GLB visual data, a bounded grid-resolution
 rectangular bricks/plates, and the real `4286` Slope 33 3 x 1 for simple exposed ramps. The backend
 conversion slice is also implemented: an owner can start an idempotent conversion of a ready
 reconstructed model, and a separate worker stores one canonical JSON LEGO model artifact. The
-frontend conversion journey, LEGO renderer, parts list, and basic build guide are implemented;
-production deployment remains **not implemented yet**. No Supabase Storage is used; Azure Blob
+frontend conversion journey, LEGO renderer, parts list, and basic build guide are implemented.
+The existing development compute environment is Terraform-managed. The checked-in GitHub Actions
+release workflow still requires its documented one-time OIDC/bootstrap setup before it may deploy;
+no automatic release has been run by this repository change. No Supabase Storage is used; Azure Blob
 Storage is the artifact store.
 
 The completed Parts List also provides a deterministic purchase-ready CSV. It contains only
@@ -62,29 +64,28 @@ See [Architecture](docs/architecture/README.md) for the component diagram and bo
 
 ## Deployment status and plan
 
-Cloud deployment is proposed but not implemented yet. The target is one low-cost development
-environment: a small Nginx Azure Container App hosts the React/Vite frontend, while one immutable backend image
-is deployed as three independently scaled Azure Container Apps for the FastAPI API, generation
-worker, and conversion worker. Azure Service Bus provides the two durable job queues; ACR stores the
-image; Blob Storage stores private artifacts; Key Vault supplies runtime secrets; and Azure Monitor
-collects operational logs and metrics. Supabase Free remains the managed PostgreSQL and Auth service.
+The existing development environment uses a small Nginx Azure Container App for the React/Vite
+frontend, a Linux App Service for the FastAPI API, and two `restart_policy = Never` Azure Container
+Instance workers. Azure Service Bus provides the two durable job queues; ACR stores images; Blob
+Storage stores private artifacts; Key Vault supplies runtime secrets; and Azure Monitor collects
+operational logs and metrics. Supabase Free remains the managed PostgreSQL and Auth service.
 
-The API has public managed HTTPS ingress because the browser calls it directly. Both workers have no
-ingress and scale from their own queue depth. Container Apps provides API replica load distribution,
-so this environment does not need a separate load balancer. The proposed GitHub Actions release flow
-builds the backend image once, deploys the same git-SHA image to all three apps, deploys the frontend,
-and runs smoke tests after the existing CI checks pass.
+The API has public managed HTTPS ingress because the browser calls it directly. The workers have no
+ingress. The GitHub Actions release workflow builds SHA-tagged backend and frontend images, updates
+the API, both safely stopped workers, and frontend after CI, then runs health checks. It is
+intentionally blocked until its [OIDC and worker-bootstrap setup](docs/deployment/github-actions-azure-cicd.md)
+has been completed and reviewed.
 
-Terraform configuration now prepares this single development environment, but no hosting resources
-have been provisioned, containers deployed, or frontend published. A second environment, automated
-external database backups, and paid high-availability services remain intentionally deferred.
+The shared Terraform root protects durable infrastructure while application compute is in a separate
+state. A second environment, automated external database backups, and paid high-availability services remain intentionally deferred.
 Supabase Free inactivity pauses, temporary downtime, and manual recovery are accepted capstone
 limitations; external logical backups are a documented production-readiness proposal rather than an
 implemented feature.
 
-See the [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md) for resource sizing,
-scaling, ingress, security, resilience, monitoring, cost controls, release steps, and acceptance
-checks.
+See the [GitHub Actions Azure release setup](docs/deployment/github-actions-azure-cicd.md) and
+[Azure Terraform lifecycle](docs/deployment/azure-terraform-lifecycle.md) for the executable
+development release and lifecycle safeguards. The [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md)
+is retained as historical Container Apps planning material.
 
 ## Implemented source-image upload flow
 

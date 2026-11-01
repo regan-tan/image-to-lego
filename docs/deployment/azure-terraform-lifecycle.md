@@ -15,6 +15,12 @@ The frontend image is `image-to-lego-frontend:dev-20261030-nginxfix`. Its `API_U
 
 The shared root owns the resource group, Terraform backend storage, artifact Blob Storage, Service Bus queues, ACR, Key Vault, managed identities, role assignments, logging, and Container Apps environment. Its resources use `prevent_destroy`. The compute root reads those dependencies as data sources, so compute-only destroy/recreate cannot delete persistent data or the remote-state container. Supabase is external to Terraform and must be checked separately.
 
+## GitHub Actions image releases
+
+The checked-in GitHub Actions release workflow updates images without Terraform apply. Its one-time OIDC identity setup, least-privilege scopes, worker preconditions, health checks, rollback operation, and manual GitHub variable setup are in [GitHub Actions Azure release setup](github-actions-azure-cicd.md).
+
+The workflow only replaces an ACI worker that is already stopped and matches the reviewed bootstrap contract; it fails closed for a running worker. An empty Service Bus queue is not accepted as evidence that paid work is not in flight. `JOB_SUBMISSIONS_ENABLED` is checked as the exact string `false` and is never changed by image deployment. Supabase migrations remain a separate reviewed operation.
+
 ## Before reconciliation
 
 No command below is part of this change. Assign a single operator with Azure read permissions and state-container access, work from a private workstation, and use the current approved AzureRM 4.x provider lock. Terraform state is sensitive infrastructure data: it can contain App Service settings, ACI secure environment values, and provider-computed credentials even where Terraform labels values sensitive. Do not print it, attach it to tickets, copy it into this repository, or store an unencrypted backup in a shared location.

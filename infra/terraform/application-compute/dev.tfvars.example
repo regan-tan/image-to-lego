@@ -1,7 +1,9 @@
 # Browser-safe values only; never put DATABASE_URL, FAL_KEY, or registry credentials here.
-api_backend_image_tag    = "dev-20261029-205014"
-worker_backend_image_tag = "bootstrap-898adc56df2e"
-frontend_image_tag = "dev-20261030-nginxfix"
+# Copy the three immutable tags from the last approved release summary. Terraform
+# intentionally has no stale image defaults, so clean recovery is explicit.
+api_backend_image_tag    = "<approved-40-character-commit-sha>"
+worker_backend_image_tag = "<approved-40-character-commit-sha>"
+frontend_image_tag       = "<approved-40-character-commit-sha>"
 # Required for a clean API recreation; also browser-safe for the frontend.
 # supabase_url = "https://your-project.supabase.co"
 # supabase_publishable_key = "your-browser-safe-publishable-key"
