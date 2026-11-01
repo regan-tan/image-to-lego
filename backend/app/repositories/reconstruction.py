@@ -5,6 +5,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.jobs import ReconstructionJob, WorkerReconstructionJob
+from app.repositories.worker_attempt import AttemptAcquisition
 
 
 class ReconstructionInitiationRejection(StrEnum):
@@ -53,7 +54,7 @@ class ReconstructionRepository(Protocol):
         job_id: UUID,
         owner_id: UUID,
         lease_seconds: int,
-    ) -> UUID | None: ...
+    ) -> AttemptAcquisition: ...
 
     async def recovery_time(
         self,

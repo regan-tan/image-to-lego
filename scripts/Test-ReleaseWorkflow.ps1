@@ -55,7 +55,7 @@ if (-not $deployJobMatch.Success) {
 }
 
 $deployJob = $deployJobMatch.Groups["body"].Value
-if ($deployJob -notmatch '(?m)^    needs: \[changes, backend, backend-image, frontend, terraform, release-safety\]$') {
+if ($deployJob -notmatch '(?m)^    needs: \[changes, backend, backend-image, backend-postgres, frontend, terraform, release-safety\]\r?$') {
     throw "Deploy must wait for the complete validation job set."
 }
 
@@ -69,7 +69,7 @@ foreach ($requiredDeployControl in @(
     }
 }
 
-foreach ($job in @("backend", "backend-image", "frontend", "terraform")) {
+foreach ($job in @("backend", "backend-image", "backend-postgres", "frontend", "terraform")) {
     $expectedCondition = "needs.$job.result == 'success' || needs.$job.result == 'skipped'"
     if (-not $deployJob.Contains($expectedCondition)) {
         throw "Deploy must allow an unaffected $job job to be skipped without allowing failures."
@@ -88,6 +88,7 @@ function Test-DeploymentEligibility {
         [string]$ApplicationChanged,
         [string]$BackendResult,
         [string]$BackendImageResult,
+        [string]$BackendPostgresResult,
         [string]$FrontendResult,
         [string]$TerraformResult,
         [string]$ReleaseSafetyResult
@@ -107,6 +108,12 @@ function Test-DeploymentEligibility {
             return $false
         }
     }
+    if ($BackendPostgresResult -eq "skipped") {
+        return $BackendResult -eq "skipped" -and $BackendImageResult -eq "skipped"
+    }
+    if ($BackendPostgresResult -ne "success") {
+        return $false
+    }
     return $true
 }
 
@@ -121,13 +128,14 @@ function Assert-DeploymentEligibility {
 
 $eligiblePush = @{
     EventName = "push"; Ref = "refs/heads/main"; ChangesResult = "success"; ApplicationChanged = "true"
-    BackendResult = "success"; BackendImageResult = "success"; FrontendResult = "skipped"
+    BackendResult = "success"; BackendImageResult = "success"; BackendPostgresResult = "success"; FrontendResult = "skipped"
     TerraformResult = "skipped"; ReleaseSafetyResult = "success"
 }
 Assert-DeploymentEligibility -Expected $true -Scenario $eligiblePush
 
 $frontendOnlyPush = $eligiblePush.Clone()
 $frontendOnlyPush.BackendResult = "skipped"; $frontendOnlyPush.BackendImageResult = "skipped"
+$frontendOnlyPush.BackendPostgresResult = "skipped"
 $frontendOnlyPush.FrontendResult = "success"
 Assert-DeploymentEligibility -Expected $true -Scenario $frontendOnlyPush
 
@@ -136,6 +144,15 @@ Assert-DeploymentEligibility -Expected $false -Scenario $documentationOnlyPush
 
 $failedBackend = $eligiblePush.Clone(); $failedBackend.BackendResult = "failure"
 Assert-DeploymentEligibility -Expected $false -Scenario $failedBackend
+
+$failedPostgres = $eligiblePush.Clone(); $failedPostgres.BackendPostgresResult = "failure"
+Assert-DeploymentEligibility -Expected $false -Scenario $failedPostgres
+
+$cancelledPostgres = $eligiblePush.Clone(); $cancelledPostgres.BackendPostgresResult = "cancelled"
+Assert-DeploymentEligibility -Expected $false -Scenario $cancelledPostgres
+
+$unexpectedSkippedPostgres = $eligiblePush.Clone(); $unexpectedSkippedPostgres.BackendPostgresResult = "skipped"
+Assert-DeploymentEligibility -Expected $false -Scenario $unexpectedSkippedPostgres
 
 $cancelledFrontend = $eligiblePush.Clone(); $cancelledFrontend.FrontendResult = "cancelled"
 Assert-DeploymentEligibility -Expected $false -Scenario $cancelledFrontend
@@ -215,6 +232,14 @@ foreach ($fragment in @("SECURITY DEFINER", "REVOKE ALL", "github_release_gate")
 
 if (-not $migration.Contains("SET search_path = pg_catalog")) {
     throw "Worker release gate must use a fixed pg_catalog search path."
+}
+
+$coordinationMigrationPath = Join-Path $PSScriptRoot "..\supabase\migrations\20261102000000_durable_worker_release_coordination.sql"
+$coordinationMigration = Get-Content -LiteralPath $coordinationMigrationPath -Raw
+foreach ($fragment in @("worker_release_state", "worker_release_try_acquire_attempt", "release_blocked", "worker_release_recover")) {
+    if (-not $coordinationMigration.Contains($fragment)) {
+        throw "Durable worker release coordination migration is missing: $fragment"
+    }
 }
 
 $githubActionsPath = Join-Path $PSScriptRoot "..\infra\terraform\shared\github_actions.tf"

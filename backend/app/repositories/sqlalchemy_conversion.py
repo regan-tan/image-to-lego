@@ -13,6 +13,7 @@ from app.repositories.conversion import (
     ConversionInitiation,
     ConversionInitiationRejection,
 )
+from app.repositories.worker_attempt import AttemptAcquisition, AttemptAcquisitionStatus
 
 
 class SqlAlchemyConversionRepository:
@@ -196,27 +197,17 @@ class SqlAlchemyConversionRepository:
         job_id: UUID,
         owner_id: UUID,
         lease_seconds: int,
-    ) -> UUID | None:
+    ) -> AttemptAcquisition:
         attempt_id = uuid4()
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
             result = await self._session.execute(
                 text(
                     """
-                    update public.jobs j
-                    set status = 'running', worker_attempt_id = :attempt_id,
-                        worker_lease_expires_at = now() + (:lease_seconds * interval '1 second')
-                    from public.projects p
-                    where j.id = :job_id
-                      and j.project_id = p.id
-                      and p.owner_id = :owner_id
-                      and j.type = 'conversion'
-                      and j.status in ('queued', 'running')
-                      and (
-                          j.worker_attempt_id is null
-                          or j.worker_lease_expires_at <= now()
-                      )
-                    returning j.worker_attempt_id
+                    select status, attempt_id
+                    from public.worker_release_try_acquire_attempt(
+                        :job_id, :owner_id, 'conversion', :attempt_id, :lease_seconds
+                    )
                     """
                 ),
                 {
@@ -226,7 +217,9 @@ class SqlAlchemyConversionRepository:
                     "lease_seconds": lease_seconds,
                 },
             )
-        return cast(UUID | None, result.scalar_one_or_none())
+        row = result.mappings().one()
+        status = AttemptAcquisitionStatus(cast(str, row["status"]))
+        return AttemptAcquisition(status=status, attempt_id=cast(UUID | None, row["attempt_id"]))
 
     async def renew_attempt(
         self,

@@ -326,6 +326,15 @@ to image_to_lego_api;
 
 The migration never assumes this environment-specific role exists. RLS still applies to these grants.
 
+The durable worker-release migration also creates the `image_to_lego_worker` no-login role. Grant it
+only to the private database login used by the worker runtime; never grant it to Supabase's
+`authenticated` role or browser-facing roles. This reviewed database step is intentionally separate
+from the portable migration because the runtime login name is environment-specific:
+
+```sql
+grant image_to_lego_worker to image_to_lego_api;
+```
+
 ### Azure Blob upload setup
 
 Create a private Blob container and set `AZURE_STORAGE_ACCOUNT_URL` and
