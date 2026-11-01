@@ -283,10 +283,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'github_release_coordinator') THEN
         CREATE ROLE github_release_coordinator NOLOGIN NOINHERIT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'image_to_lego_worker') THEN
+        CREATE ROLE image_to_lego_worker NOLOGIN NOINHERIT;
+    END IF;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.worker_release_try_acquire_attempt(uuid, uuid, text, uuid, integer) TO authenticated;
+-- This function changes job state under SECURITY DEFINER. It is deliberately
+-- not a Supabase RPC for browser-authenticated users: the worker's private
+-- database login must be granted membership in image_to_lego_worker during
+-- reviewed deployment configuration.
+GRANT USAGE ON SCHEMA public TO image_to_lego_worker;
+GRANT EXECUTE ON FUNCTION public.worker_release_try_acquire_attempt(uuid, uuid, text, uuid, integer) TO image_to_lego_worker;
 GRANT USAGE ON SCHEMA public TO github_release_coordinator;
 GRANT EXECUTE ON FUNCTION public.worker_release_begin(uuid, uuid, integer) TO github_release_coordinator;
 GRANT EXECUTE ON FUNCTION public.worker_release_transition(uuid, uuid, bigint, text, text) TO github_release_coordinator;

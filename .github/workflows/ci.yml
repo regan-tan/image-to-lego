@@ -67,7 +67,7 @@ jobs:
           frontend=false
           terraform=false
           application=false
-          if grep -qE '^(backend/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
+          if grep -qE '^(backend/|supabase/migrations/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
             backend=true
           fi
           if grep -qE '^(frontend/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
@@ -169,7 +169,15 @@ jobs:
       - name: Apply release migrations and run concurrency tests
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/image_to_lego_test
-        run: uv run pytest -q tests/test_worker_release_postgres.py
+          REQUIRE_POSTGRES_INTEGRATION: "true"
+        run: |
+          set -euo pipefail
+          output="$(uv run pytest -q -rA tests/test_worker_release_postgres.py)"
+          printf '%s\n' "$output"
+          if grep --fixed-strings --quiet "SKIPPED" <<< "$output"; then
+            echo "PostgreSQL integration tests must not be skipped in CI." >&2
+            exit 1
+          fi
 
   frontend:
     name: Frontend

@@ -4,6 +4,7 @@ import asyncio
 import os
 from contextlib import suppress
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,13 +17,36 @@ MIGRATIONS = (
     "20261101000000_worker_release_gate.sql",
     "20261102000000_durable_worker_release_coordination.sql",
 )
+TEST_DATABASE_NAME = "image_to_lego_test"
+LOCAL_TEST_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _read_migration_sql(path: Path) -> str:
+    """Read committed SQL whether or not an editor wrote a UTF-8 BOM."""
+    return path.read_text(encoding="utf-8-sig")
+
+
+def _require_disposable_database_url(database_url: str) -> None:
+    parsed = urlparse(database_url)
+    database_name = parsed.path.removeprefix("/")
+    if (
+        parsed.scheme not in {"postgres", "postgresql"}
+        or parsed.hostname not in LOCAL_TEST_HOSTS
+        or database_name != TEST_DATABASE_NAME
+    ):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must name the local disposable image_to_lego_test database."
+        )
 
 
 @pytest.fixture(scope="session")
 async def postgres_database() -> str:
     database_url = os.environ.get("TEST_DATABASE_URL")
     if database_url is None:
+        if os.environ.get("REQUIRE_POSTGRES_INTEGRATION") == "true":
+            raise RuntimeError("TEST_DATABASE_URL is required for PostgreSQL integration tests.")
         pytest.skip("TEST_DATABASE_URL is required for PostgreSQL integration tests.")
+    _require_disposable_database_url(database_url)
     connection = await asyncpg.connect(database_url)
     with suppress(asyncpg.exceptions.DuplicateObjectError):
         await connection.execute("create role authenticated nologin")
@@ -42,7 +66,7 @@ async def postgres_database() -> str:
     )
     migration_directory = Path(__file__).parents[2] / "supabase" / "migrations"
     for migration in MIGRATIONS:
-        await connection.execute((migration_directory / migration).read_text(encoding="utf-8"))
+        await connection.execute(_read_migration_sql(migration_directory / migration))
     yield database_url
     await connection.close()
 
@@ -117,6 +141,28 @@ async def _expire_controller_heartbeat(connection: object) -> None:
 
 async def _release_state(connection: object) -> str:
     return str(await connection.fetchval("select state from public.worker_release_state"))
+
+
+def test_read_migration_sql_accepts_utf8_with_and_without_bom() -> None:
+    migration_directory = Path(__file__).parents[2] / "supabase" / "migrations"
+    bom_prefixed = migration_directory / "20261029000000_worker_job_leases.sql"
+    normal = migration_directory / "20261102000000_durable_worker_release_coordination.sql"
+
+    assert _read_migration_sql(bom_prefixed).startswith("-- Worker lease tracking")
+    assert _read_migration_sql(normal).startswith("-- Durable worker release coordination")
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql://postgres:postgres@db.example.com/image_to_lego_test",
+        "postgresql://postgres:postgres@localhost/postgres",
+        "https://localhost/image_to_lego_test",
+    ],
+)
+def test_disposable_database_guard_rejects_non_test_targets(database_url: str) -> None:
+    with pytest.raises(RuntimeError, match="local disposable"):
+        _require_disposable_database_url(database_url)
 
 
 @pytest.mark.asyncio
@@ -285,6 +331,36 @@ async def test_privileges_prevent_unauthorized_release_state_changes(database: s
             await connection.execute(
                 "select public.worker_release_begin($1, $2, 60)", uuid4(), uuid4()
             )
+        await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_role_can_acquire_an_attempt(database: str) -> None:
+    job_id, owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute("set role image_to_lego_worker")
+        assert await _acquire(connection, job_id, owner_id, "reconstruction") == "acquired"
+        await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_role_cannot_acquire_own_or_another_users_attempt(
+    database: str,
+) -> None:
+    own_job_id, own_owner_id = await _create_job(database)
+    other_job_id, other_owner_id = await _create_job(database)
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute("set role authenticated")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await _acquire(connection, own_job_id, own_owner_id, "reconstruction")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await _acquire(connection, other_job_id, other_owner_id, "reconstruction")
         await connection.execute("reset role")
     finally:
         await connection.close()
