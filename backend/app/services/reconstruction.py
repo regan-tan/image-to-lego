@@ -2,7 +2,6 @@ from uuid import UUID
 
 from app.core.errors import ApplicationError
 from app.domain.jobs import ReconstructionJob
-from app.providers.generation_queue import GenerationQueue, GenerationQueueError
 from app.providers.reconstruction import (
     ReconstructionProvider,
     ReconstructionRequest,
@@ -32,16 +31,14 @@ class ReconstructionService:
 
 
 class ReconstructionInitiationService:
-    """Creates a durable reconstruction job before publishing its tiny queue message."""
+    """Creates a reconstruction job and durable publication intent."""
 
     def __init__(
         self,
         *,
         repository: ReconstructionRepository,
-        generation_queue: GenerationQueue,
     ) -> None:
         self._repository = repository
-        self._generation_queue = generation_queue
 
     async def initiate(
         self,
@@ -68,6 +65,14 @@ class ReconstructionInitiationService:
                 code="reconstruction_source_not_found",
                 message="The project or source image does not exist.",
             )
+        if created.rejection is ReconstructionInitiationRejection.RELEASE_DRAINING:
+            raise ApplicationError(
+                code="release_draining",
+                message=(
+                    "Job submissions are temporarily paused for maintenance. "
+                    "Please retry later."
+                ),
+            )
         if created.rejection is ReconstructionInitiationRejection.WRONG_ARTIFACT_KIND:
             raise ApplicationError(
                 code="invalid_reconstruction_source",
@@ -88,18 +93,4 @@ class ReconstructionInitiationService:
         if not created.created:
             return created.reconstruction, False
 
-        try:
-            await self._generation_queue.enqueue(
-                job_id=created.reconstruction.job.id,
-                owner_id=owner_id,
-            )
-        except GenerationQueueError as error:
-            await self._repository.mark_queue_publish_failed(
-                job_id=created.reconstruction.job.id,
-                owner_id=owner_id,
-            )
-            raise ApplicationError(
-                code="generation_queue_unavailable",
-                message="Generation could not be started. Please try again.",
-            ) from error
         return created.reconstruction, True

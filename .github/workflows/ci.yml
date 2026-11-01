@@ -171,13 +171,17 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/image_to_lego_test
           REQUIRE_POSTGRES_INTEGRATION: "true"
         run: |
-          set -euo pipefail
-          output="$(uv run pytest -q -rA tests/test_worker_release_postgres.py)"
-          printf '%s\n' "$output"
-          if grep --fixed-strings --quiet "SKIPPED" <<< "$output"; then
+          set -uo pipefail
+          pytest_output="$RUNNER_TEMP/postgres-pytest-output.txt"
+          set +e
+          uv run pytest -q -rA tests/test_worker_release_postgres.py 2>&1 | tee "$pytest_output"
+          pytest_status=${PIPESTATUS[0]}
+          set -e
+          if grep --fixed-strings --quiet "SKIPPED" "$pytest_output"; then
             echo "PostgreSQL integration tests must not be skipped in CI." >&2
             exit 1
           fi
+          exit "$pytest_status"
 
   frontend:
     name: Frontend
@@ -276,6 +280,9 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ACI_WORKER_RELEASES_ENABLED: ${{ vars.ACI_WORKER_RELEASES_ENABLED }}
       AZURE_COMPUTE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_COMPUTE_DEPLOYMENTS_ENABLED }}
+      # Activation requires a reviewed workflow change. A repository variable alone
+      # must never turn this inactive controller foundation into Azure mutations.
+      RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"
       DEPLOYMENT_DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}
       RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
     steps:
@@ -288,7 +295,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [[ "$AZURE_COMPUTE_DEPLOYMENTS_ENABLED" == "true" ]]; then
+          if [[ "$AZURE_COMPUTE_DEPLOYMENTS_ENABLED" == "true" && "$RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED" == "true" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -301,7 +308,7 @@ jobs:
           ### Azure deployment intentionally disabled
           - Commit: \`$RELEASE_SHA\`
           - CI validation completed, but no Azure image was published and no compute resource was changed.
-          - Set \`AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true\` only after reviewed compute restoration.
+          - This workflow has no reviewed Azure controller adapter; its code-reviewed activation boundary remains false.
           EOF
       - name: Log in to Azure with GitHub OIDC
         if: steps.release-mode.outputs.enabled == 'true'

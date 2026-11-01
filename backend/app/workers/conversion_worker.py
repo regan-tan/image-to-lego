@@ -518,10 +518,19 @@ async def run_worker(settings: Settings) -> None:
     try:
         async with service_bus.get_queue_receiver(
             queue_name=settings.azure_service_bus_queue,
-            max_wait_time=5,
+            max_wait_time=settings.worker_release_drain_poll_seconds,
         ) as receiver:
             while True:
-                messages = await receiver.receive_messages(max_message_count=1, max_wait_time=5)
+                messages = await receiver.receive_messages(
+                    max_message_count=1,
+                    max_wait_time=settings.worker_release_drain_poll_seconds,
+                )
+                if not messages:
+                    async with session_factory() as session:
+                        repository = SqlAlchemyConversionRepository(session)
+                        if await repository.is_release_draining():
+                            logger.info("Conversion worker is draining while idle.")
+                            return
                 for message in messages:
                     parsed = _parse_message(message.body)
                     if parsed is None:

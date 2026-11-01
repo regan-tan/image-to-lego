@@ -30,6 +30,13 @@ class SqlAlchemyReconstructionRepository:
     ) -> ReconstructionInitiation:
         async with self._session.begin():
             await set_database_owner(self._session, owner_id)
+            admitted = await self._session.scalar(
+                text("select public.worker_release_admit_submission()")
+            )
+            if admitted is not True:
+                return ReconstructionInitiation(
+                    rejection=ReconstructionInitiationRejection.RELEASE_DRAINING
+                )
             project = await self._session.execute(
                 text(
                     "select id from public.projects where id = :project_id and owner_id = :owner_id"
@@ -123,6 +130,10 @@ class SqlAlchemyReconstructionRepository:
                 ),
                 {"job_id": job_id, "source_artifact_id": source_artifact_id},
             )
+            await self._session.execute(
+                text("select public.submission_outbox_create(:job_id, :owner_id, 1)"),
+                {"job_id": job_id, "owner_id": owner_id},
+            )
             return ReconstructionInitiation(
                 reconstruction=ReconstructionJob(
                     job=_job_from_row(row),
@@ -130,24 +141,6 @@ class SqlAlchemyReconstructionRepository:
                     output_artifact_id=None,
                 ),
                 created=True,
-            )
-
-    async def mark_queue_publish_failed(self, *, job_id: UUID, owner_id: UUID) -> None:
-        async with self._session.begin():
-            await set_database_owner(self._session, owner_id)
-            await self._session.execute(
-                text(
-                    """
-                    update public.jobs j
-                    set status = 'failed', error_code = 'generation_queue_unavailable',
-                        error_message = 'Generation could not be queued. Please start it again.'
-                    from public.projects p
-                    where j.id = :job_id and j.project_id = p.id and p.owner_id = :owner_id
-                      and j.type = 'reconstruction' and j.status = 'queued'
-                      and j.worker_attempt_id is null
-                    """
-                ),
-                {"job_id": job_id, "owner_id": owner_id},
             )
 
     async def get_for_owner(self, *, job_id: UUID, owner_id: UUID) -> ReconstructionJob | None:
@@ -218,6 +211,13 @@ class SqlAlchemyReconstructionRepository:
         row = result.mappings().one()
         status = AttemptAcquisitionStatus(cast(str, row["status"]))
         return AttemptAcquisition(status=status, attempt_id=cast(UUID | None, row["attempt_id"]))
+
+    async def is_release_draining(self) -> bool:
+        async with self._session.begin():
+            result = await self._session.execute(
+                text("select public.worker_release_is_draining()")
+            )
+        return bool(result.scalar_one())
 
     async def renew_attempt(
         self,

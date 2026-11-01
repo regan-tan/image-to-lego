@@ -6,7 +6,6 @@ import httpx
 import pytest
 
 from app.api.v1.reconstructions import (
-    get_generation_queue,
     get_job_repository,
     get_reconstruction_repository,
 )
@@ -17,7 +16,6 @@ from app.domain.artifacts import Artifact, ArtifactStatus
 from app.domain.jobs import Job, JobStatus, JobType, ReconstructionJob, WorkerReconstructionJob
 from app.main import create_app
 from app.providers.blob_storage import BlobNotFoundError, BlobStorageError, StoredBlobProperties
-from app.providers.generation_queue import GenerationQueueError
 from app.providers.reconstruction import (
     ReconstructionOutput,
     ReconstructionRequest,
@@ -77,7 +75,6 @@ class FakeReconstructionRepository:
             reconstruction=reconstruction_job(),
             created=True,
         )
-        self.queue_failures = 0
         self.worker_job: WorkerReconstructionJob | None = None
         self.claimed = True
         self.persisted_provider_ids: list[str] = []
@@ -87,9 +84,6 @@ class FakeReconstructionRepository:
 
     async def create_or_get(self, **_: object) -> ReconstructionInitiation:
         return self.initiation
-
-    async def mark_queue_publish_failed(self, **_: object) -> None:
-        self.queue_failures += 1
 
     async def get_for_owner(self, *, job_id: UUID, owner_id: UUID) -> ReconstructionJob | None:
         if owner_id != OWNER_ID or self.initiation.reconstruction is None:
@@ -129,14 +123,11 @@ class FakeReconstructionRepository:
 
 
 class FakeGenerationQueue:
-    def __init__(self, *, should_fail: bool = False) -> None:
-        self.should_fail = should_fail
+    def __init__(self) -> None:
         self.enqueued: list[UUID] = []
         self.scheduled: list[UUID] = []
 
     async def enqueue(self, *, job_id: UUID, owner_id: UUID) -> None:
-        if self.should_fail:
-            raise GenerationQueueError("unavailable")
         assert owner_id == OWNER_ID
         self.enqueued.append(job_id)
 
@@ -241,9 +232,8 @@ def worker_job(
 
 
 @pytest.fixture
-def api_context() -> tuple[httpx.AsyncClient, FakeReconstructionRepository, FakeGenerationQueue]:
+def api_context() -> tuple[httpx.AsyncClient, FakeReconstructionRepository]:
     repository = FakeReconstructionRepository()
-    queue = FakeGenerationQueue()
     app = create_app(Settings())
 
     async def current_user() -> AuthenticatedUser:
@@ -252,11 +242,9 @@ def api_context() -> tuple[httpx.AsyncClient, FakeReconstructionRepository, Fake
     app.dependency_overrides[get_current_user] = current_user
     app.dependency_overrides[get_reconstruction_repository] = lambda: repository
     app.dependency_overrides[get_job_repository] = lambda: repository
-    app.dependency_overrides[get_generation_queue] = lambda: queue
     return (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test"),
         repository,
-        queue,
     )
 
 
@@ -275,10 +263,10 @@ async def test_reconstruction_requires_authentication() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconstruction_creates_and_replays_without_reenqueuing(
-    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository, FakeGenerationQueue],
+async def test_reconstruction_creates_and_replays_as_durable_requests(
+    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository],
 ) -> None:
-    client, repository, queue = api_context
+    client, repository = api_context
     body = {"projectId": str(PROJECT_ID), "sourceArtifactId": str(SOURCE_ID)}
     created = await client.post(
         "/api/v1/reconstructions", headers={"Idempotency-Key": "key"}, json=body
@@ -293,13 +281,11 @@ async def test_reconstruction_creates_and_replays_without_reenqueuing(
     await client.aclose()
     assert created.status_code == 201
     assert replayed.status_code == 200
-    assert len(queue.enqueued) == 1
 
 
 @pytest.mark.asyncio
 async def test_reconstruction_submission_pause_rejects_before_creating_a_job() -> None:
     repository = FakeReconstructionRepository()
-    queue = FakeGenerationQueue()
     original_initiation = repository.initiation
     app = create_app(Settings(job_submissions_enabled=False))
 
@@ -308,7 +294,6 @@ async def test_reconstruction_submission_pause_rejects_before_creating_a_job() -
 
     app.dependency_overrides[get_current_user] = current_user
     app.dependency_overrides[get_reconstruction_repository] = lambda: repository
-    app.dependency_overrides[get_generation_queue] = lambda: queue
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -321,7 +306,6 @@ async def test_reconstruction_submission_pause_rejects_before_creating_a_job() -
     assert response.status_code == 503
     assert response.json() == {"detail": "Job submissions are temporarily paused."}
     assert repository.initiation is original_initiation
-    assert queue.enqueued == []
 
 
 @pytest.mark.asyncio
@@ -335,11 +319,11 @@ async def test_reconstruction_submission_pause_rejects_before_creating_a_job() -
     ],
 )
 async def test_reconstruction_maps_safe_validation_errors(
-    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository, FakeGenerationQueue],
+    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository],
     rejection: ReconstructionInitiationRejection,
     expected_status: int,
 ) -> None:
-    client, repository, _ = api_context
+    client, repository = api_context
     repository.initiation = ReconstructionInitiation(rejection=rejection)
     response = await client.post(
         "/api/v1/reconstructions",
@@ -351,26 +335,10 @@ async def test_reconstruction_maps_safe_validation_errors(
 
 
 @pytest.mark.asyncio
-async def test_queue_publication_failure_marks_job_failed_and_returns_503(
-    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository, FakeGenerationQueue],
-) -> None:
-    client, repository, queue = api_context
-    queue.should_fail = True
-    response = await client.post(
-        "/api/v1/reconstructions",
-        headers={"Idempotency-Key": "key"},
-        json={"projectId": str(PROJECT_ID), "sourceArtifactId": str(SOURCE_ID)},
-    )
-    await client.aclose()
-    assert response.status_code == 503
-    assert repository.queue_failures == 1
-
-
-@pytest.mark.asyncio
 async def test_job_status_is_owner_scoped_and_exposes_safe_fields(
-    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository, FakeGenerationQueue],
+    api_context: tuple[httpx.AsyncClient, FakeReconstructionRepository],
 ) -> None:
-    client, repository, _ = api_context
+    client, repository = api_context
     job = reconstruction_job(status=JobStatus.FAILED, output_artifact_id=uuid4())
     repository.initiation = ReconstructionInitiation(reconstruction=job)
     response = await client.get(f"/api/v1/jobs/{job.job.id}")
@@ -450,10 +418,10 @@ async def test_missing_source_blob_prevents_paid_submission() -> None:
 @pytest.mark.asyncio
 async def test_temporary_source_blob_failure_is_rescheduled() -> None:
     repository = FakeReconstructionRepository()
+    queue = FakeGenerationQueue()
     repository.worker_job = worker_job()
     blob = FakeBlobStorage()
     blob.download_error = BlobStorageError("temporary")
-    queue = FakeGenerationQueue()
     await processor(repository, blob, FakeProvider(), queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
@@ -466,9 +434,9 @@ async def test_temporary_source_blob_failure_is_rescheduled() -> None:
 @pytest.mark.asyncio
 async def test_fresh_unconfirmed_provider_submission_is_rescheduled_without_resubmission() -> None:
     repository = FakeReconstructionRepository()
+    queue = FakeGenerationQueue()
     repository.worker_job = worker_job(status=JobStatus.RUNNING)
     provider = FakeProvider()
-    queue = FakeGenerationQueue()
     await processor(repository, FakeBlobStorage(), provider, queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,
@@ -499,10 +467,10 @@ async def test_stale_unconfirmed_provider_submission_fails_without_resubmission(
 @pytest.mark.asyncio
 async def test_valid_source_submits_once_and_later_queue_delivery_only_polls() -> None:
     repository = FakeReconstructionRepository()
+    queue = FakeGenerationQueue()
     repository.worker_job = worker_job()
     blob = FakeBlobStorage()
     provider = FakeProvider()
-    queue = FakeGenerationQueue()
     current = processor(repository, blob, provider, queue)
     await current.process(
         job_id=repository.worker_job.reconstruction.job.id,
@@ -610,13 +578,13 @@ async def test_conflicting_existing_canonical_model_fails_safely() -> None:
 @pytest.mark.asyncio
 async def test_provider_result_network_failure_is_rescheduled() -> None:
     repository = FakeReconstructionRepository()
+    queue = FakeGenerationQueue()
     repository.worker_job = worker_job(provider_job_id="fal-request")
     provider = FakeProvider(ReconstructionState.SUCCEEDED)
     provider.result_error = ApplicationError(
         code="reconstruction_provider_unavailable",
         message="temporary",
     )
-    queue = FakeGenerationQueue()
     await processor(repository, FakeBlobStorage(), provider, queue).process(
         job_id=repository.worker_job.reconstruction.job.id,
         owner_id=OWNER_ID,

@@ -22,6 +22,7 @@ $requiredFragments = @(
     "JOB_SUBMISSIONS_ENABLED must remain false",
     "ACI_WORKER_RELEASES_ENABLED",
     "AZURE_COMPUTE_DEPLOYMENTS_ENABLED",
+    'RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"',
     "DEPLOYMENT_DATABASE_URL",
     "worker_release_active_attempt_count",
     "az servicebus queue show",
@@ -167,9 +168,9 @@ $manualRollback = $eligiblePush.Clone(); $manualRollback.EventName = "workflow_d
 Assert-DeploymentEligibility -Expected $true -Scenario $manualRollback
 
 function Get-ReleaseMode {
-    param([string]$EventName, [string]$ComputeDeploymentsEnabled)
+    param([string]$EventName, [string]$ComputeDeploymentsEnabled, [string]$ControllerMutationsEnabled = "false")
 
-    if ($ComputeDeploymentsEnabled -eq "true") {
+    if ($ComputeDeploymentsEnabled -eq "true" -and $ControllerMutationsEnabled -eq "true") {
         return "deploy"
     }
     if ($EventName -eq "workflow_dispatch") {
@@ -184,8 +185,8 @@ if ((Get-ReleaseMode -EventName "push" -ComputeDeploymentsEnabled "false") -ne "
 if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "false") -ne "reject") {
     throw "A manual rollback during intentional compute downtime must fail."
 }
-if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "true") -ne "deploy") {
-    throw "An enabled manual rollback must proceed to the normal safety gates."
+if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "true") -ne "reject") {
+    throw "A repository variable alone must not activate Azure mutations."
 }
 
 if ($workflow.Contains('echo "skip=true" >> "$GITHUB_OUTPUT"')) {
