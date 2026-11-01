@@ -29,3 +29,13 @@ variable "conversion_queue_name" {
   type    = string
   default = "conversion"
 }
+
+variable "github_oidc_subject" {
+  description = "Exact verified GitHub OIDC subject for main."
+  type        = string
+
+  validation {
+    condition     = can(regex("^repo:[^/@:]+(@[0-9]+)?/[^/@:]+(@[0-9]+)?:ref:refs/heads/main$", var.github_oidc_subject))
+    error_message = "github_oidc_subject must be the legacy or immutable main-branch GitHub OIDC subject."
+  }
+}
