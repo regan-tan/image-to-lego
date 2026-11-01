@@ -364,12 +364,14 @@ After applying `20261024000000_project_deletion.sql`, also allow project deletio
 sweep's existence check:
 
 ```sql
-grant delete on public.projects to image_to_lego_api;
+grant select, update, delete on public.projects to image_to_lego_api;
 grant execute on function public.existing_project_ids(uuid[]) to image_to_lego_api;
 ```
 
-Deleting a project needs `DELETE` only on `projects`; PostgreSQL performs the cascade to child
-tables itself. `existing_project_ids` is a `SECURITY DEFINER` function, because the sweep must see
+Deleting a project requires `SELECT` and `UPDATE` on `projects` for the initial
+`SELECT ... FOR UPDATE` lock, plus `DELETE` for removal. PostgreSQL performs the cascade to child
+tables itself, so child-table `DELETE` grants are unnecessary.
+`existing_project_ids` is a `SECURITY DEFINER` function, because the sweep must see
 projects across all owners while RLS limits the API role to one owner per transaction. It returns
 only which of the given IDs still exist. The migration revokes it from `PUBLIC`, `anon`, and
 `authenticated`, so the browser cannot call it through Supabase's REST API.
