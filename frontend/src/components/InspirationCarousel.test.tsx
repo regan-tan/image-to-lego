@@ -39,7 +39,7 @@ describe("InspirationCarousel", () => {
     // Continue forward to the end copy, then silently reset to its identical original.
     expect(track).toHaveStyle({ transform: "translateX(calc(-400% + 0px))" });
     act(() => { vi.advanceTimersByTime(550); });
-    expect(track).toHaveStyle({ transform: "translateX(calc(-100% + 0px))", transition: "none" });
+    expect(track).toHaveStyle({ transform: "translateX(calc(-100% + 0px))", transitionProperty: "none" });
     act(() => { vi.advanceTimersByTime(2450); });
     expect(screen.getByRole("group", { name: "2 of 3" })).toBeInTheDocument();
     expect(screen.queryByRole("heading")).not.toBeInTheDocument();
@@ -52,7 +52,7 @@ describe("InspirationCarousel", () => {
     const track = screen.getByRole("group", { name: "3 of 3" }).parentElement;
     expect(track).toHaveStyle({ transform: "translateX(calc(-0% + 0px))" });
     act(() => { vi.advanceTimersByTime(550); });
-    expect(track).toHaveStyle({ transform: "translateX(calc(-300% + 0px))", transition: "none" });
+    expect(track).toHaveStyle({ transform: "translateX(calc(-300% + 0px))", transitionProperty: "none" });
   });
 
   it("supports dragging both directions and restarts the automatic countdown", () => {

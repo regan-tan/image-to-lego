@@ -13,7 +13,7 @@ export function LandingPage({ isAuthenticated }: LandingPageProps) {
   return (
     <main className="landing">
       <header className="landing__header">
-        <Link to="/" className="landing__brand" aria-label="Image to LEGO home">
+        <Link to="/" className="landing__brand" aria-label="Image to LEGO home" onClick={() => window.scrollTo({ top: 0, left: 0, behavior: "instant" })}>
           <span className="landing__brand-mark" aria-hidden="true">⌃</span>
           <span><strong>image</strong> to <strong>LEGO</strong></span>
         </Link>

@@ -112,7 +112,7 @@ export function InspirationCarousel() {
         onPointerCancel={cancelDrag}
         onLostPointerCapture={cancelDrag}
       >
-        <div className="inspiration__track" style={{ transform: `translateX(calc(-${position * 100}% + ${dragOffset}px))`, transitionDuration: `${SLIDE_TRANSITION_MS}ms`, ...(isResetting ? { transition: "none" } : {}) }} aria-live="off">
+        <div className="inspiration__track" style={{ transform: `translateX(calc(-${position * 100}% + ${dragOffset}px))`, transitionDuration: `${SLIDE_TRANSITION_MS}ms`, transitionProperty: isResetting || isDragging || reducedMotion ? "none" : "transform" }} aria-live="off">
           {LOOP_SLIDES.map((slide, index) => (
             <div className="inspiration__slide" key={`${slide.file}-${index}`} aria-hidden={index !== position} role="group" aria-roledescription="slide" aria-label={`${(index - 1 + SLIDES.length) % SLIDES.length + 1} of ${SLIDES.length}`}>
               <img src={`/inspiration/${slide.file}`} alt={slide.alt} loading="lazy" decoding="async" draggable={false} />
