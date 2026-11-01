@@ -36,6 +36,7 @@ from app.providers.reconstruction import (
 )
 from app.repositories.reconstruction import ReconstructionRepository
 from app.repositories.sqlalchemy_reconstruction import SqlAlchemyReconstructionRepository
+from app.repositories.worker_attempt import AttemptAcquisitionStatus
 from app.workers.message_lock import LeaveMessageUnsettled, process_received_message
 
 logger = logging.getLogger(__name__)
@@ -432,6 +433,7 @@ def _invalid_model() -> ApplicationError:
 
 
 _TERMINAL_JOB_STATUSES = frozenset({JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED})
+SUPPORTED_GENERATION_MESSAGE_VERSION = 1
 
 
 async def run_worker(settings: Settings) -> None:
@@ -486,12 +488,19 @@ async def run_worker(settings: Settings) -> None:
                     job_id, owner_id = parsed
                     async with session_factory() as session:
                         repository = SqlAlchemyReconstructionRepository(session)
-                        attempt_id = await repository.acquire_attempt(
+                        acquisition = await repository.acquire_attempt(
                             job_id=job_id,
                             owner_id=owner_id,
                             lease_seconds=settings.worker_job_lease_seconds,
                         )
-                        if attempt_id is None:
+                        if acquisition.status is AttemptAcquisitionStatus.RELEASE_BLOCKED:
+                            logger.info(
+                                "Generation worker is draining; leaving job %s for a gate-aware "
+                                "worker.",
+                                job_id,
+                            )
+                            return
+                        if acquisition.status is AttemptAcquisitionStatus.LEASE_HELD:
                             recovery_time = await repository.recovery_time(
                                 job_id=job_id,
                                 owner_id=owner_id,
@@ -538,7 +547,19 @@ async def run_worker(settings: Settings) -> None:
                                 job_description=f"generation duplicate job {job_id}",
                             )
                             continue
-                        owned_attempt_id: UUID = attempt_id
+                        if acquisition.status is AttemptAcquisitionStatus.TERMINAL_OR_DUPLICATE:
+                            await process_received_message(
+                                receiver=receiver,
+                                message=message,
+                                max_processing_duration=timedelta(seconds=1),
+                                process=_complete_duplicate_delivery,
+                                logger=logger,
+                                job_description=f"generation duplicate job {job_id}",
+                            )
+                            continue
+                        if acquisition.attempt_id is None:
+                            raise RuntimeError("Worker attempt acquisition returned no attempt ID.")
+                        owned_attempt_id = acquisition.attempt_id
                         processor = GenerationJobProcessor(
                             repository=repository,
                             blob_storage=blob_storage,
@@ -619,6 +640,9 @@ def _parse_message(body: Iterable[bytes]) -> tuple[UUID, UUID] | None:
         raw = b"".join(body)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
+            return None
+        version = payload.get("messageVersion", 1)
+        if version != SUPPORTED_GENERATION_MESSAGE_VERSION:
             return None
         return UUID(str(payload["jobId"])), UUID(str(payload["ownerId"]))
     except (KeyError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):

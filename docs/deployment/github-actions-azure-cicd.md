@@ -62,9 +62,16 @@ ACI has no revision mechanism. Updating a running ACI group restarts its contain
 
 Only after that reviewed evidence exists, set GitHub repository variable `ACI_WORKER_RELEASES_ENABLED` to `true`. Until then, the deployment fails before publishing images or changing compute. This is deliberate: it prevents the workflow from replacing adopted worker configuration whose command or secure settings have not been verified.
 
-Apply the committed `20261101000000_worker_release_gate.sql` migration separately, then create a dedicated login with only membership in `github_release_gate` and store its connection string as the GitHub Actions secret `DEPLOYMENT_DATABASE_URL`. This login can call only the worker-lease aggregate; it cannot read job rows. Do not use the application database secret for this purpose.
+Apply the committed `20261101000000_worker_release_gate.sql` and
+`20261102000000_durable_worker_release_coordination.sql` migrations separately. The latter
+adds the gate-aware protocol but does not enable it in GitHub Actions. A future controller login
+must have only membership in `github_release_coordinator`; do not use the application database
+secret for release coordination.
 
-When either worker is running, a release intentionally fails after its read-only preflight. Do not stop a worker based on that snapshot: the current protocol has no durable release lock that closes the interval between a queue receive and its database lease claim. This PR can recreate a worker only when it is already stopped under a separately approved maintenance procedure that establishes no active job. Designing that transition safely is an unresolved architecture change, not an operator shortcut.
+Automatic release remains disabled. The durable protocol now closes the receive-to-lease-claim
+race for gate-aware workers, but old worker images do not observe it. Do not use a controller
+until an operator has proved every active worker image contains this protocol and completed the
+conversion-only smoke test. A stopped ACI instance alone is not proof that provider work is safe.
 
 ## Intentional compute downtime
 
@@ -74,9 +81,16 @@ After a reviewed Terraform restoration and resource inventory, set `AZURE_COMPUT
 
 ## API, frontend, and worker release boundary
 
-The current backend image contains both the API and workers, but the codebase has no version-negotiation or durable worker-draining protocol. A new API can create durable work that an older worker image may not understand, and a running worker can receive a queue message after a preflight snapshot but before claiming its database lease. Therefore this workflow does **not** automatically deploy API/frontend changes separately from workers yet.
+The current backend image contains both the API and workers. Queue version `1` is accepted by
+both old-compatible and current gate-aware workers; the current workers also accept the legacy
+unversioned message. Future incompatible queue or artifact changes require an explicit version
+and a coordinated release. The workflow still does **not** automatically deploy API/frontend
+changes separately from workers.
 
-The safe current policy is to validate every merge, publish and deploy the complete approved release only when both workers are already stopped and the worker gate is satisfied. A truly automatic split release, or a safe transition from running workers to stopped workers, would require an approved architecture change: a durable release lock checked atomically by worker lease acquisition, worker/API compatibility versioning for durable jobs and artifacts, and regression tests for mixed-version operation. Those controls are not added by this PR.
+The safe current policy is to validate every merge and keep Azure deployment disabled. Eventual
+activation requires the durable coordinator described in ADR-008, verified gate-aware workers,
+and a workflow implementation that uses its fenced controller transitions. Do not replace this
+with a queue-depth or ACI-state check.
 
 ## Automated release behavior
 

@@ -55,7 +55,7 @@ if (-not $deployJobMatch.Success) {
 }
 
 $deployJob = $deployJobMatch.Groups["body"].Value
-if ($deployJob -notmatch '(?m)^    needs: \[changes, backend, backend-image, frontend, terraform, release-safety\]$') {
+if ($deployJob -notmatch '(?m)^    needs: \[changes, backend, backend-image, frontend, terraform, release-safety\]\r?$') {
     throw "Deploy must wait for the complete validation job set."
 }
 
@@ -215,6 +215,14 @@ foreach ($fragment in @("SECURITY DEFINER", "REVOKE ALL", "github_release_gate")
 
 if (-not $migration.Contains("SET search_path = pg_catalog")) {
     throw "Worker release gate must use a fixed pg_catalog search path."
+}
+
+$coordinationMigrationPath = Join-Path $PSScriptRoot "..\supabase\migrations\20261102000000_durable_worker_release_coordination.sql"
+$coordinationMigration = Get-Content -LiteralPath $coordinationMigrationPath -Raw
+foreach ($fragment in @("worker_release_state", "worker_release_try_acquire_attempt", "release_blocked", "worker_release_recover")) {
+    if (-not $coordinationMigration.Contains($fragment)) {
+        throw "Durable worker release coordination migration is missing: $fragment"
+    }
 }
 
 $githubActionsPath = Join-Path $PSScriptRoot "..\infra\terraform\shared\github_actions.tf"

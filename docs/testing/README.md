@@ -14,3 +14,7 @@ rolling quota behavior, server-generated blob names, constrained SAS inputs, pro
 idempotent completion, and the browser's initiate -> direct PUT -> complete ordering without any
 external network calls.
 
+## Worker-release PostgreSQL tests
+
+`backend/tests/test_worker_release_postgres.py` runs only when `TEST_DATABASE_URL` names a disposable PostgreSQL database. It builds the minimal `projects` and `jobs` tables required by the worker-lease migration, then applies the committed worker-lease, release-gate, and durable-coordination migrations unchanged. It intentionally does not reproduce Supabase Auth tables or unrelated RLS policies; the tests verify the release functions' transaction ordering, fencing, and grants with independent database connections. GitHub Actions supplies an isolated PostgreSQL service container and never uses Supabase or Azure credentials.
+
