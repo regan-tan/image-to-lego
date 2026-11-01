@@ -36,3 +36,17 @@ Thumbs.db
 # Local artifacts
 artifacts/
 *.log
+
+# Terraform working files and local configuration
+infra/terraform/**/.terraform/
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.*
+infra/terraform/**/*.tfplan
+infra/terraform/backend*.hcl
+!infra/terraform/**/*.example
+infra/terraform/**/dev.tfvars
+
+# Frontend design mockups
+frontend-design-reference
+
+backend/.pytest_tmp/

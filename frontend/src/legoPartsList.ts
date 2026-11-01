@@ -1,6 +1,8 @@
 import { heightInPlates, type LegoModel } from "./schemas/legoModels";
 import { legoColorLabel } from "./legoColors";
 
+const PURCHASE_READY_ALGORITHM_VERSION = "surface-grid-v4";
+
 export interface LegoPartGroup {
   brickType: string;
   partId?: string;
@@ -42,7 +44,13 @@ export interface PurchaseReadyPart {
 
 export interface UnresolvedPurchasePart {
   part: LegoPartGroup;
-  reason: "missing_part_id" | "missing_color_id" | "unverified_part_color" | "missing_verification_version";
+  reason:
+    | "unsupported_algorithm_version"
+    | "missing_part_id"
+    | "missing_color_id"
+    | "unverified_part_color"
+    | "missing_verification_metadata"
+    | "missing_verification_version";
 }
 
 export interface PurchaseReadyPartsList {
@@ -113,6 +121,7 @@ export function serializePartsListCsv(parts: LegoPartGroup[]): string {
 
 export function createPurchaseReadyPartsList(
   parts: LegoPartGroup[],
+  algorithmVersion: string | undefined,
   partColorVerificationVersion: string | undefined,
 ): PurchaseReadyPartsList {
   const purchaseReadyParts: PurchaseReadyPart[] = [];
@@ -122,7 +131,7 @@ export function createPurchaseReadyPartsList(
     const partId = part.partId;
     const colorId = part.colorId;
     const verificationVersion = partColorVerificationVersion;
-    const reason = purchaseReadinessIssue(part, partColorVerificationVersion);
+    const reason = purchaseReadinessIssue(part, algorithmVersion, partColorVerificationVersion);
     if (reason || !partId || !colorId || !verificationVersion) {
       unresolvedParts.push({ part, reason: reason ?? "missing_verification_version" });
       continue;
@@ -181,8 +190,25 @@ export function serializePurchaseReadyPartsCsv(parts: PurchaseReadyPart[]): stri
 
 export function partColorVerificationLabel(part: LegoPartGroup): string {
   if (part.partColorVerified === true) return "Verified";
-  if (part.partColorVerified === false) return "Not verified";
-  return "Not recorded";
+  if (part.partColorVerified === false) return "Unsupported";
+  return "Unresolved";
+}
+
+export function purchaseReadinessReasonLabel(reason: UnresolvedPurchasePart["reason"]): string {
+  switch (reason) {
+    case "unsupported_algorithm_version":
+      return `Purchase-ready export requires a ${PURCHASE_READY_ALGORITHM_VERSION} model artifact.`;
+    case "missing_part_id":
+      return "No catalog part ID was recorded.";
+    case "missing_color_id":
+      return "No catalog color ID was recorded.";
+    case "unverified_part_color":
+      return "The generated geometry or part/color pair is not catalog verified.";
+    case "missing_verification_metadata":
+      return "This legacy model has no catalog verification metadata.";
+    case "missing_verification_version":
+      return "The catalog verification version is not recorded.";
+  }
 }
 
 function escapeCsvValue(value: string): string {
@@ -191,11 +217,14 @@ function escapeCsvValue(value: string): string {
 
 function purchaseReadinessIssue(
   part: LegoPartGroup,
+  algorithmVersion: string | undefined,
   partColorVerificationVersion: string | undefined,
 ): UnresolvedPurchasePart["reason"] | null {
+  if (algorithmVersion !== PURCHASE_READY_ALGORITHM_VERSION) return "unsupported_algorithm_version";
   if (!part.partId) return "missing_part_id";
   if (!part.colorId) return "missing_color_id";
-  if (part.partColorVerified !== true || part.quantity <= 0) return "unverified_part_color";
+  if (part.partColorVerified === false || part.quantity <= 0) return "unverified_part_color";
+  if (part.partColorVerified !== true) return "missing_verification_metadata";
   if (!partColorVerificationVersion) return "missing_verification_version";
   return null;
 }

@@ -3,8 +3,10 @@ import {
   createPurchaseReadyPartsList,
   type LegoPartsListResult,
   type LegoPartGroup,
+  type UnresolvedPurchasePart,
   partColorVerificationLabel,
   partLabel,
+  purchaseReadinessReasonLabel,
   serializePartsListCsv,
   serializePurchaseReadyPartsCsv,
 } from "../legoPartsList";
@@ -38,9 +40,11 @@ export function PartsListSummary({ partsList, onViewFullPartsList }: PartsListSu
 
 export function PartsListWorkspace({
   partsList,
+  algorithmVersion,
   partColorVerificationVersion,
 }: {
   partsList: LegoPartsListResult;
+  algorithmVersion?: string;
   partColorVerificationVersion?: string;
 }) {
   if (!partsList.valid) {
@@ -58,10 +62,20 @@ export function PartsListWorkspace({
       </div>
       <PurchaseReadyPartsExport
         parts={partsList.parts}
+        algorithmVersion={algorithmVersion}
         partColorVerificationVersion={partColorVerificationVersion}
       />
-      <div className="parts-list__table-wrap">
+      <div className="parts-list__table-wrap" role="region" aria-label="Parts inventory" tabIndex={0}>
         <table className="parts-list__table">
+          <colgroup>
+            <col className="parts-list__preview-column" />
+            <col className="parts-list__part-id-column" />
+            <col className="parts-list__part-name-column" />
+            <col className="parts-list__color-column" />
+            <col className="parts-list__color-id-column" />
+            <col className="parts-list__verification-column" />
+            <col className="parts-list__quantity-column" />
+          </colgroup>
           <thead><tr><th scope="col">Preview</th><th scope="col">Part ID</th><th scope="col">Part name</th><th scope="col">Color</th><th scope="col">Color ID</th><th scope="col">Verification</th><th scope="col">Quantity</th></tr></thead>
           <tbody>{partsList.parts.map((part) => <PartsListRow key={partKey(part)} part={part} />)}</tbody>
         </table>
@@ -72,12 +86,25 @@ export function PartsListWorkspace({
 
 function PurchaseReadyPartsExport({
   parts,
+  algorithmVersion,
   partColorVerificationVersion,
 }: {
   parts: LegoPartGroup[];
+  algorithmVersion?: string;
   partColorVerificationVersion?: string;
 }) {
-  const purchaseReady = createPurchaseReadyPartsList(parts, partColorVerificationVersion);
+  const purchaseReady = createPurchaseReadyPartsList(
+    parts,
+    algorithmVersion,
+    partColorVerificationVersion,
+  );
+  const unresolvedByReason = new Map<UnresolvedPurchasePart["reason"], number>();
+  for (const unresolvedPart of purchaseReady.unresolvedParts) {
+    unresolvedByReason.set(
+      unresolvedPart.reason,
+      (unresolvedByReason.get(unresolvedPart.reason) ?? 0) + 1,
+    );
+  }
 
   function handleDownload() {
     const csv = serializePurchaseReadyPartsCsv(purchaseReady.parts);
@@ -98,11 +125,21 @@ function PurchaseReadyPartsExport({
           availability, stock, pricing, or sellers.
         </p>
         {purchaseReady.unresolvedParts.length > 0 ? (
-          <p className="form-error" role="alert">
-            {purchaseReady.unresolvedParts.length} part/color row
-            {purchaseReady.unresolvedParts.length === 1 ? " is" : "s are"} excluded because it is
-            not purchase-ready.
-          </p>
+          <div className="form-error" role="alert">
+            <p>
+              {purchaseReady.unresolvedParts.length} part/color row
+              {purchaseReady.unresolvedParts.length === 1 ? " is" : "s are"} excluded from the
+              purchase-ready CSV.
+            </p>
+            <ul>
+              {[...unresolvedByReason.entries()].map(([reason, count]) => (
+                <li key={reason}>
+                  {count}: {purchaseReadinessReasonLabel(reason)}
+                </li>
+              ))}
+            </ul>
+            <p>The complete parts-list CSV remains available for review.</p>
+          </div>
         ) : null}
       </div>
       <button
@@ -134,7 +171,7 @@ function PartsListDownloadButton({ parts }: { parts: LegoPartGroup[] }) {
 function PartsListRow({ part }: { part: LegoPartGroup }) {
   return (
     <tr>
-      <td data-label="Preview"><LegoPartThumbnail part={part} /></td>
+      <td data-label="Preview"><LegoPartThumbnail part={part} variant="illustration" /></td>
       <td data-label="Part ID">{part.partId ?? "Legacy part"}</td>
       <td data-label="Part name">{partLabel(part)}</td>
       <td data-label="Color">

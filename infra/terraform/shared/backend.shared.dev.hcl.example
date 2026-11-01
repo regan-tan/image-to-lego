@@ -1,0 +1,7 @@
+# Keep the existing shared-state key unchanged.
+resource_group_name  = "rg-image-to-lego-dev"
+storage_account_name = "storageimgtolego"
+container_name       = "tfstate"
+key                  = "<existing-shared-state-key>"
+use_azuread_auth     = true
+use_cli              = true

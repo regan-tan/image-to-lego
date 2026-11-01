@@ -112,6 +112,11 @@ class FakeConversionRepository:
         self.created_outputs.append(kwargs)
         return uuid4()
 
+    async def finalize_success(self, **kwargs: object) -> bool:
+        self.created_outputs.append(kwargs)
+        self.succeeded += 1
+        return True
+
     async def mark_succeeded(self, **_: object) -> None:
         self.succeeded += 1
 
@@ -254,6 +259,32 @@ async def test_conversion_create_and_exact_replay_publish_once(
 
 
 @pytest.mark.asyncio
+async def test_conversion_submission_pause_rejects_before_creating_a_job() -> None:
+    repository = FakeConversionRepository()
+    queue = FakeConversionQueue()
+    original_initiation = repository.initiation
+    app = create_app(Settings(job_submissions_enabled=False))
+
+    async def current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(str(OWNER_ID), None, None, None)
+
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_conversion_repository] = lambda: repository
+    app.dependency_overrides[get_conversion_queue] = lambda: queue
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Job submissions are temporarily paused."}
+    assert repository.initiation is original_initiation
+    assert queue.enqueued == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("algorithm_version", "expected_version"),
     [
@@ -341,8 +372,9 @@ async def test_worker_stores_one_canonical_lego_model() -> None:
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
-    assert repository.claims == 1
+    assert repository.claims == 0
     assert repository.succeeded == 1
     assert len(repository.created_outputs) == 1
     expected_blob_suffix = f"/conversions/{repository.worker_job.conversion.job.id}/lego-model.json"
@@ -383,10 +415,23 @@ async def test_worker_uses_persisted_algorithm_version(algorithm_version: str) -
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
 
     output = json.loads(blob.uploads[0][1])
     assert output["metadata"]["algorithmVersion"] == algorithm_version
+
+
+def test_legacy_grid_conversion_is_explicitly_not_purchase_ready() -> None:
+    model = convert_glb(
+        box_glb(),
+        ConversionSettings(target_parts=24, up_axis=Axis.Y, algorithm_version="surface-grid-v3"),
+    )
+
+    output = json.loads(serialize_lego_model(model))
+
+    assert "partColorVerificationVersion" not in output["metadata"]
+    assert all(placement["partColorVerified"] is False for placement in output["placements"])
 
 
 def test_lego_model_json_is_stable() -> None:
@@ -451,6 +496,7 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
         "metadata",
         "placements",
         "instructionSteps",
+        "instructionGuide",
     }
     assert set(output["placements"][0]) == {
         "brickType",
@@ -473,6 +519,29 @@ def test_serialized_model_keeps_its_existing_schema_while_ordering_supports_firs
     assert [step["stepNumber"] for step in output["instructionSteps"]] == list(
         range(1, len(output["instructionSteps"]) + 1)
     )
+    assert output["instructionGuide"]["version"] == "build-guide-v2"
+
+
+def test_v2_instruction_guide_covers_every_placement_and_has_exact_step_quantities() -> None:
+    model = convert_glb(box_glb(), ConversionSettings(target_parts=24, up_axis=Axis.Y))
+
+    output = json.loads(serialize_lego_model(model))
+
+    guide_steps = output["instructionGuide"]["steps"]
+    covered = [index for step in guide_steps for index in step["placementIndices"]]
+    assert sorted(covered) == list(range(len(output["placements"])))
+    assert len(covered) == len(set(covered))
+    for step in guide_steps:
+        assert sum(part["quantity"] for part in step["parts"]) == len(step["placementIndices"])
+        assert [placement["placementIndex"] for placement in step["placements"]] == step[
+            "placementIndices"
+        ]
+        for placement in step["placements"]:
+            canonical = output["placements"][placement["placementIndex"]]
+            assert placement["position"] == canonical["position"]
+            assert placement["orientationDegrees"] == canonical["orientationDegrees"]
+            assert placement["partId"] == canonical["partId"]
+            assert placement["colorId"] == canonical["colorId"]
 
 
 @pytest.mark.asyncio
@@ -489,6 +558,7 @@ async def test_worker_fails_when_source_sha256_does_not_match() -> None:
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.failures[0][0] == "conversion_source_integrity_failed"
     assert not blob.uploads
@@ -504,6 +574,7 @@ async def test_running_job_without_output_resumes_without_claiming_again() -> No
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.claims == 0
     assert repository.succeeded == 1
@@ -523,6 +594,7 @@ async def test_running_job_with_existing_output_is_marked_succeeded_without_reco
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.claims == 0
     assert repository.succeeded == 1
@@ -541,6 +613,7 @@ async def test_terminal_duplicate_delivery_is_a_no_op(status: JobStatus) -> None
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.claims == 0
     assert repository.succeeded == 0
@@ -556,14 +629,22 @@ async def test_redelivered_running_job_does_not_create_a_second_output() -> None
     repository.worker_job = worker_job(content, status=JobStatus.RUNNING)
     blob = FakeBlobStorage(content)
     processor = ConversionJobProcessor(repository=repository, blob_storage=blob)
-    await processor.process(job_id=repository.worker_job.conversion.job.id, owner_id=OWNER_ID)
+    await processor.process(
+        job_id=repository.worker_job.conversion.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
 
     completed_job = repository.worker_job
     repository.worker_job = replace(
         completed_job,
         conversion=replace(completed_job.conversion, output_artifact_id=uuid4()),
     )
-    await processor.process(job_id=repository.worker_job.conversion.job.id, owner_id=OWNER_ID)
+    await processor.process(
+        job_id=repository.worker_job.conversion.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
 
     assert len(repository.created_outputs) == 1
     assert repository.succeeded == 2
@@ -580,6 +661,7 @@ async def test_worker_reuses_matching_canonical_blob_and_rejects_collision() -> 
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.succeeded == 1
     assert len(repository.created_outputs) == 1
@@ -596,6 +678,7 @@ async def test_worker_reuses_matching_canonical_blob_and_rejects_collision() -> 
     await collision_processor.process(
         job_id=collision_repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert collision_repository.failures[0][0] == "canonical_lego_model_conflict"
     assert not collision_repository.created_outputs
@@ -610,6 +693,7 @@ async def test_invalid_glb_becomes_a_safe_failed_job() -> None:
     await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
         job_id=repository.worker_job.conversion.job.id,
         owner_id=OWNER_ID,
+        attempt_id=uuid4(),
     )
     assert repository.failures[0][0] == "conversion_failed"
     assert not blob.uploads

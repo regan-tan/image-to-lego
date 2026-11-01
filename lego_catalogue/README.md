@@ -36,6 +36,12 @@ catalogue fields, while BrickLink colour IDs are explicit fields in
 JSON carries these mappings when known so the browser can produce a verified-manufactured sourcing
 CSV. The CSV is not a BrickLink wanted-list import and does not make any availability claim.
 
+Only `surface-grid-v4` artifacts carry `partColorVerificationVersion` and are eligible for the
+purchase-ready CSV. The opt-in `surface-grid-v3` converter retains its historical one-plate brick
+grid for compatibility; those placements are deliberately marked unsupported because that geometry
+does not describe the manufactured brick identified by its part ID. Older artifacts that predate
+catalog fields remain loadable and are shown as unresolved rather than being silently reclassified.
+
 `ldrawId` is the explicit visual-source identity, not an alias for `partId` or `bricklinkId`.
 For example, catalogue identities `41769` and `41770` render from LDraw's non-chamfer source
 variants `41769a` and `41770a` respectively; the LDraw `b` files are separate chamfered visual

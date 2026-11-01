@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
@@ -42,27 +43,67 @@ class ConversionRepository(Protocol):
         owner_id: UUID,
     ) -> WorkerConversionJob | None: ...
 
-    async def claim(self, *, job_id: UUID, owner_id: UUID) -> bool: ...
+    async def acquire_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        lease_seconds: int,
+    ) -> UUID | None: ...
+
+    async def recovery_time(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+    ) -> datetime | None:
+        """Return a queued/running job's active lease expiry or the current database time."""
+        ...
+
+    async def renew_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+        lease_seconds: int,
+    ) -> bool: ...
+
+    async def release_attempt(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+    ) -> None: ...
 
     async def mark_failed(
         self,
         *,
         job_id: UUID,
         owner_id: UUID,
+        attempt_id: UUID,
         error_code: str,
         error_message: str,
-    ) -> None: ...
+    ) -> bool: ...
 
-    async def create_output_artifact(
+    async def finalize_success(
         self,
         *,
         job_id: UUID,
         owner_id: UUID,
+        attempt_id: UUID,
         artifact_id: UUID,
         blob_name: str,
         mime_type: str,
         size_bytes: int,
         sha256: str,
-    ) -> UUID: ...
+    ) -> bool: ...
 
-    async def mark_succeeded(self, *, job_id: UUID, owner_id: UUID) -> None: ...
+    async def mark_succeeded(
+        self,
+        *,
+        job_id: UUID,
+        owner_id: UUID,
+        attempt_id: UUID,
+    ) -> bool: ...

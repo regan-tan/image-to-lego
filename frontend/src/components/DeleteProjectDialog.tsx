@@ -70,7 +70,7 @@ function DeleteProjectForm({ accessToken, userId, projectId, onCancel }: DeleteP
       }
     }
     // Leave the page before dropping its cached data, so it never flashes "Project not found".
-    navigate("/");
+    navigate("/workspace");
     queryClient.removeQueries({ queryKey: projectQueryKey(userId, projectId) });
     await queryClient.invalidateQueries({ queryKey: projectsQueryKey(userId) });
   }

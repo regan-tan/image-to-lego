@@ -62,6 +62,33 @@ describe("part thumbnail list integration", () => {
     expect(within(rows[2]!).getByTestId("lego-part-thumbnail")).toHaveAttribute("data-part-id", "3001");
   });
 
+  it("keeps all part types in the independently scrollable inventory table", () => {
+    const placements = Array.from({ length: 19 }, (_, index) => placement(`part-${index + 1}`, "red", index));
+    const partsList = createLegoPartsList({ ...model(), partCount: placements.length, placements });
+    render(<PartsListWorkspace partsList={partsList} />);
+
+    const inventory = screen.getAllByRole("region", { name: "Parts inventory" }).at(-1);
+    expect(inventory).toBeDefined();
+    const rows = within(inventory!).getAllByRole("row");
+    expect(rows).toHaveLength(20);
+    expect(within(rows.at(-1)!).getByText("part-19")).toBeInTheDocument();
+  });
+
+  it("keeps complete inventory available while explaining that a legacy artifact cannot be purchase-ready", () => {
+    const partsList = createLegoPartsList(model());
+    const { container } = render(
+      <PartsListWorkspace
+        partsList={partsList}
+        algorithmVersion="surface-grid-v3"
+        partColorVerificationVersion="catalogue-v1"
+      />,
+    );
+
+    expect(within(container).getByText(/Purchase-ready export requires a surface-grid-v4 model artifact/)).toBeInTheDocument();
+    expect(within(container).getByRole("button", { name: "Download purchase-ready CSV" })).toBeDisabled();
+    expect(within(container).getByRole("button", { name: "Download parts list (.csv)" })).toBeEnabled();
+  });
+
   it("adds thumbnails only for the selected step's grouped parts", () => {
     const buildModel = model();
     const steps = deriveLegoBuildSteps(buildModel);

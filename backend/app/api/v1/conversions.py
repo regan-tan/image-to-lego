@@ -61,11 +61,17 @@ IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 @router.post("/conversions", response_model=ConversionResponse)
 async def create_conversion(
     request: CreateConversionRequest,
+    http_request: Request,
     owner_id: CurrentOwnerId,
     idempotency_key: IdempotencyKey,
     repository: ConversionRepositoryDependency,
     conversion_queue: ConversionQueueDependency,
 ) -> JSONResponse:
+    if not http_request.app.state.settings.job_submissions_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job submissions are temporarily paused.",
+        )
     if idempotency_key is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

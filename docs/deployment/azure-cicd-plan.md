@@ -1,15 +1,32 @@
 # Azure deployment and CI/CD plan
 
+> Current implementation note (2026-10-30): this document describes the intended Container Apps
+> release topology. The successfully tested development deployment instead uses a Linux App Service
+> API and two stopped Azure Container Instance workers, with the frontend remaining a Container App.
+> Its safe Terraform reconciliation and the distinction between tested deployment and untested
+> recreation are recorded in [the Terraform lifecycle runbook](azure-terraform-lifecycle.md).
+> This note does not amend an accepted architecture decision; that requires team review.
+
 ## Status and scope
 
-This document describes the proposed deployment architecture for the capstone. The application is
-not currently deployed by this repository, and no Azure infrastructure is provisioned here yet.
+This document describes the proposed deployment architecture for the capstone. The application is not
+deployed *by this repository*. A successfully tested development deployment exists, but its API is a
+Linux App Service and its workers are Azure Container Instances, as noted above. The Terraform
+refactor under `infra/terraform/` records shared infrastructure separately from that compute topology;
+its state handoff/import and recreation have not been executed or tested. It does not provision or
+deploy application resources automatically.
+
+Current Azure for Students policy verification found that the subscription permits Japan East, Malaysia
+West, Indonesia Central, Central India, and Korea Central, while Static Web Apps' supported
+control-plane regions have no overlap. The frontend is therefore a fourth Container App rather than a
+Static Web App. ADR-007 records this subscription-specific replacement.
 
 The first deployment has one low-cost development environment only. There is no separate staging or
-production environment. Infrastructure-as-code is intentionally deferred; the initial Azure
-resources may be created manually, while application releases will be automated through GitHub
-Actions. The `infra/` directory remains reserved for reviewed Bicep or Terraform if repeatable
-infrastructure provisioning becomes necessary later.
+production environment. The repository uses a small Terraform configuration under
+`infra/terraform/`, but no import, state handoff, or application recreation has been performed by
+this change. The next reviewed provisioning phase requires immutable backend/frontend images and a
+read-only inventory of the live settings before it can be considered. Application releases will later
+be automated through GitHub Actions.
 
 The deployment must preserve the existing modular-monolith design. One backend codebase and one
 Docker image are deployed as three independently configured Azure Container Apps:
@@ -22,12 +39,15 @@ These are three deployable processes, not three separate codebases. Separating t
 allows HTTP traffic, external-provider work, and CPU-intensive conversion work to scale
 independently without introducing Kubernetes or additional application layers.
 
+The React/Vite build is a fourth Container App. A small Nginx image serves it with an SPA fallback and
+proxies `/api` to the API app by its environment-local Container Apps name.
+
 ## Target architecture
 
 ```mermaid
 flowchart LR
-    User[Browser] -->|HTTPS| Web[Azure Static Web Apps<br/>React/Vite]
-    User -->|Bearer JWT + HTTPS| API[Container App<br/>FastAPI API]
+    User[Browser] -->|HTTPS| Web[Container App: Nginx<br/>React/Vite]
+    Web -->|same-origin /api| API[Container App<br/>FastAPI API]
     User -->|short-lived SAS + HTTPS| Blob[(Azure Blob Storage<br/>private artifacts)]
     User -->|sign in / refresh| Auth[Supabase Auth]
 
@@ -50,6 +70,7 @@ flowchart LR
     ACR[Azure Container Registry] -. same immutable image .-> API
     ACR -. same immutable image .-> Generation
     ACR -. same immutable image .-> Conversion
+    ACR -. frontend image .-> Web
     KeyVault[Azure Key Vault] -. runtime secrets .-> API
     KeyVault -. runtime secrets .-> Generation
     KeyVault -. runtime secrets .-> Conversion
@@ -68,13 +89,13 @@ cross-region traffic.
 | Resource | Proposed tier or mode | Purpose and cost decision |
 | --- | --- | --- |
 | Azure Container Apps environment | Consumption workload profile | Managed HTTPS, revisions, horizontal scaling, and scale-to-zero without VM or Kubernetes administration. |
-| API Container App | 0.5 vCPU, 1 GiB; min 0, max 3 | Public REST API. Start small and raise limits only after measurements show a need. |
+| Frontend Container App | 0.25 vCPU, 0.5 GiB; min 0, max 1 | Nginx serves the SPA and proxies `/api`; its HTTPS ingress supplies the public site. |
+| API Container App | 0.25 vCPU, 0.5 GiB; min 0, max 2 | Public REST API. Start small and raise limits only after measurements show a need. |
 | Generation worker Container App | 0.5 vCPU, 1 GiB; min 0, max 2 | I/O-oriented fal.ai submission and status processing, scaled from generation queue depth. |
 | Conversion worker Container App | 1 vCPU, 2 GiB; min 0, max 2 | CPU-intensive deterministic conversion, scaled separately from the API and generation worker. |
 | Azure Container Registry | Basic | Private storage for the single backend image; suitable for one low-volume development environment. |
 | Azure Service Bus | Basic, two queues | Durable point-to-point generation and conversion jobs. Topics and enterprise messaging features are not required. |
 | Azure Storage account | General-purpose v2, Hot, ZRS | Private image, GLB, and LEGO JSON artifacts. ZRS provides zone-level storage resilience where supported. |
-| Azure Static Web Apps | Free | Builds and distributes the React/Vite static frontend with managed HTTPS. |
 | Azure Key Vault | Standard | Stores privileged runtime secrets outside source control and image layers. |
 | Azure Monitor and Log Analytics | Consumption-based, bounded retention | Centralized Container Apps logs, platform metrics, dashboards, and alerts. |
 | Supabase | Existing Free project | Managed PostgreSQL and Auth; its Free-plan availability and backup limitations are explicitly accepted for the capstone. |
@@ -85,28 +106,30 @@ paid fal.ai work.
 
 ## Container Apps configuration
 
-All three Container Apps pull the same git-SHA-tagged image from ACR. They differ only in startup
-command, ingress, environment variables, secrets, resources, and scaling rules.
+The API and workers pull the same git-SHA-tagged backend image from ACR. The frontend pulls its own
+git-SHA-tagged Nginx image. They differ only in startup command, ingress, environment variables,
+secrets, resources, and scaling rules.
 
 | App | Container command | Ingress | Scaling signal |
 | --- | --- | --- | --- |
+| Frontend | Nginx, port 8080 | External HTTPS | HTTP traffic, min 0 and max 1 |
 | API | Docker image default: `uvicorn app.main:app --host 0.0.0.0 --port 8000` | External HTTPS | HTTP concurrency, min 0 and max 3 |
 | Generation worker | `python -m app.workers.generation_worker` | Disabled | Generation Service Bus queue depth, min 0 and max 2 |
 | Conversion worker | `python -m app.workers.conversion_worker` | Disabled | Conversion Service Bus queue depth, min 0 and max 2 |
 
-The API requires public ingress because the user's browser, hosted by Static Web Apps, calls it
-directly. Container Apps supplies the HTTPS endpoint, certificate termination, revision routing, and
-load distribution across API replicas; a separate Azure Load Balancer or Application Gateway is not
-required for this environment. The workers receive work from Service Bus and expose no public
-endpoint.
+The frontend requires public ingress. Nginx proxies browser API calls over same-environment service
+discovery, so the browser does not need cross-origin access to the API. Container Apps supplies HTTPS,
+certificate termination, revision routing, and load distribution; a separate Azure Load Balancer or
+Application Gateway is not required for this environment. The workers receive work from Service Bus
+and expose no public endpoint.
 
 The API uses `/health` for its startup and liveness checks. Cold starts are accepted because all apps
 can scale to zero. For a scheduled demonstration, the team should exercise the end-to-end flow in
 advance; temporarily setting the API minimum to one is an operational option only if cold-start delay
 is unacceptable and the added cost is approved.
 
-Only the exact deployed Static Web Apps origin is allowed by the API's CORS configuration. Blob CORS
-allows the exact frontend origin, `GET`, `PUT`, and `OPTIONS`, and only the headers already required by
+The frontend uses same-origin `/api`, so the API has no browser CORS origins configured. Blob CORS
+must allow the exact frontend origin, `GET`, `PUT`, and `OPTIONS`, and only the headers already required by
 the direct-upload flow. The artifact container remains private; browser access uses short-lived,
 single-blob SAS URLs issued by the authenticated API.
 
@@ -122,15 +145,41 @@ Initial queue policy:
 - 24-hour default message time-to-live;
 - dead-letter expired messages rather than silently dropping them;
 - maximum delivery count of 5;
-- the maximum supported message lock duration, with actual conversion time validated before launch;
+- a `SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS` value of 900 seconds by default (allowed range
+  60--3600 seconds), with actual conversion time validated before launch;
+- a database-backed worker-attempt lease lasting 120 seconds by default, renewed every 30
+  seconds (both values are bounded configuration); and
 - alerts for any dead-lettered message and for a sustained active-message backlog; and
 - identifier-only messages; images, GLBs, and LEGO JSON remain in Blob Storage.
 
-Service Bus uses at-least-once delivery, so duplicate messages are expected. The existing idempotent
-job and artifact rules remain the correctness boundary. Transient failures are abandoned for bounded
-redelivery; malformed messages and exhausted deliveries go to the dead-letter queue for inspection.
+Service Bus uses at-least-once delivery, so duplicate messages are expected. Each delivery first
+atomically claims a database attempt lease with a unique token. All worker-owned state changes,
+including terminal state and authoritative artifact registration, require that unexpired token.
+The success-state update and artifact insert share one PostgreSQL transaction. A duplicate that cannot
+claim the lease is completed without consuming another delivery; it does not run work or abandon the
+valid active attempt. Transient failures are abandoned for bounded redelivery; malformed messages and
+exhausted deliveries go to the dead-letter queue for inspection.
+
+If a redelivery finds an active lease, the worker schedules one identifier-only recovery message for
+the lease expiry plus a small configured buffer before it completes the redelivery. This keeps a
+crashed worker's job recoverable without repeatedly abandoning duplicate messages. Terminal jobs do
+not schedule recovery messages. If scheduling fails, the worker leaves the current message unsettled
+rather than falsely acknowledging the only recovery signal.
 The generation worker schedules a later queue message while fal.ai work is still running rather than
 holding a worker or sleeping.
+
+Each received worker message uses the async Azure SDK `AutoLockRenewer` for the configured bounded
+duration. The same duration is a local processing deadline: a message that exceeds it is abandoned
+only while its lock is valid, and is otherwise left for Service Bus redelivery. If renewal or
+completion reports a lost lock, the worker does not attempt another settlement or report success;
+the attempt fence makes a later redelivery safe. Conversion and model serialization run in a worker
+thread so the async renewal task can continue while CPU work runs. Cancelling `asyncio.to_thread()`
+does not kill the underlying thread: the worker keeps one process-local execution gate, so it will not
+start another conversion in that process until a cancelled conversion thread exits. The thread's stale
+attempt cannot register an artifact or change state after lease loss. This is a soft deadline, not hard
+process termination; a pathological native conversion can still delay process shutdown, so input and
+conversion bounds must be validated before production rollout. Worker shutdown leaves in-flight
+messages unsettled for redelivery.
 
 A generic circuit-breaker library is not proposed. The simpler protections for this workload are
 explicit network timeouts, bounded retries, delayed queue checks, maximum job runtimes, maximum
@@ -145,15 +194,17 @@ secret is stored in GitHub. Deployment permissions are limited to this project's
 
 Each Container App uses managed identity and receives only the roles it needs:
 
-- all three apps: pull the image from ACR and read their required Key Vault secrets;
+- frontend: pull only its Nginx image from ACR; it has no Key Vault, Blob, or Service Bus access;
+- API, generation worker, and conversion worker: pull the backend image from ACR and read only their required Key Vault secrets;
 - API: access the private artifact container and send to both Service Bus queues;
 - generation worker: access artifacts, receive from and schedule messages on the generation queue;
-- conversion worker: access artifacts and receive from the conversion queue.
+- conversion worker: access artifacts and receive from and schedule recovery messages on the conversion queue.
 
 `DATABASE_URL` and `FAL_KEY` are Key Vault-backed secrets. `FAL_KEY` is exposed only to the generation
 worker. Azure Storage and Service Bus use managed identity rather than account keys or connection
-strings. Browser-safe values such as the Supabase URL and publishable key may be frontend build
-settings; privileged Supabase, database, Azure, and fal.ai credentials must never reach the browser.
+strings. Browser-safe values such as the Supabase URL and publishable key are supplied to the Nginx
+frontend at runtime; privileged Supabase, database, Azure, and fal.ai credentials must never reach
+the browser.
 
 Supabase access tokens are sent by the browser to FastAPI as bearer tokens. The existing API verifies
 each token locally. Deployment-readiness work will add an in-memory cache for only Supabase's public
@@ -204,7 +255,7 @@ structured application logs, and Log Analytics are sufficient initially; distrib
 be added only if diagnosis across the API and workers proves difficult.
 
 Set an Azure budget alert for the resource group. Scale-to-zero, the stated replica caps, ACR Basic,
-Service Bus Basic, Static Web Apps Free, and Supabase Free are the primary cost controls. Costs must
+Service Bus Basic and Supabase Free are cost controls. Costs must
 still be reviewed because Azure Monitor ingestion, storage, network traffic, and fal.ai usage are not
 made free by this architecture.
 
@@ -215,6 +266,7 @@ The existing `.github/workflows/ci.yml` already provides the required release ga
 - backend Ruff, mypy, and pytest;
 - a backend Docker image build;
 - frontend ESLint, Vitest, and production build; and
+- Terraform formatting and offline-backend validation on Terraform-related pull requests; and
 - locked dependency installation with `uv` and `npm ci`.
 
 Deployment automation should extend this foundation rather than duplicate it. A push to `main`
@@ -224,13 +276,13 @@ deploys the one development environment only after all required CI jobs succeed:
 push reviewed commit to main
   -> required backend, image, and frontend CI succeeds
   -> GitHub OIDC login to Azure
-  -> build the backend image once and tag it with the full git SHA
-  -> push the immutable image to ACR
+  -> build backend and frontend images and tag each with the full git SHA
+  -> push both immutable images to ACR
   -> apply reviewed, forward-compatible PostgreSQL migrations once
   -> deploy API revision using that SHA
   -> deploy generation-worker revision using that SHA
   -> deploy conversion-worker revision using that SHA
-  -> build and deploy the React/Vite frontend to Static Web Apps
+  -> deploy the Nginx frontend Container App revision using its SHA
   -> run read-only API health and frontend availability smoke tests
   -> report the deployed commit and URLs in the workflow summary
 ```
@@ -239,8 +291,8 @@ The same immutable image SHA must be used by all three backend apps so a release
 Mutable tags may exist for convenience but must not be the deployment source of truth. Environment
 settings and secrets are deployment configuration, not image build arguments.
 
-Container Apps revisions provide application rollback. If a new backend revision is unhealthy,
-redeploy the last verified image SHA. Static Web Apps can redeploy the last verified frontend commit.
+Container Apps revisions provide application rollback. If a new backend or frontend revision is
+unhealthy, redeploy its last verified image SHA.
 Database migrations are forward-only and are not automatically rolled back with application code;
 reviewed migrations should therefore be backward-compatible with the previously deployed revision
 where practical.
@@ -249,7 +301,7 @@ where practical.
 
 The first deployment is complete only when the following evidence exists:
 
-- the frontend loads over HTTPS from Static Web Apps;
+- the frontend loads over HTTPS from its Nginx Container App and deep links return the SPA;
 - sign-up or sign-in through Supabase works with the deployed redirect URL;
 - an authenticated browser request reaches the public API;
 - direct private-Blob upload works from the exact frontend origin;
@@ -257,7 +309,7 @@ The first deployment is complete only when the following evidence exists:
 - conversion messages start conversion-worker replicas from zero;
 - an image completes the image -> GLB -> LEGO JSON backend pipeline;
 - unauthorized access and cross-user artifact access remain rejected;
-- logs for all three Container Apps are visible centrally;
+- logs for all four Container Apps are visible centrally;
 - a failed test message can be found in the correct dead-letter queue;
 - the deployed backend apps report the same immutable image SHA; and
 - the GitHub Actions deployment can redeploy the previous known-good application version.
@@ -270,7 +322,6 @@ browser can request and render the conversion result.
 
 The following are outside the first deployment and should not be added without a demonstrated need:
 
-- Terraform or Bicep infrastructure code;
 - separate staging and production environments;
 - AKS/Kubernetes or Azure virtual machines;
 - a separate load balancer or API gateway;
@@ -286,7 +337,6 @@ The following are outside the first deployment and should not be added without a
 - [Azure Container Apps scaling](https://learn.microsoft.com/azure/container-apps/scale-app)
 - [Azure Container Apps plan types](https://learn.microsoft.com/azure/container-apps/plans)
 - [Azure Service Bus dead-letter queues](https://learn.microsoft.com/azure/service-bus-messaging/service-bus-dead-letter-queues)
-- [Azure Static Web Apps plans](https://learn.microsoft.com/azure/static-web-apps/plans)
 - [Azure Container Registry tiers](https://learn.microsoft.com/azure/container-registry/container-registry-skus)
 - [Supabase database backups](https://supabase.com/docs/guides/platform/backups)
 - [Supabase Free project pausing](https://supabase.com/docs/guides/platform/free-project-pausing)

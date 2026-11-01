@@ -1,4 +1,4 @@
-import { placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
+import { buildGuideWarnings, placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
 import { colorLabel, partLabel } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
@@ -21,8 +21,8 @@ export function BuildGuideWorkspace({
   if (steps.length === 0) {
     return (
       <section className="build-guide" aria-labelledby="build-guide-title">
-        <BuildGuideHeading />
-        <p>No build steps are available for this model.</p>
+        <h2 id="build-guide-title">Build guide</h2>
+        <p>No trustworthy build steps are available for this model.</p>
       </section>
     );
   }
@@ -30,80 +30,123 @@ export function BuildGuideWorkspace({
   const selectedStepIndex = Math.max(0, Math.min(currentStepIndex, steps.length - 1));
   const step = steps[selectedStepIndex];
   if (!step) return null;
+
   const placementStages = placementBuildStagesForStep(model, steps, selectedStepIndex);
   const isFirstStep = selectedStepIndex === 0;
   const isLastStep = selectedStepIndex === steps.length - 1;
+  const warnings = buildGuideWarnings(model);
 
   return (
     <section className="build-guide" aria-labelledby="build-guide-title">
-      <BuildGuideHeading />
-      <div className="build-guide__progress-summary">
-        <p><strong>Step {step.stepNumber} of {steps.length}</strong></p>
-        <p>{step.partCount} added this step · {step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
-      </div>
-      <progress
-        className="build-guide__progress"
-        aria-label={`Build progress: step ${step.stepNumber} of ${steps.length}`}
-        value={step.stepNumber}
-        max={steps.length}
-      />
       <div className="build-guide__workspace">
         <div className="build-guide__viewer baseplate" data-testid="build-guide-viewer">
-          <LegoModelViewer
-            model={model}
-            placementStages={placementStages}
-          />
-          <span className="model-stage__hint build-guide__viewer-hint">Drag to rotate · Scroll to zoom</span>
-        </div>
-        <aside className="build-guide__step-panel" aria-label="Current build step">
-          <div className="build-guide__step-status" aria-live="polite" aria-atomic="true">
-            <h3>Step {step.stepNumber}</h3>
-            <p>Add {step.partCount} {step.partCount === 1 ? "brick" : "bricks"}</p>
+          <div className="build-guide__viewer-header">
+            <h2>Assembly preview</h2>
+            <p>Drag to rotate · Scroll to zoom</p>
           </div>
+          <LegoModelViewer model={model} placementStages={placementStages} />
+          <span className="model-stage__hint build-guide__viewer-hint">Selected step in context</span>
+        </div>
+
+        <aside className="build-guide__step-panel" aria-label="Current build step">
+          <div className="build-guide__guide-header" aria-live="polite" aria-atomic="true">
+            <p className="eyebrow">Build guide / draft</p>
+            <h2 id="build-guide-title">Build guide</h2>
+            <div className="build-guide__step-status">
+              <h3>Step {step.stepNumber}</h3>
+              <p>Add {step.partCount} {step.partCount === 1 ? "brick" : "bricks"}</p>
+            </div>
+            <div className="build-guide__progress-summary">
+              <p>Step {step.stepNumber} of {steps.length}</p>
+              <p>{step.partCount} added this step · {step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
+            </div>
+            <progress
+              className="build-guide__progress"
+              aria-label={`Build progress: step ${step.stepNumber} of ${steps.length}`}
+              value={step.stepNumber}
+              max={steps.length}
+            />
+            <ol className="build-guide__step-list" aria-label="Build steps">
+              {steps.map((buildStep, index) => (
+                <li key={buildStep.stepNumber}>
+                  <button
+                    type="button"
+                    className={index === selectedStepIndex ? "is-selected" : ""}
+                    aria-current={index === selectedStepIndex ? "step" : undefined}
+                    onClick={() => onStepChange(index)}
+                  >
+                    {String(buildStep.stepNumber).padStart(2, "0")}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </div>
+
           <div className="build-guide__parts">
-            <h4>Parts needed this step</h4>
+            <h4>
+              Parts needed this step
+              <span aria-hidden="true">{step.parts.length} {step.parts.length === 1 ? "type" : "types"}</span>
+            </h4>
             <ul>
               {step.parts.map((part) => (
                 <li key={`${part.partId ?? part.brickType}-${part.colorId ?? part.color}`}>
                   <LegoPartThumbnail part={part} />
                   <span className="build-guide__part-description">
                     <strong>{part.partId ? `${part.partId} — ${partLabel(part)}` : partLabel(part)}</strong>
-                    <span><span className="color-swatch" style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }} aria-hidden="true" />{part.colorName ?? colorLabel(part.color)}</span>
+                    <span>
+                      <span
+                        className="color-swatch"
+                        style={{ backgroundColor: part.colorHex ?? legoColorHex(part.color) }}
+                        aria-hidden="true"
+                      />
+                      {part.colorName ?? colorLabel(part.color)}
+                    </span>
                   </span>
                   <strong className="build-guide__part-quantity">×{part.quantity}</strong>
                 </li>
               ))}
             </ul>
+            <section className="build-guide__placements" aria-labelledby="placement-guidance-title">
+              <h4 id="placement-guidance-title">Placement guidance</h4>
+              <ol>
+                {step.placementGuidance.map((placement) => (
+                  <li key={placement.placementIndex}>
+                    Piece {placement.placementIndex + 1}: x {placement.position.x}, y {placement.position.y}, z {placement.position.z}; rotate {placement.orientationDegrees}°
+                  </li>
+                ))}
+              </ol>
+            </section>
+            <section className="build-guide__warnings" aria-labelledby="build-guide-warnings-title">
+              <h4 id="build-guide-warnings-title">Buildability notes</h4>
+              <ul>
+                {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            </section>
           </div>
-          <div className="build-guide__navigation">
-            <button
-              type="button"
-              className="button button--secondary"
-              disabled={isFirstStep}
-              onClick={() => onStepChange(selectedStepIndex - 1)}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="button"
-              disabled={isLastStep}
-              onClick={() => onStepChange(selectedStepIndex + 1)}
-            >
-              {isLastStep ? "Build complete" : "Next"}
-            </button>
+
+          <div className="build-guide__footer">
+            <div className="build-guide__navigation">
+              <button
+                type="button"
+                className="button button--secondary"
+                disabled={isFirstStep}
+                onClick={() => onStepChange(selectedStepIndex - 1)}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="button"
+                disabled={isLastStep}
+                onClick={() => onStepChange(selectedStepIndex + 1)}
+              >
+                {isLastStep ? "Build complete" : "Next"}
+              </button>
+            </div>
+            <p>Assembly guidance · review buildability notes before building.</p>
           </div>
         </aside>
       </div>
     </section>
-  );
-}
-
-function BuildGuideHeading() {
-  return (
-    <div className="build-guide__heading">
-      <h2 id="build-guide-title">Build guide</h2>
-      <p>Follow the dependency-aware steps. They do not simulate every physical assembly motion.</p>
-    </div>
   );
 }

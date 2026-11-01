@@ -80,11 +80,17 @@ IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 @router.post("/reconstructions", response_model=ReconstructionResponse)
 async def create_reconstruction(
     request: CreateReconstructionRequest,
+    http_request: Request,
     owner_id: CurrentOwnerId,
     idempotency_key: IdempotencyKey,
     repository: ReconstructionRepositoryDependency,
     generation_queue: GenerationQueueDependency,
 ) -> JSONResponse:
+    if not http_request.app.state.settings.job_submissions_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job submissions are temporarily paused.",
+        )
     if idempotency_key is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

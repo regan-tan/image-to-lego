@@ -21,6 +21,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      terraform: ${{ steps.filter.outputs.terraform }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -34,6 +35,7 @@ jobs:
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "terraform=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -44,14 +46,19 @@ jobs:
 
           backend=false
           frontend=false
+          terraform=false
           if grep -qE '^(backend/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
             backend=true
           fi
           if grep -qE '^(frontend/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
             frontend=true
           fi
+          if grep -qE '^(infra/terraform/|\.github/workflows/ci\.yml$)' <<< "$changed_files"; then
+            terraform=true
+          fi
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "terraform=$terraform" >> "$GITHUB_OUTPUT"
 
   backend:
     name: Backend
@@ -122,3 +129,29 @@ jobs:
         run: npm run test -- --run
       - name: Production build
         run: npm run build
+
+  terraform:
+    name: Terraform
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [shared, application-compute]
+    defaults:
+      run:
+        working-directory: infra/terraform/${{ matrix.root }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+      - name: Initialize providers without remote state
+        run: terraform init -backend=false
+      - name: Validate configuration
+        run: terraform validate

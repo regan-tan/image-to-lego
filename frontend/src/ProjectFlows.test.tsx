@@ -391,7 +391,7 @@ describe("project flows", () => {
 
   it("creates a project from a photo, names it after the file and opens it ready to generate", async () => {
     const api = installFakeApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -410,7 +410,7 @@ describe("project flows", () => {
 
   it("rejects an unsupported photo before creating anything", async () => {
     const api = installFakeApi();
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -425,7 +425,7 @@ describe("project flows", () => {
 
   it("retries a failed photo upload without creating a second project", async () => {
     const api = installFakeApi({ blobUploadFailures: 1 });
-    renderApp("/");
+    renderApp("/workspace");
 
     fireEvent.click(await screen.findByRole("button", { name: "New project" }));
     const dialog = screen.getByRole("dialog", { name: "New project" });
@@ -705,7 +705,7 @@ describe("project flows", () => {
     expect(csvBlob).toBeInstanceOf(Blob);
     if (!(csvBlob instanceof Blob)) throw new Error("The parts list download did not create a Blob.");
     expect(csvBlob.type).toBe("text/csv");
-    await expect(csvBlob.text()).resolves.toBe("Part ID,Part Name,Color,Color ID,Verified part/color,Quantity\r\n3003,Brick 2 x 2,Light Bluish Gray,,Not recorded,1");
+    await expect(csvBlob.text()).resolves.toBe("Part ID,Part Name,Color,Color ID,Verified part/color,Quantity\r\n3003,Brick 2 x 2,Light Bluish Gray,,Unresolved,1");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
     expect(legoSummary()).toHaveTextContent("2 × 2 studs");
     expect(screen.queryByRole("list", { name: "Progress" })).not.toBeInTheDocument();
@@ -1054,7 +1054,7 @@ describe("project flows", () => {
     renderApp(`/projects/${PROJECT_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Project not found" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/");
+    expect(screen.getAllByRole("link", { name: "All projects" })[0]).toHaveAttribute("href", "/workspace");
   });
 
   it("deletes a project only after confirmation and returns to the project list", async () => {
@@ -1067,7 +1067,7 @@ describe("project flows", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
 
-    expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your creations." })).toBeInTheDocument();
     expect(api.deletes().map((request) => request.path)).toEqual([`/api/v1/projects/${PROJECT_ID}`]);
     expect(screen.queryByRole("link", { name: /Castle/ })).not.toBeInTheDocument();
   });
@@ -1088,7 +1088,7 @@ describe("project flows", () => {
 
   it("shows each project's status badge and photo thumbnail on its card", async () => {
     installFakeApi({ project: projectDetail({ status: "generating", sourceImage: READY_SOURCE_IMAGE }) });
-    renderApp("/");
+    renderApp("/workspace");
 
     const card = await screen.findByRole("link", { name: /Castle/ });
     expect(within(card).getByText("Generating 3D")).toBeInTheDocument();

@@ -22,7 +22,11 @@ from app.providers.blob_storage import (
     BlobStorage,
     BlobStorageError,
 )
-from app.providers.generation_queue import AzureServiceBusGenerationQueue, GenerationQueue
+from app.providers.generation_queue import (
+    AzureServiceBusGenerationQueue,
+    GenerationQueue,
+    GenerationQueueError,
+)
 from app.providers.reconstruction import (
     FalReconstructionProvider,
     ReconstructionOutput,
@@ -32,6 +36,7 @@ from app.providers.reconstruction import (
 )
 from app.repositories.reconstruction import ReconstructionRepository
 from app.repositories.sqlalchemy_reconstruction import SqlAlchemyReconstructionRepository
+from app.workers.message_lock import LeaveMessageUnsettled, process_received_message
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +77,7 @@ class GenerationJobProcessor:
         self._http_timeout_seconds = http_timeout_seconds
         self._model_downloader = model_downloader or download_fal_model
 
-    async def process(self, *, job_id: UUID, owner_id: UUID) -> None:
+    async def process(self, *, job_id: UUID, owner_id: UUID, attempt_id: UUID) -> None:
         worker_job = await self._repository.get_for_worker(job_id=job_id, owner_id=owner_id)
         if worker_job is None or worker_job.reconstruction.job.status in _TERMINAL_JOB_STATUSES:
             return
@@ -80,6 +85,7 @@ class GenerationJobProcessor:
             await self._repository.mark_terminal(
                 job_id=job_id,
                 owner_id=owner_id,
+                attempt_id=attempt_id,
                 status=JobStatus.FAILED.value,
                 error_code="reconstruction_timed_out",
                 error_message="The reconstruction exceeded the maximum processing time.",
@@ -89,14 +95,18 @@ class GenerationJobProcessor:
         provider_job_id = worker_job.reconstruction.job.provider_job_id
         if provider_job_id is None:
             if worker_job.reconstruction.job.status is JobStatus.RUNNING:
-                await self._handle_unconfirmed_submission(worker_job)
+                await self._handle_unconfirmed_submission(worker_job, attempt_id)
                 return
-            await self._submit_once(worker_job)
+            await self._submit_once(worker_job, attempt_id)
             return
 
-        await self._observe_provider(worker_job, provider_job_id)
+        await self._observe_provider(worker_job, provider_job_id, attempt_id)
 
-    async def _handle_unconfirmed_submission(self, worker_job: WorkerReconstructionJob) -> None:
+    async def _handle_unconfirmed_submission(
+        self,
+        worker_job: WorkerReconstructionJob,
+        attempt_id: UUID,
+    ) -> None:
         """Resolve the crash window after claiming a paid provider submission.
 
         A running job without a provider request ID may have reached fal before the
@@ -113,12 +123,13 @@ class GenerationJobProcessor:
         await self._repository.mark_terminal(
             job_id=worker_job.reconstruction.job.id,
             owner_id=worker_job.owner_id,
+            attempt_id=attempt_id,
             status=JobStatus.FAILED.value,
             error_code="provider_submission_unconfirmed",
             error_message="The reconstruction provider request could not be confirmed.",
         )
 
-    async def _submit_once(self, worker_job: WorkerReconstructionJob) -> None:
+    async def _submit_once(self, worker_job: WorkerReconstructionJob, attempt_id: UUID) -> None:
         try:
             source_error = await self._validate_source(worker_job)
         except BlobStorageError:
@@ -128,6 +139,7 @@ class GenerationJobProcessor:
             await self._repository.mark_terminal(
                 job_id=worker_job.reconstruction.job.id,
                 owner_id=worker_job.owner_id,
+                attempt_id=attempt_id,
                 status=JobStatus.FAILED.value,
                 error_code="source_image_validation_failed",
                 error_message=source_error,
@@ -147,6 +159,7 @@ class GenerationJobProcessor:
         claimed = await self._repository.claim_provider_submission(
             job_id=worker_job.reconstruction.job.id,
             owner_id=worker_job.owner_id,
+            attempt_id=attempt_id,
         )
         if not claimed:
             return
@@ -164,6 +177,7 @@ class GenerationJobProcessor:
             await self._repository.mark_terminal(
                 job_id=worker_job.reconstruction.job.id,
                 owner_id=worker_job.owner_id,
+                attempt_id=attempt_id,
                 status=JobStatus.FAILED.value,
                 error_code="provider_submission_unconfirmed",
                 error_message="The reconstruction provider could not confirm the request.",
@@ -174,6 +188,7 @@ class GenerationJobProcessor:
         await self._repository.persist_provider_job_id(
             job_id=worker_job.reconstruction.job.id,
             owner_id=worker_job.owner_id,
+            attempt_id=attempt_id,
             provider_job_id=submission.provider_job_id,
         )
         await self._schedule_check(worker_job)
@@ -182,6 +197,7 @@ class GenerationJobProcessor:
         self,
         worker_job: WorkerReconstructionJob,
         provider_job_id: str,
+        attempt_id: UUID,
     ) -> None:
         try:
             provider_status = await self._provider.get_status(provider_job_id)
@@ -189,7 +205,7 @@ class GenerationJobProcessor:
             if _is_retryable_external_error(error):
                 await self._schedule_check(worker_job)
                 return
-            await self._mark_invalid_result(worker_job, error)
+            await self._mark_invalid_result(worker_job, error, attempt_id)
             return
         if provider_status.state in {ReconstructionState.QUEUED, ReconstructionState.RUNNING}:
             await self._schedule_check(worker_job)
@@ -198,6 +214,7 @@ class GenerationJobProcessor:
             await self._repository.mark_terminal(
                 job_id=worker_job.reconstruction.job.id,
                 owner_id=worker_job.owner_id,
+                attempt_id=attempt_id,
                 status=JobStatus.FAILED.value,
                 error_code="provider_failed",
                 error_message="The reconstruction provider could not generate a model.",
@@ -207,20 +224,23 @@ class GenerationJobProcessor:
             await self._repository.mark_terminal(
                 job_id=worker_job.reconstruction.job.id,
                 owner_id=worker_job.owner_id,
+                attempt_id=attempt_id,
                 status=JobStatus.CANCELED.value,
             )
             return
-        await self._store_completed_model(worker_job, provider_job_id)
+        await self._store_completed_model(worker_job, provider_job_id, attempt_id)
 
     async def _store_completed_model(
         self,
         worker_job: WorkerReconstructionJob,
         provider_job_id: str,
+        attempt_id: UUID,
     ) -> None:
         if worker_job.reconstruction.output_artifact_id is not None:
             await self._repository.mark_succeeded(
                 job_id=worker_job.reconstruction.job.id,
                 owner_id=worker_job.owner_id,
+                attempt_id=attempt_id,
             )
             return
         try:
@@ -235,7 +255,7 @@ class GenerationJobProcessor:
             if _is_retryable_external_error(error):
                 await self._schedule_check(worker_job)
                 return
-            await self._mark_invalid_result(worker_job, error)
+            await self._mark_invalid_result(worker_job, error, attempt_id)
             return
 
         sha256 = hashlib.sha256(content).hexdigest()
@@ -270,33 +290,33 @@ class GenerationJobProcessor:
                 await self._repository.mark_terminal(
                     job_id=worker_job.reconstruction.job.id,
                     owner_id=worker_job.owner_id,
+                    attempt_id=attempt_id,
                     status=JobStatus.FAILED.value,
                     error_code="canonical_model_conflict",
                     error_message="The generated model could not be stored safely.",
                 )
                 return
-        await self._repository.create_output_artifact(
+        await self._repository.finalize_success(
             job_id=worker_job.reconstruction.job.id,
             owner_id=worker_job.owner_id,
+            attempt_id=attempt_id,
             artifact_id=uuid4(),
             blob_name=blob_name,
             mime_type=mime_type,
             size_bytes=len(content),
             sha256=sha256,
         )
-        await self._repository.mark_succeeded(
-            job_id=worker_job.reconstruction.job.id,
-            owner_id=worker_job.owner_id,
-        )
 
     async def _mark_invalid_result(
         self,
         worker_job: WorkerReconstructionJob,
         error: ApplicationError,
+        attempt_id: UUID,
     ) -> None:
         await self._repository.mark_terminal(
             job_id=worker_job.reconstruction.job.id,
             owner_id=worker_job.owner_id,
+            attempt_id=attempt_id,
             status=JobStatus.FAILED.value,
             error_code="provider_result_invalid",
             error_message="The reconstruction provider returned an invalid model.",
@@ -465,8 +485,62 @@ async def run_worker(settings: Settings) -> None:
                         continue
                     job_id, owner_id = parsed
                     async with session_factory() as session:
+                        repository = SqlAlchemyReconstructionRepository(session)
+                        attempt_id = await repository.acquire_attempt(
+                            job_id=job_id,
+                            owner_id=owner_id,
+                            lease_seconds=settings.worker_job_lease_seconds,
+                        )
+                        if attempt_id is None:
+                            recovery_time = await repository.recovery_time(
+                                job_id=job_id,
+                                owner_id=owner_id,
+                            )
+                            if recovery_time is not None:
+                                scheduled_recovery_time: datetime = recovery_time
+
+                                async def schedule_recovery(
+                                    job_id: UUID = job_id,
+                                    owner_id: UUID = owner_id,
+                                    recovery_time: datetime = scheduled_recovery_time,
+                                ) -> None:
+                                    try:
+                                        await generation_queue.schedule(
+                                            job_id=job_id,
+                                            owner_id=owner_id,
+                                            scheduled_for=recovery_time
+                                            + timedelta(
+                                                seconds=(
+                                                    settings.worker_job_lease_recovery_buffer_seconds
+                                                )
+                                            ),
+                                        )
+                                    except GenerationQueueError as error:
+                                        raise LeaveMessageUnsettled from error
+
+                                await process_received_message(
+                                    receiver=receiver,
+                                    message=message,
+                                    max_processing_duration=timedelta(seconds=60),
+                                    process=schedule_recovery,
+                                    logger=logger,
+                                    job_description=(
+                                        f"generation lease recovery job {job_id}"
+                                    ),
+                                )
+                                continue
+                            await process_received_message(
+                                receiver=receiver,
+                                message=message,
+                                max_processing_duration=timedelta(seconds=1),
+                                process=_complete_duplicate_delivery,
+                                logger=logger,
+                                job_description=f"generation duplicate job {job_id}",
+                            )
+                            continue
+                        owned_attempt_id: UUID = attempt_id
                         processor = GenerationJobProcessor(
-                            repository=SqlAlchemyReconstructionRepository(session),
+                            repository=repository,
                             blob_storage=blob_storage,
                             provider=provider,
                             generation_queue=generation_queue,
@@ -483,16 +557,56 @@ async def run_worker(settings: Settings) -> None:
                             ),
                             http_timeout_seconds=settings.reconstruction_http_timeout_seconds,
                         )
-                        try:
-                            await processor.process(job_id=job_id, owner_id=owner_id)
-                        except Exception:
-                            logger.exception(
-                                "Generation message processing failed for job %s",
-                                job_id,
+
+                        async def process_message(
+                            processor: GenerationJobProcessor = processor,
+                            job_id: UUID = job_id,
+                            owner_id: UUID = owner_id,
+                            attempt_id: UUID = owned_attempt_id,
+                        ) -> None:
+                            await processor.process(
+                                job_id=job_id,
+                                owner_id=owner_id,
+                                attempt_id=attempt_id,
                             )
-                            await receiver.abandon_message(message)
-                        else:
-                            await receiver.complete_message(message)
+
+                        async def renew_attempt(
+                            job_id: UUID = job_id,
+                            owner_id: UUID = owner_id,
+                            attempt_id: UUID = owned_attempt_id,
+                        ) -> bool:
+                            async with session_factory() as lease_session:
+                                lease_repository = SqlAlchemyReconstructionRepository(lease_session)
+                                return await lease_repository.renew_attempt(
+                                    job_id=job_id,
+                                    owner_id=owner_id,
+                                    attempt_id=attempt_id,
+                                    lease_seconds=settings.worker_job_lease_seconds,
+                                )
+
+                        try:
+                            await process_received_message(
+                                receiver=receiver,
+                                message=message,
+                                max_processing_duration=timedelta(
+                                    seconds=settings.service_bus_max_lock_renewal_seconds
+                                ),
+                                process=process_message,
+                                logger=logger,
+                                job_description=f"generation job {job_id}",
+                                renew_attempt=renew_attempt,
+                                attempt_renewal_interval=timedelta(
+                                    seconds=settings.worker_job_lease_renewal_seconds
+                                ),
+                            )
+                        finally:
+                            async with session_factory() as lease_session:
+                                lease_repository = SqlAlchemyReconstructionRepository(lease_session)
+                                await lease_repository.release_attempt(
+                                    job_id=job_id,
+                                    owner_id=owner_id,
+                                    attempt_id=owned_attempt_id,
+                                )
     finally:
         await service_bus.close()
         await generation_queue.close()
@@ -509,6 +623,10 @@ def _parse_message(body: Iterable[bytes]) -> tuple[UUID, UUID] | None:
         return UUID(str(payload["jobId"])), UUID(str(payload["ownerId"]))
     except (KeyError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
         return None
+
+
+async def _complete_duplicate_delivery() -> None:
+    return None
 
 
 def main() -> None:

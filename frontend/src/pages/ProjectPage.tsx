@@ -71,8 +71,8 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   );
 
   return (
-    <div className={`page__container${currentLegoModel ? " page__container--completed" : ""}`}>
-      <Link to="/" className="back-link">
+    <div className={`page__container studio-page${currentLegoModel ? " page__container--completed" : ""}${resultView === "guide" ? " studio-page--guide" : ""}${resultView === "parts" ? " studio-page--parts" : ""}`}>
+      <Link to="/workspace" className="back-link">
         <ArrowLeftIcon size={16} />
         All projects
       </Link>
@@ -99,9 +99,9 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
 
       {project.data ? (
         <>
-          <div className="page-heading">
+          <div className="page-heading studio-page__heading">
             <div className="page-heading__title-row">
-              <h1>{project.data.name}</h1>
+              <div><p className="eyebrow">Project studio</p><h1>{project.data.name}</h1><p className="page-heading__meta">From a single image to a brick-built possibility.</p></div>
               <StatusBadge
                 status={project.data.status}
                 conversionStatus={conversionStatus}
@@ -132,13 +132,13 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
             />
           )}
           {currentLegoModel ? (
-            <div className="result-view-toggle segmented-control" role="group" aria-label="Completed build view">
+            <div className="result-view-toggle project-tabs" role="group" aria-label="Completed build view">
               <button type="button" aria-pressed={resultView === "model"} onClick={() => setResultView("model")}>LEGO model</button>
               <button type="button" aria-pressed={resultView === "parts"} onClick={() => setResultView("parts")}>Parts list</button>
               <button type="button" aria-pressed={resultView === "guide"} onClick={() => setResultView("guide")}>Build guide</button>
             </div>
           ) : null}
-          <div className={`project-layout${currentLegoModel && resultView === "model" ? " project-layout--completed" : ""}`}>
+          <div className={`project-layout${currentLegoModel && resultView === "model" ? " project-layout--completed" : ""}${currentLegoModel && resultView !== "model" ? " project-layout--hidden" : ""}`}>
             {currentLegoModel === null || resultView === "model" ? (
               <ProjectPreview
                 key={`preview-${project.data.id}`}
@@ -162,15 +162,17 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
               onLegoModelLoaded={handleLegoModelLoaded}
               isRehydratingLegoModel={persistedLegoArtifactId !== null && persistedLegoModel.isPending}
               hasPersistedLegoModelError={persistedLegoModel.isError && legoModel === null}
-              onViewFullPartsList={() => setResultView("parts")}
               buildComplexity={buildComplexity}
               onBuildComplexityChange={setSelectedBuildComplexity}
+              onViewFullPartsList={() => setResultView("parts")}
+              onOpenBuildGuide={() => setResultView("guide")}
               isVisible={currentLegoModel === null || resultView === "model"}
             />
           </div>
           {currentLegoModel && resultView === "parts" && partsList ? (
             <PartsListWorkspace
               partsList={partsList}
+              algorithmVersion={currentLegoModel.metadata.algorithmVersion}
               partColorVerificationVersion={currentLegoModel.metadata.partColorVerificationVersion}
             />
           ) : null}

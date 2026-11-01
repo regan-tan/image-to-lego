@@ -64,7 +64,7 @@ See [Architecture](docs/architecture/README.md) for the component diagram and bo
 ## Deployment status and plan
 
 Cloud deployment is proposed but not implemented yet. The target is one low-cost development
-environment: Azure Static Web Apps hosts the React/Vite frontend, while one immutable backend image
+environment: a small Nginx Azure Container App hosts the React/Vite frontend, while one immutable backend image
 is deployed as three independently scaled Azure Container Apps for the FastAPI API, generation
 worker, and conversion worker. Azure Service Bus provides the two durable job queues; ACR stores the
 image; Blob Storage stores private artifacts; Key Vault supplies runtime secrets; and Azure Monitor
@@ -76,10 +76,12 @@ so this environment does not need a separate load balancer. The proposed GitHub 
 builds the backend image once, deploys the same git-SHA image to all three apps, deploys the frontend,
 and runs smoke tests after the existing CI checks pass.
 
-Infrastructure-as-code, a second environment, automated external database backups, and paid
-high-availability services are intentionally deferred. Supabase Free inactivity pauses, temporary
-downtime, and manual recovery are accepted capstone limitations; external logical backups are a
-documented production-readiness proposal rather than an implemented feature.
+Terraform configuration now prepares this single development environment, but no hosting resources
+have been provisioned, containers deployed, or frontend published. A second environment, automated
+external database backups, and paid high-availability services remain intentionally deferred.
+Supabase Free inactivity pauses, temporary downtime, and manual recovery are accepted capstone
+limitations; external logical backups are a documented production-readiness proposal rather than an
+implemented feature.
 
 See the [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md) for resource sizing,
 scaling, ingress, security, resilience, monitoring, cost controls, release steps, and acceptance
@@ -230,8 +232,12 @@ model's minimum placement z plane and it has no evaluated placement connected di
 diagnostic does not assess structural stability, collision, clutch force, center of mass, insertion
 accessibility, color accuracy, or overall perceptual similarity.
 
-Newly converted models also include top-level `instructionSteps`. Each step holds a sequential
-`stepNumber` and stable `placementIndices` into the canonical `placements` array. The worker batches at
+Newly converted models retain top-level `instructionSteps` for compatibility and add a versioned
+top-level `instructionGuide` with `version: "build-guide-v2"`. Each V2 step holds stable
+`placementIndices`, exact per-step part/color quantities, and each added placement's canonical position
+and orientation. The guide also carries explicit diagnostic warnings; the browser derives displayed
+quantities from canonical placements and keeps legacy artifacts accessible through their original steps
+or layer fallback. The worker batches at
 most six placements per step and combines evaluated direct stud-support edges with
 `vertical-insertion-v1` edges: a rectangular piece that would block another piece's straight-down path
 must be placed later. Local presentation regions are inferred from evaluated
@@ -304,10 +310,11 @@ The Vite development server listens at `http://localhost:5173` and calls the URL
 
 Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` for the frontend. Keep the publishable key in the frontend only; never expose a Supabase service-role key.
 
-The frontend provides `/login` and `/signup` public routes. Signed-in users get three protected
-routes that share one header (an on-demand "How it works" dialog and an account menu):
+The frontend provides a public landing page at `/` plus `/login` and `/signup` authentication
+routes. Signed-in users get three protected routes that share one header (an on-demand "How it
+works" dialog and an account menu):
 
-- `/` lists the user's projects with a status badge each, or shows an empty state on first visit;
+- `/workspace` lists the user's projects with a status badge each, or shows an empty state on first visit;
 - `/projects/:projectId` shows one project's progress (Photo → 3D model → LEGO build) and its next action;
 - `/profile` shows the verified profile returned by `GET /api/v1/profile`.
 
@@ -442,6 +449,10 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 | `AZURE_SERVICE_BUS_NAMESPACE` | API/worker | Service Bus fully qualified namespace |
 | `AZURE_SERVICE_BUS_QUEUE` | API/worker | Durable conversion queue name |
 | `AZURE_SERVICE_BUS_GENERATION_QUEUE` | API/worker | Durable image-to-3D generation queue name |
+| `SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS` | Worker | Maximum processing and message-lock renewal time (default 900; allowed 60-3600) |
+| `WORKER_JOB_LEASE_SECONDS` | Worker | Database attempt-lease duration (default 120; allowed 60-600) |
+| `WORKER_JOB_LEASE_RENEWAL_SECONDS` | Worker | Database attempt-lease renewal interval (default 30; must be less than the lease) |
+| `WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS` | Worker | Delay after a lease expiry before its durable recovery message is delivered (default 5; allowed 1-60) |
 | `FAL_KEY` | Worker | fal.ai credential for TRELLIS |
 | `RECONSTRUCTION_POLL_INTERVAL_SECONDS` | Worker | Delay before the next provider status check |
 | `RECONSTRUCTION_MAX_RUNTIME_MINUTES` | Worker | Maximum allowed reconstruction runtime |
