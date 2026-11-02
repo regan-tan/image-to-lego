@@ -530,7 +530,7 @@ jobs:
           completed=()
           report_partial_release() {
             echo "### Partial release" >> "$GITHUB_STEP_SUMMARY"
-            echo "Completed: ${completed[*]:-none}. Remaining components retain their prior image." >> "$GITHUB_STEP_SUMMARY"
+            echo "Completed: ${completed[*]:-none}. A failed worker replacement may have left its container group missing; verify Azure state before retrying." >> "$GITHUB_STEP_SUMMARY"
             echo "Use workflow_dispatch with the previous approved 40-character SHA after resolving the failure." >> "$GITHUB_STEP_SUMMARY"
           }
           trap report_partial_release ERR
@@ -538,19 +538,61 @@ jobs:
           frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
           identity_base="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
 
+          # Azure ACI group deletion is asynchronous. A new PUT with the same
+          # name before the old group disappears can return its stale state and
+          # subsequently fail user-assigned identity attachment with 404.
+          delete_worker_and_wait() {
+            local worker_name="$1" response absent_checks=0
+            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --yes --only-show-errors --output none
+            for attempt in {1..90}; do
+              if response="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json 2>&1)"; then
+                absent_checks=0
+              elif [[ "$response" == *"ResourceNotFound"* ]]; then
+                absent_checks=$((absent_checks + 1))
+                if (( absent_checks >= 3 )); then
+                  # Allow ARM and managed identity services to converge.
+                  sleep 10
+                  return 0
+                fi
+              else
+                echo "Cannot verify ACI deletion for $worker_name: $response" >&2
+                return 1
+              fi
+              sleep 5
+            done
+            echo "$worker_name did not fully disappear after deletion; refusing to recreate." >&2
+            return 1
+          }
+
+          # Confirm Azure did not return the old stopped group for a new image.
+          verify_new_worker_image() {
+            local worker_name="$1" current_image
+            for attempt in {1..30}; do
+              current_image="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].image' --output tsv 2>/dev/null)" || current_image=""
+              if [[ "$current_image" == "$backend_image" ]]; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "$worker_name did not report the intended release image after creation." >&2
+            return 1
+          }
+
           az webapp config container set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --container-image-name "$backend_image" --container-registry-url "https://$REGISTRY_SERVER"
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME"
           completed+=("API")
 
           if [[ "$GENERATION_ACTION" == "recreate" ]]; then
-            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --yes
+            delete_worker_and_wait "$AZURE_GENERATION_WORKER_NAME"
           fi
-          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-generation-dev" --acr-identity "$identity_base/id-image-to-lego-generation-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap generation" --environment-variables "APP_ENV=development" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$GENERATION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "DATABASE_URL_SECRET_NAME=database-url" "FAL_KEY_SECRET_NAME=fal-key"
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-generation-dev" --acr-identity "$identity_base/id-image-to-lego-generation-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap generation" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$GENERATION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "DATABASE_URL_SECRET_NAME=database-url" "FAL_KEY_SECRET_NAME=fal-key" --output none
+          verify_new_worker_image "$AZURE_GENERATION_WORKER_NAME"
           completed+=("generation worker")
           if [[ "$CONVERSION_ACTION" == "recreate" ]]; then
-            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --yes
+            delete_worker_and_wait "$AZURE_CONVERSION_WORKER_NAME"
           fi
-          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-conversion-dev" --acr-identity "$identity_base/id-image-to-lego-conversion-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap conversion" --environment-variables "APP_ENV=development" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$CONVERSION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential" "DATABASE_URL_SECRET_NAME=database-url"
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-conversion-dev" --acr-identity "$identity_base/id-image-to-lego-conversion-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap conversion" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$CONVERSION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential" "DATABASE_URL_SECRET_NAME=database-url" --output none
+          verify_new_worker_image "$AZURE_CONVERSION_WORKER_NAME"
           completed+=("conversion worker")
           az containerapp update --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --image "$frontend_image"
           completed+=("frontend")
