@@ -388,8 +388,9 @@ jobs:
           api_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-api-dev --query principalId --output tsv)"
           generation_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-generation-dev --query principalId --output tsv)"
           conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
+          dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev --query principalId --output tsv)"
           queue_senders_verified=true
-          for expected in "generation:$api_principal_id:$generation_principal_id" "conversion:$api_principal_id:$conversion_principal_id"; do
+          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
             actual_ids="$(az role assignment list --all --include-inherited --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
