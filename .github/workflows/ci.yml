@@ -332,7 +332,6 @@ jobs:
             "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_GENERATION_WORKER_NAME"
             "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_CONVERSION_WORKER_NAME"
             "$subscription_resource/Microsoft.App/containerApps/$AZURE_FRONTEND_NAME"
-            "$subscription_resource/Microsoft.App/jobs/caj-itl-outbox-dispatcher-dev"
           )
           missing=()
           for resource_id in "${resources[@]}"; do
@@ -361,18 +360,20 @@ jobs:
             exit 1
           fi
 
-          dispatcher_state="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name caj-itl-outbox-dispatcher-dev --query 'properties.configuration.triggerType' --output tsv)"
-          if [[ "$dispatcher_state" != "Schedule" ]]; then
-            echo "The durable submission-outbox dispatcher is not a scheduled Container Apps job." >&2
-            exit 1
-          fi
-
           if [[ -z "$DEPLOYMENT_DATABASE_URL" ]] || ! command -v psql >/dev/null; then
             echo "DEPLOYMENT_DATABASE_URL and psql are required to prove no worker lease is in flight." >&2
             exit 1
           fi
+          case "$DEPLOYMENT_DATABASE_URL" in
+            postgresql+asyncpg://*) psql_database_url="postgresql://${DEPLOYMENT_DATABASE_URL#postgresql+asyncpg://}" ;;
+            postgresql://*) psql_database_url="$DEPLOYMENT_DATABASE_URL" ;;
+            *)
+              echo "DEPLOYMENT_DATABASE_URL must use the postgresql or postgresql+asyncpg scheme." >&2
+              exit 1
+              ;;
+          esac
           read_quiescence() {
-            quiescence_counts="$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -F ' ' -c "select public.worker_release_active_attempt_count(), (select count(*) from public.jobs where status in ('queued', 'running')), (select count(*) from public.jobs where type = 'reconstruction' and status = 'running' and provider_job_id is null), (select count(*) from public.submission_outbox where status <> 'delivered');")" || {
+            quiescence_counts="$(psql "$psql_database_url" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -F ' ' -c "select public.worker_release_active_attempt_count(), (select count(*) from public.jobs where status in ('queued', 'running')), (select count(*) from public.jobs where type = 'reconstruction' and status = 'running' and provider_job_id is null), (select count(*) from public.submission_outbox where status <> 'delivered');")" || {
               echo "Could not query database quiescence counts." >&2
               exit 1
             }
@@ -386,15 +387,18 @@ jobs:
             fi
           }
           registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          # The currently deployed ACI workers use this verified bootstrap image.
+          # It may be replaced only by the already-published first handoff image.
+          initial_worker_handoff_sha="09df7acff2a193c94af7c67a8657da9bd87d2aaa"
           namespace="image-to-lego-bus-dev-01"
           read_quiescence
 
           api_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-api-dev --query principalId --output tsv)"
           generation_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-generation-dev --query principalId --output tsv)"
           conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
-          dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev --query principalId --output tsv)"
+          github_deployment_principal_id="$(az ad sp show --id "$AZURE_DEPLOYMENT_CLIENT_ID" --query id --output tsv)"
           queue_senders_verified=true
-          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id"; do
+          for expected in "generation:$api_principal_id:$generation_principal_id:$github_deployment_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$github_deployment_principal_id"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
             actual_ids="$(az role assignment list --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --include-inherited --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
@@ -432,7 +436,7 @@ jobs:
             secure_environment_names="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].secureEnvironmentVariables[].name' --output tsv | sort)"
             worker_image="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].image' --output tsv)"
             worker_image_tag="${worker_image##*:}"
-            if [[ "$worker_image" != "$registry_server/image-to-lego-backend:"* || ! "$worker_image_tag" =~ ^[0-9a-f]{40}$ ]] || ! az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$worker_image_tag" --only-show-errors >/dev/null 2>&1; then
+            if [[ "$worker_image_tag" == "bootstrap-898adc56df2e" && "$RELEASE_SHA" != "$initial_worker_handoff_sha" ]] || [[ "$worker_image_tag" != "bootstrap-898adc56df2e" && ! "$worker_image_tag" =~ ^[0-9a-f]{40}$ ]] || [[ "$worker_image" != "$registry_server/image-to-lego-backend:"* ]] || ! az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$worker_image_tag" --only-show-errors >/dev/null 2>&1; then
               echo "$worker_name has no recoverable immutable backend image; refusing to delete it." >&2
               exit 1
             fi
@@ -460,6 +464,13 @@ jobs:
         if: steps.release-mode.outputs.enabled == 'true'
         shell: bash
         run: az extension add --name containerapp --upgrade --yes
+      - name: Install PostgreSQL client
+        if: steps.release-mode.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
       - name: Verify automatic-release tags are unused
         if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         shell: bash
