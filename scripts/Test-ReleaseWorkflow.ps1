@@ -142,6 +142,17 @@ foreach ($fragment in @(
     }
 }
 
+# Background workers must have no inbound IP; Azure CLI does not accept '--ip-address None'.
+$aciCreationLines = [regex]::Matches($workflow, '(?m)^\s+az container create[^\r\n]*')
+if ($aciCreationLines.Count -ne 2) {
+    throw "Expected one Azure Container Instances create command per worker."
+}
+foreach ($command in $aciCreationLines) {
+    if ($command.Value -match '--ip-address\s+' -or $command.Value -notmatch '--location malaysiawest') {
+        throw "ACI workers must be created in the original Malaysia West region without an inbound IP argument."
+    }
+}
+
 if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
     throw "ACI worker stop must wait for Azure CLI before stopped-state polling."
 }
