@@ -46,9 +46,7 @@ class DispatcherAccessValidator(Protocol):
 
 
 class DispatcherRunner(Protocol):
-    async def run_once(
-        self, *, dispatcher_id: UUID, max_messages: int
-    ) -> DispatchRunResult: ...
+    async def run_once(self, *, dispatcher_id: UUID, max_messages: int) -> DispatchRunResult: ...
 
 
 @dataclass(slots=True)
@@ -89,9 +87,7 @@ class DispatcherRuntime:
         )
         return cls(dispatcher, repository, engine, generation_queue, conversion_queue)
 
-    async def run_once(
-        self, *, max_messages: int, max_runtime_seconds: int
-    ) -> DispatcherExitCode:
+    async def run_once(self, *, max_messages: int, max_runtime_seconds: int) -> DispatcherExitCode:
         dispatcher_id = uuid4()
         try:
             await self.access_validator.validate_access()
@@ -127,7 +123,9 @@ class DispatcherRuntime:
             except Exception as error:
                 errors.append(error)
         if errors:
-            raise RuntimeError("Dispatcher runtime could not cleanly close its resources.") from errors[0]
+            raise RuntimeError(
+                "Dispatcher runtime could not cleanly close its resources."
+            ) from errors[0]
 
 
 def _validate_settings(settings: Settings) -> None:
@@ -145,7 +143,9 @@ def _validate_settings(settings: Settings) -> None:
         raise ValueError("Dispatcher configuration is incomplete: " + ", ".join(missing))
 
 
-async def run(settings: Settings, *, max_messages: int, max_runtime_seconds: int) -> DispatcherExitCode:
+async def run(
+    settings: Settings, *, max_messages: int, max_runtime_seconds: int
+) -> DispatcherExitCode:
     runtime = DispatcherRuntime.from_settings(settings)
     try:
         return await runtime.run_once(
@@ -182,7 +182,9 @@ def main() -> int:
     except ValueError as error:
         logger.error("Dispatcher configuration is invalid: %s", error)
     except Exception as error:
-        logger.error("Dispatcher runtime could not start or shut down safely: %s", type(error).__name__)
+        logger.error(
+            "Dispatcher runtime could not start or shut down safely: %s", type(error).__name__
+        )
     return int(DispatcherExitCode.FAILED)
 
 

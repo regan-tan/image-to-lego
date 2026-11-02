@@ -66,8 +66,7 @@ async def test_successful_bounded_execution_and_clean_shutdown() -> None:
     )
 
     assert (
-        await runtime.run_once(max_messages=1, max_runtime_seconds=1)
-        is DispatcherExitCode.SUCCESS
+        await runtime.run_once(max_messages=1, max_runtime_seconds=1) is DispatcherExitCode.SUCCESS
     )
     await runtime.close()
 
@@ -77,7 +76,13 @@ async def test_successful_bounded_execution_and_clean_shutdown() -> None:
 
 async def test_uncertain_or_timed_out_execution_cannot_succeed() -> None:
     runtime, _, _ = _runtime(FakeDispatcher(result=DispatchRunResult(0, 0, 1, False)))
-    assert await runtime.run_once(max_messages=1, max_runtime_seconds=1) is DispatcherExitCode.UNCERTAIN
+    assert (
+        await runtime.run_once(max_messages=1, max_runtime_seconds=1)
+        is DispatcherExitCode.UNCERTAIN
+    )
 
     timed_out, _, _ = _runtime(FakeDispatcher(block=asyncio.Event()))
-    assert await timed_out.run_once(max_messages=1, max_runtime_seconds=0.01) is DispatcherExitCode.UNCERTAIN
+    assert (
+        await timed_out.run_once(max_messages=1, max_runtime_seconds=0.01)
+        is DispatcherExitCode.UNCERTAIN
+    )

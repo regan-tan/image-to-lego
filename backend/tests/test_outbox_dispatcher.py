@@ -1,8 +1,8 @@
 import asyncio
 from datetime import timedelta
+from uuid import UUID, uuid4
 
 import pytest
-from uuid import UUID, uuid4
 
 from app.outbox.dispatcher import (
     ClaimResult,
@@ -67,7 +67,9 @@ class FakeRepository:
 
 
 class FakeTransport:
-    def __init__(self, error: Exception | None = None, wait_for: asyncio.Event | None = None) -> None:
+    def __init__(
+        self, error: Exception | None = None, wait_for: asyncio.Event | None = None
+    ) -> None:
         self.error = error
         self.wait_for = wait_for
         self.published: list[UUID] = []

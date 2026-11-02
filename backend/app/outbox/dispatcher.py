@@ -160,7 +160,9 @@ class SubmissionOutboxDispatcher:
             return "uncertain"
         acknowledged = await self._finish(self._repository.record_delivered(claim, dispatcher_id))
         if not acknowledged:
-            raise RuntimeError("Database did not acknowledge the completed Service Bus publication.")
+            raise RuntimeError(
+                "Database did not acknowledge the completed Service Bus publication."
+            )
         return "delivered"
 
     async def _finish(self, operation: Awaitable[bool]) -> bool:
