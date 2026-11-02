@@ -152,6 +152,10 @@ foreach ($command in $aciCreationLines) {
         throw "ACI workers must be created in the original Malaysia West region without an inbound IP argument."
     }
 }
+if ($aciCreationLines[0].Value -notlike '*--command-line "python -m app.workers.aci_bootstrap generation"*' -or
+    $aciCreationLines[1].Value -notlike '*--command-line "python -m app.workers.aci_bootstrap conversion"*') {
+    throw "ACI bootstrap commands must be quoted as one argument to Azure CLI."
+}
 
 if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
     throw "ACI worker stop must wait for Azure CLI before stopped-state polling."
