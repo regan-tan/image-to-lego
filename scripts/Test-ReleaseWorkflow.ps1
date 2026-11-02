@@ -157,6 +157,32 @@ if ($aciCreationLines[0].Value -notlike '*--command-line "python -m app.workers.
     throw "ACI bootstrap commands must be quoted as one argument to Azure CLI."
 }
 
+# Release must not recreate a just-deleted ACI group until the resource
+# really disappears; otherwise Azure identity operations can fail with 404.
+foreach ($required in @(
+    'delete_worker_and_wait() {',
+    'az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name"',
+    'elif [[ "$response" == *"ResourceNotFound"* ]]; then',
+    'if (( absent_checks >= 3 )); then',
+    'delete_worker_and_wait "$AZURE_GENERATION_WORKER_NAME"',
+    'delete_worker_and_wait "$AZURE_CONVERSION_WORKER_NAME"',
+    'verify_new_worker_image "$AZURE_GENERATION_WORKER_NAME"',
+    'verify_new_worker_image "$AZURE_CONVERSION_WORKER_NAME"'
+)) {
+    if (-not $workflow.Contains($required)) {
+        throw "ACI replacement must wait for full deletion and verify the new image: $required"
+    }
+}
+$aciCreationLines = [regex]::Matches($workflow, '(?m)^\s+az container create[^\r\n]*')
+if ($aciCreationLines.Count -ne 2) {
+    throw "Expected exactly two ACI worker create commands."
+}
+foreach ($command in $aciCreationLines) {
+    if ($command.Value -notlike '*"APP_ENV=production"*') {
+        throw "ACI worker recreation must retain the verified production app environment."
+    }
+}
+
 if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
     throw "ACI worker stop must wait for Azure CLI before stopped-state polling."
 }
