@@ -158,10 +158,14 @@ class SubmissionOutboxDispatcher:
                 "Service Bus publication outcome was uncertain: " + _safe_error_message(error),
             )
             return "uncertain"
-        await self._finish(self._repository.record_delivered(claim, dispatcher_id))
+        acknowledged = await self._finish(self._repository.record_delivered(claim, dispatcher_id))
+        if not acknowledged:
+            raise RuntimeError(
+                "Database did not acknowledge the completed Service Bus publication."
+            )
         return "delivered"
 
-    async def _finish(self, operation: Awaitable[bool]) -> None:
+    async def _finish(self, operation: Awaitable[bool]) -> bool:
         task: asyncio.Future[bool] = asyncio.ensure_future(operation)
         try:
             await asyncio.shield(task)
@@ -171,6 +175,7 @@ class SubmissionOutboxDispatcher:
             except Exception:
                 logger.exception("Could not durably finish an already-started publication.")
             raise
+        return task.result()
 
 
 def _safe_error_message(error: Exception) -> str:

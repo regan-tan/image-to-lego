@@ -1,5 +1,8 @@
+import asyncio
 from datetime import timedelta
 from uuid import UUID, uuid4
+
+import pytest
 
 from app.outbox.dispatcher import (
     ClaimResult,
@@ -64,12 +67,17 @@ class FakeRepository:
 
 
 class FakeTransport:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(
+        self, error: Exception | None = None, wait_for: asyncio.Event | None = None
+    ) -> None:
         self.error = error
+        self.wait_for = wait_for
         self.published: list[UUID] = []
 
     async def publish(self, claim: SubmissionOutboxClaim) -> None:
         self.published.append(claim.outbox_id)
+        if self.wait_for is not None:
+            await self.wait_for.wait()
         if self.error is not None:
             raise self.error
 
@@ -157,3 +165,19 @@ async def test_draining_before_begin_send_releases_claim_without_publishing() ->
     assert result.release_blocked is True
     assert repository.released == [claim.outbox_id]
     assert transport.published == []
+
+
+async def test_cancellation_during_send_marks_publication_uncertain() -> None:
+    claim = _claim()
+    repository = FakeRepository([ClaimResult(OutboxClaimStatus.CLAIMED, claim)])
+    transport = FakeTransport(wait_for=asyncio.Event())
+    task = asyncio.create_task(
+        _dispatcher(repository, transport).run_once(dispatcher_id=uuid4(), max_messages=1)
+    )
+    await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert repository.uncertain == [claim.outbox_id]

@@ -22,6 +22,12 @@ resource "azurerm_user_assigned_identity" "frontend" {
   resource_group_name = azurerm_resource_group.dev.name
   lifecycle { prevent_destroy = true }
 }
+resource "azurerm_user_assigned_identity" "outbox_dispatcher" {
+  count               = var.outbox_dispatcher_enabled ? 1 : 0
+  name                = "id-image-to-lego-outbox-dispatcher-dev"
+  location            = var.servicebus_location
+  resource_group_name = azurerm_resource_group.dev.name
+}
 
 resource "azurerm_role_assignment" "api_acr_pull" {
   scope                = azurerm_container_registry.backend.id
@@ -46,6 +52,12 @@ resource "azurerm_role_assignment" "frontend_acr_pull" {
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.frontend.principal_id
   lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "outbox_dispatcher_acr_pull" {
+  count                = var.outbox_dispatcher_enabled ? 1 : 0
+  scope                = azurerm_container_registry.backend.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.outbox_dispatcher[0].principal_id
 }
 resource "azurerm_role_assignment" "api_artifact_access" {
   scope                = azurerm_storage_container.artifacts.id
@@ -113,6 +125,18 @@ resource "azurerm_role_assignment" "conversion_queue_sender" {
   principal_id         = azurerm_user_assigned_identity.conversion_worker.principal_id
   lifecycle { prevent_destroy = true }
 }
+resource "azurerm_role_assignment" "outbox_dispatcher_generation_sender" {
+  count                = var.outbox_dispatcher_enabled ? 1 : 0
+  scope                = azurerm_servicebus_queue.generation.id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = azurerm_user_assigned_identity.outbox_dispatcher[0].principal_id
+}
+resource "azurerm_role_assignment" "outbox_dispatcher_conversion_sender" {
+  count                = var.outbox_dispatcher_enabled ? 1 : 0
+  scope                = azurerm_servicebus_queue.conversion.id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = azurerm_user_assigned_identity.outbox_dispatcher[0].principal_id
+}
 resource "azurerm_role_assignment" "api_key_vault_secrets" {
   scope                = azurerm_key_vault.runtime.id
   role_definition_name = "Key Vault Secrets User"
@@ -130,4 +154,10 @@ resource "azurerm_role_assignment" "conversion_key_vault_secrets" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.conversion_worker.principal_id
   lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "outbox_dispatcher_database_secret" {
+  count                = var.outbox_dispatcher_enabled ? 1 : 0
+  scope                = "${azurerm_key_vault.runtime.id}/secrets/${var.outbox_dispatcher_database_url_secret_name}"
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.outbox_dispatcher[0].principal_id
 }

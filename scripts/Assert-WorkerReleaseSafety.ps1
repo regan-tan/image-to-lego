@@ -6,6 +6,12 @@ param(
     [Parameter(Mandatory)]
     [int]$ActiveWorkerAttempts,
     [Parameter(Mandatory)]
+    [int]$NonterminalJobs,
+    [Parameter(Mandatory)]
+    [int]$UnresolvedProviderSubmissions,
+    [Parameter(Mandatory)]
+    [int]$OutstandingOutboxPublications,
+    [Parameter(Mandatory)]
     [int]$ActiveQueueMessages,
     [Parameter(Mandatory)]
     [int]$ScheduledQueueMessages,
@@ -28,6 +34,10 @@ if ($ActiveWorkerAttempts -ne 0) {
     throw "A worker still holds a valid job lease."
 }
 
+if ($NonterminalJobs -ne 0 -or $UnresolvedProviderSubmissions -ne 0 -or $OutstandingOutboxPublications -ne 0) {
+    throw "Database work is not quiescent."
+}
+
 if ($ActiveQueueMessages -ne 0 -or $ScheduledQueueMessages -ne 0) {
     throw "The worker queues are not idle."
 }
@@ -46,6 +56,6 @@ switch ($WorkerState) {
     "Failed" { "recreate" }
     "Terminated" { "recreate" }
     "Running" {
-        throw "A running ACI worker is not replaced automatically. A separately approved maintenance procedure is required before it can be recreated."
+        "stop_and_recreate"
     }
 }

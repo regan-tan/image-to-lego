@@ -280,9 +280,9 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ACI_WORKER_RELEASES_ENABLED: ${{ vars.ACI_WORKER_RELEASES_ENABLED }}
       AZURE_COMPUTE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_COMPUTE_DEPLOYMENTS_ENABLED }}
-      # Activation requires a reviewed workflow change. A repository variable alone
-      # must never turn this inactive controller foundation into Azure mutations.
-      RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"
+      # This remains false until the one-time activation checklist is complete.
+      # Afterwards, ordinary main merges use the same reviewed workflow.
+      AZURE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_DEPLOYMENTS_ENABLED }}
       DEPLOYMENT_DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}
       RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
     steps:
@@ -295,7 +295,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [[ "$AZURE_COMPUTE_DEPLOYMENTS_ENABLED" == "true" && "$RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED" == "true" ]]; then
+          if [[ "$AZURE_COMPUTE_DEPLOYMENTS_ENABLED" == "true" && "$AZURE_DEPLOYMENTS_ENABLED" == "true" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -332,6 +332,7 @@ jobs:
             "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_GENERATION_WORKER_NAME"
             "$subscription_resource/Microsoft.ContainerInstance/containerGroups/$AZURE_CONVERSION_WORKER_NAME"
             "$subscription_resource/Microsoft.App/containerApps/$AZURE_FRONTEND_NAME"
+            "$subscription_resource/Microsoft.App/jobs/caj-itl-outbox-dispatcher-dev"
           )
           missing=()
           for resource_id in "${resources[@]}"; do
@@ -351,9 +352,18 @@ jobs:
             exit 1
           fi
 
+          # Close admission before taking the quiescence snapshot.  The setting
+          # stays false if a later step fails; only a verified release reopens it.
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=false --output none
           submissions_enabled="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)"
           if [[ "$submissions_enabled" != "false" ]]; then
-            echo "JOB_SUBMISSIONS_ENABLED must remain false for automated releases." >&2
+            echo "Could not pause new job submissions." >&2
+            exit 1
+          fi
+
+          dispatcher_state="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" --name caj-itl-outbox-dispatcher-dev --query 'properties.configuration.triggerType' --output tsv)"
+          if [[ "$dispatcher_state" != "Schedule" ]]; then
+            echo "The durable submission-outbox dispatcher is not a scheduled Container Apps job." >&2
             exit 1
           fi
 
@@ -361,22 +371,26 @@ jobs:
             echo "DEPLOYMENT_DATABASE_URL and psql are required to prove no worker lease is in flight." >&2
             exit 1
           fi
-          active_attempts="$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -c 'select public.worker_release_active_attempt_count();')"
-          if [[ ! "$active_attempts" =~ ^[0-9]+$ ]]; then
-            echo "The worker release lease query returned an invalid count." >&2
-            exit 1
-          fi
+          read_quiescence() {
+            read -r active_attempts nonterminal_jobs unresolved_provider_submissions outstanding_outbox_publications <<< "$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -F ' ' -c \"select public.worker_release_active_attempt_count(), (select count(*) from public.jobs where status in ('queued', 'running')), (select count(*) from public.jobs where type = 'reconstruction' and status = 'running' and provider_job_id is null), (select count(*) from public.submission_outbox where status <> 'delivered');\")"
+            queue_counts="$(az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name generation --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv; az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name conversion --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv)"
+            active_messages="$(awk '{active += $1} END {print active}' <<< "$queue_counts")"
+            scheduled_messages="$(awk '{scheduled += $2} END {print scheduled}' <<< "$queue_counts")"
+            if [[ ! "$active_attempts $nonterminal_jobs $unresolved_provider_submissions $outstanding_outbox_publications $active_messages $scheduled_messages" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]]; then
+              echo "The database or queue quiescence query returned an invalid count." >&2
+              exit 1
+            fi
+          }
           registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
           namespace="image-to-lego-bus-dev-01"
-          queue_counts="$(az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name generation --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv; az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name conversion --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv)"
-          active_messages="$(awk '{active += $1} END {print active}' <<< "$queue_counts")"
-          scheduled_messages="$(awk '{scheduled += $2} END {print scheduled}' <<< "$queue_counts")"
+          read_quiescence
 
           api_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-api-dev --query principalId --output tsv)"
           generation_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-generation-dev --query principalId --output tsv)"
           conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
+          dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev --query principalId --output tsv)"
           queue_senders_verified=true
-          for expected in "generation:$api_principal_id:$generation_principal_id" "conversion:$api_principal_id:$conversion_principal_id"; do
+          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
             actual_ids="$(az role assignment list --all --include-inherited --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
@@ -422,7 +436,19 @@ jobs:
               echo "$worker_name is missing part of the reviewed identity, ACR, or environment bootstrap contract." >&2
               exit 1
             fi
-            action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches true)"
+            bootstrap_contract_matches=true
+            action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -NonterminalJobs "$nonterminal_jobs" -UnresolvedProviderSubmissions "$unresolved_provider_submissions" -OutstandingOutboxPublications "$outstanding_outbox_publications" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches "$bootstrap_contract_matches")"
+            if [[ "$action" == "stop_and_recreate" ]]; then
+              az container stop --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --no-wait
+              for attempt in {1..30}; do
+                worker_state="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "instanceView.state" --output tsv)"
+                [[ "$worker_state" == "Stopped" ]] && break
+                [[ "$attempt" == "30" ]] && { echo "$worker_name did not stop gracefully." >&2; exit 1; }
+                sleep 5
+              done
+              read_quiescence
+              action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -NonterminalJobs "$nonterminal_jobs" -UnresolvedProviderSubmissions "$unresolved_provider_submissions" -OutstandingOutboxPublications "$outstanding_outbox_publications" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches "$bootstrap_contract_matches")"
+            fi
             echo "${worker_kind}_client_id=$client_id" >> "$GITHUB_OUTPUT"
             echo "${worker_kind}_action=$action" >> "$GITHUB_OUTPUT"
           done
@@ -558,6 +584,11 @@ jobs:
               exit 1
             fi
           done
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=true --output none
+          if [[ "$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)" != "true" ]]; then
+            echo "Deployment completed but could not re-enable job submissions." >&2
+            exit 1
+          fi
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ### Development deployment complete
           - Commit: \`$RELEASE_SHA\`
