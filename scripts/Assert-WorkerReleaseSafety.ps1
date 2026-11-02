@@ -16,12 +16,14 @@ param(
     [Parameter(Mandatory)]
     [int]$ScheduledQueueMessages,
     [Parameter(Mandatory)]
-    [bool]$QueueSendersVerified,
+    [ValidateSet("false", "true")]
+    [string]$QueueSendersVerified,
     [Parameter(Mandatory)]
     [ValidateSet("Running", "Stopped", "Succeeded", "Failed", "Terminated")]
     [string]$WorkerState,
     [Parameter(Mandatory)]
-    [bool]$BootstrapContractMatches
+    [ValidateSet("false", "true")]
+    [string]$BootstrapContractMatches
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,11 +44,11 @@ if ($ActiveQueueMessages -ne 0 -or $ScheduledQueueMessages -ne 0) {
     throw "The worker queues are not idle."
 }
 
-if (-not $QueueSendersVerified) {
+if ($QueueSendersVerified -ne "true") {
     throw "Queue senders are not limited to the reviewed runtime identities."
 }
 
-if (-not $BootstrapContractMatches) {
+if ($BootstrapContractMatches -ne "true") {
     throw "The ACI bootstrap contract does not match the reviewed release configuration."
 }
 
