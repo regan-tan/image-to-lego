@@ -317,6 +317,13 @@ jobs:
           client-id: ${{ env.AZURE_DEPLOYMENT_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Install PostgreSQL client
+        if: steps.release-mode.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
       - name: Preflight compute and release safety
         if: steps.release-mode.outputs.enabled == 'true'
         id: preflight
@@ -396,9 +403,10 @@ jobs:
           api_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-api-dev --query principalId --output tsv)"
           generation_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-generation-dev --query principalId --output tsv)"
           conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
-          github_deployment_principal_id="$(az ad sp show --id "$AZURE_DEPLOYMENT_CLIENT_ID" --query id --output tsv)"
+          github_deployment_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-github-deployment-dev --query principalId --output tsv)"
+          dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev --query principalId --output tsv)"
           queue_senders_verified=true
-          for expected in "generation:$api_principal_id:$generation_principal_id:$github_deployment_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$github_deployment_principal_id"; do
+          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id:$github_deployment_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id:$github_deployment_principal_id"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
             actual_ids="$(az role assignment list --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --include-inherited --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
@@ -464,13 +472,6 @@ jobs:
         if: steps.release-mode.outputs.enabled == 'true'
         shell: bash
         run: az extension add --name containerapp --upgrade --yes
-      - name: Install PostgreSQL client
-        if: steps.release-mode.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
       - name: Verify automatic-release tags are unused
         if: steps.release-mode.outputs.enabled == 'true' && github.event_name == 'push'
         shell: bash
