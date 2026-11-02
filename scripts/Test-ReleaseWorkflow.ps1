@@ -65,8 +65,15 @@ if ($workflow.Contains("Microsoft.App/jobs/caj-itl-outbox-dispatcher-dev") -or $
     throw "The Express Container Apps environment cannot depend on a Container Apps Job."
 }
 
-if (-not $workflow.Contains('github_deployment_principal_id="$(az ad sp show --id "$AZURE_DEPLOYMENT_CLIENT_ID"')) {
+if (-not $workflow.Contains('github_deployment_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-github-deployment-dev')) {
     throw "Service Bus sender verification must include the GitHub deployment identity."
+}
+if (-not $workflow.Contains('dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev')) {
+    throw "Service Bus sender verification must include the existing dispatcher identity."
+}
+if (-not $workflow.Contains('generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id:$github_deployment_principal_id') -or
+    -not $workflow.Contains('conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id:$github_deployment_principal_id')) {
+    throw "Both Service Bus queues must include the API, worker, existing dispatcher, and GitHub deployment sender identities."
 }
 
 if (-not $workflow.Contains('postgresql+asyncpg://*) psql_database_url="postgresql://${DEPLOYMENT_DATABASE_URL#postgresql+asyncpg://}"')) {
@@ -121,14 +128,14 @@ foreach ($fragment in @(
     "if: github.ref == 'refs/heads/main'",
     'group: submission-outbox-dispatcher',
     'cancel-in-progress: false',
-    'timeout-minutes: 2',
+    'timeout-minutes: 10',
     'AZURE_TOKEN_CREDENTIALS: AzureCliCredential',
     'DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}',
     'AZURE_SERVICE_BUS_NAMESPACE: image-to-lego-bus-dev-01.servicebus.windows.net',
     'AZURE_SERVICE_BUS_GENERATION_QUEUE: generation',
     'AZURE_SERVICE_BUS_QUEUE: conversion',
     'azure/login@v2',
-    'python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45'
+    'uv run --frozen python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45'
 )) {
     if (-not $dispatcherWorkflow.Contains($fragment)) {
         throw "Submission-outbox dispatcher workflow is missing required control: $fragment"
