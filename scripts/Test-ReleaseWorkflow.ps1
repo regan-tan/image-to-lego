@@ -53,6 +53,46 @@ foreach ($fragment in $requiredFragments) {
     }
 }
 
+if ($workflow.Contains("az role assignment list --all --include-inherited --scope")) {
+    throw "Service Bus sender verification must not combine --all with a scoped inherited role lookup."
+}
+
+if ($workflow -notmatch 'az role assignment list --scope "\$subscription_resource/Microsoft\.ServiceBus/namespaces/\$namespace/queues/\$queue_name" --include-inherited') {
+    throw "Service Bus sender verification must inspect inherited assignments at each queue scope."
+}
+
+if ($workflow -notmatch "roleDefinitionName=='Azure Service Bus Data Sender'" -or -not $workflow.Contains('[[ "$actual_ids" == "$wanted_ids" ]]')) {
+    throw "Service Bus sender verification must require the exact reviewed sender identities."
+}
+
+if ($workflow.Contains('-c \"select public.worker_release_active_attempt_count()')) {
+    throw "Database quiescence SQL must be quoted for Bash rather than passed as escaped literal quotes."
+}
+
+foreach ($requiredQuiescenceControl in @(
+    'quiescence_counts="$(psql ',
+    '-c "select public.worker_release_active_attempt_count()',
+    '" || {',
+    'Could not query database quiescence counts.',
+    'read -r active_attempts nonterminal_jobs unresolved_provider_submissions outstanding_outbox_publications <<< "$quiescence_counts"'
+)) {
+    if (-not $workflow.Contains($requiredQuiescenceControl)) {
+        throw "Database quiescence query is missing required control: $requiredQuiescenceControl"
+    }
+}
+
+if ($workflow -notmatch '(?s)quiescence_counts="\$\(psql .*?\)" \|\| \{.*?read -r active_attempts') {
+    throw "Database quiescence queries must fail closed before their counts are parsed."
+}
+
+if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
+    throw "ACI worker stop must wait for Azure CLI before stopped-state polling."
+}
+
+if ($workflow -notmatch '(?s)az container stop --resource-group "\$AZURE_RESOURCE_GROUP" --name "\$worker_name"\s+for attempt in \{1\.\.30\}') {
+    throw "ACI worker stop must retain the stopped-state polling loop."
+}
+
 $deployJobMatch = [regex]::Match(
     $workflow,
     '(?ms)^  deploy-development:\r?\n(?<body>.*?)(?=^  [A-Za-z0-9_-]+:|\z)'

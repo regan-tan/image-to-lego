@@ -372,7 +372,11 @@ jobs:
             exit 1
           fi
           read_quiescence() {
-            read -r active_attempts nonterminal_jobs unresolved_provider_submissions outstanding_outbox_publications <<< "$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -F ' ' -c \"select public.worker_release_active_attempt_count(), (select count(*) from public.jobs where status in ('queued', 'running')), (select count(*) from public.jobs where type = 'reconstruction' and status = 'running' and provider_job_id is null), (select count(*) from public.submission_outbox where status <> 'delivered');\")"
+            quiescence_counts="$(psql "$DEPLOYMENT_DATABASE_URL" -X --tuples-only --no-align --set=ON_ERROR_STOP=1 -F ' ' -c "select public.worker_release_active_attempt_count(), (select count(*) from public.jobs where status in ('queued', 'running')), (select count(*) from public.jobs where type = 'reconstruction' and status = 'running' and provider_job_id is null), (select count(*) from public.submission_outbox where status <> 'delivered');")" || {
+              echo "Could not query database quiescence counts." >&2
+              exit 1
+            }
+            read -r active_attempts nonterminal_jobs unresolved_provider_submissions outstanding_outbox_publications <<< "$quiescence_counts"
             queue_counts="$(az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name generation --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv; az servicebus queue show --resource-group "$AZURE_RESOURCE_GROUP" --namespace-name "$namespace" --name conversion --query '{active:countDetails.activeMessageCount,scheduled:countDetails.scheduledMessageCount}' --output tsv)"
             active_messages="$(awk '{active += $1} END {print active}' <<< "$queue_counts")"
             scheduled_messages="$(awk '{scheduled += $2} END {print scheduled}' <<< "$queue_counts")"
@@ -392,7 +396,7 @@ jobs:
           queue_senders_verified=true
           for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
-            actual_ids="$(az role assignment list --all --include-inherited --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
+            actual_ids="$(az role assignment list --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --include-inherited --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
             [[ "$actual_ids" == "$wanted_ids" ]] || queue_senders_verified=false
           done
@@ -439,7 +443,7 @@ jobs:
             bootstrap_contract_matches=true
             action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -NonterminalJobs "$nonterminal_jobs" -UnresolvedProviderSubmissions "$unresolved_provider_submissions" -OutstandingOutboxPublications "$outstanding_outbox_publications" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches "$bootstrap_contract_matches")"
             if [[ "$action" == "stop_and_recreate" ]]; then
-              az container stop --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --no-wait
+              az container stop --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name"
               for attempt in {1..30}; do
                 worker_state="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "instanceView.state" --output tsv)"
                 [[ "$worker_state" == "Stopped" ]] && break
