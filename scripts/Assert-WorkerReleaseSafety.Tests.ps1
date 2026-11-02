@@ -39,6 +39,15 @@ $idleParameters = @{
     BootstrapContractMatches = $true
 }
 
+# GitHub Actions invokes this script through Bash with lowercase string arguments.
+# Both strings must be interpreted explicitly; the string "false" is truthy in PowerShell.
+$parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.QueueSendersVerified = "true"; $parameters.BootstrapContractMatches = "true"
+Assert-GateSucceeds -ExpectedAction "stop_and_recreate" -Parameters $parameters
+$parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.QueueSendersVerified = "false"; $parameters.BootstrapContractMatches = "true"
+Assert-GateFails -Parameters $parameters
+$parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.QueueSendersVerified = "true"; $parameters.BootstrapContractMatches = "false"
+Assert-GateFails -Parameters $parameters
+
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"
 Assert-GateSucceeds -ExpectedAction "stop_and_recreate" -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Stopped"
