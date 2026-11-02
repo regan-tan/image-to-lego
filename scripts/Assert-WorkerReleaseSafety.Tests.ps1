@@ -30,6 +30,9 @@ function Assert-GateFails {
 $idleParameters = @{
     JobSubmissionsEnabled    = "false"
     ActiveWorkerAttempts     = 0
+    NonterminalJobs          = 0
+    UnresolvedProviderSubmissions = 0
+    OutstandingOutboxPublications = 0
     ActiveQueueMessages      = 0
     ScheduledQueueMessages   = 0
     QueueSendersVerified     = $true
@@ -37,12 +40,14 @@ $idleParameters = @{
 }
 
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"
-Assert-GateFails -Parameters $parameters
+Assert-GateSucceeds -ExpectedAction "stop_and_recreate" -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Stopped"
 Assert-GateSucceeds -ExpectedAction "recreate" -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Succeeded"
 Assert-GateSucceeds -ExpectedAction "recreate" -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.ActiveWorkerAttempts = 1
+Assert-GateFails -Parameters $parameters
+$parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.NonterminalJobs = 1
 Assert-GateFails -Parameters $parameters
 $parameters = $idleParameters.Clone(); $parameters.WorkerState = "Running"; $parameters.ScheduledQueueMessages = 1
 Assert-GateFails -Parameters $parameters

@@ -8,6 +8,75 @@ resource "azurerm_service_plan" "api" {
   tags                = { environment = "dev", project = "image-to-lego" }
 }
 
+resource "azurerm_container_app_job" "outbox_dispatcher" {
+  count                        = var.outbox_dispatcher_enabled ? 1 : 0
+  name                         = "caj-itl-outbox-dispatcher-dev"
+  resource_group_name          = data.azurerm_resource_group.dev.name
+  location                     = var.location
+  container_app_environment_id = data.azurerm_container_app_environment.development.id
+  replica_timeout_in_seconds   = 58
+  replica_retry_limit          = 0
+  workload_profile_name        = "Consumption"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [data.azurerm_user_assigned_identity.outbox_dispatcher[0].id]
+  }
+  registry {
+    server   = data.azurerm_container_registry.backend.login_server
+    identity = data.azurerm_user_assigned_identity.outbox_dispatcher[0].id
+  }
+  secret {
+    name                = "database-url"
+    identity            = data.azurerm_user_assigned_identity.outbox_dispatcher[0].id
+    key_vault_secret_id = "${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.database_url_secret_name}"
+  }
+  schedule_trigger_config {
+    cron_expression          = var.outbox_dispatcher_schedule
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+  template {
+    container {
+      name    = "outbox-dispatcher"
+      image   = local.outbox_dispatcher_image
+      cpu     = 0.25
+      memory  = "0.5Gi"
+      command = ["python", "-m", "app.outbox.run", "--max-messages", "20", "--max-runtime-seconds", "45"]
+      env {
+        name        = "DATABASE_URL"
+        secret_name = "database-url"
+      }
+      env {
+        name  = "APP_ENV"
+        value = var.app_environment
+      }
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = data.azurerm_user_assigned_identity.outbox_dispatcher[0].client_id
+      }
+      env {
+        name  = "AZURE_SERVICE_BUS_NAMESPACE"
+        value = local.common_worker_environment.AZURE_SERVICE_BUS_NAMESPACE
+      }
+      env {
+        name  = "AZURE_SERVICE_BUS_QUEUE"
+        value = local.common_worker_environment.AZURE_SERVICE_BUS_QUEUE
+      }
+      env {
+        name  = "AZURE_SERVICE_BUS_GENERATION_QUEUE"
+        value = local.common_worker_environment.AZURE_SERVICE_BUS_GENERATION_QUEUE
+      }
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = local.outbox_dispatcher_image != null && can(regex("^[0-9a-f]{40}$", var.outbox_dispatcher_backend_image_tag))
+      error_message = "outbox_dispatcher_backend_image_tag must be a full commit SHA when enabled."
+    }
+  }
+}
+
 resource "azurerm_linux_web_app" "api" {
   name                = "app-image-to-lego-api-dev-2b70703f"
   resource_group_name = data.azurerm_resource_group.dev.name

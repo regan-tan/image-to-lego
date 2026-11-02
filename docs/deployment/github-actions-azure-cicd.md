@@ -13,13 +13,13 @@ credential. **Do not deploy the current API changes without a functioning dispat
 accepted jobs persist a pending outbox intent and will not reach Service Bus until a dispatcher
 publishes it.
 
-Before the next rollout milestone, a reviewed operator must complete the production migration rollout,
-grant the dispatcher only its private `image_to_lego_outbox_dispatcher` role membership, configure
-and verify reliable dispatcher scheduling, establish real Azure worker-readiness evidence, implement
-the actual Azure release-controller adapters, and approve controlled deployment activation. Older
-deployed worker images must not be replaced before the reviewed bootstrap sequence has completed.
-The workflow's `RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"` value is hard-coded; repository
-variables cannot activate Azure mutations.
+Before the next rollout milestone, a reviewed operator must apply the production migrations,
+grant the dispatcher database login membership in `image_to_lego_outbox_dispatcher`, and enable
+the opt-in dispatcher identity and scheduled job in both Terraform roots. Older deployed worker
+images must not be replaced before the reviewed bootstrap sequence has completed.
+The workflow is intentionally inactive until repository variable `AZURE_DEPLOYMENTS_ENABLED=true` is
+set during the first controlled activation. `AZURE_COMPUTE_DEPLOYMENTS_ENABLED` must also be `true`.
+Before either variable is enabled, main-branch merges run validation only and make no Azure mutations.
 
 ## One-time Azure setup
 
@@ -97,7 +97,10 @@ conversion-only smoke test. A stopped ACI instance alone is not proof that provi
 
 ## Intentional compute downtime
 
-Set the GitHub repository variable `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=false` before a reviewed compute teardown. Pushes to `main` continue to run all CI validation and finish with an explicit **Azure deployment intentionally disabled** summary; they do not log in to Azure, build/publish ACR images, or change compute. This lets collaborators merge reviewed code without a misleading deployment success or unnecessary Azure cost.
+Keep GitHub repository variables `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=false` and
+`AZURE_DEPLOYMENTS_ENABLED=false` until the first controlled activation. Pushes to `main` continue to
+run all CI validation and finish with an explicit **Azure deployment intentionally disabled** summary;
+they do not log in to Azure, build/publish ACR images, or change compute.
 
 After a reviewed Terraform restoration and resource inventory, set `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true`. If this variable is true and a required compute resource is missing, the release fails before publishing an image. A manual rollback/redeployment (`workflow_dispatch`) also fails while the variable is false, so it cannot be mistaken for a completed release.
 
@@ -121,7 +124,7 @@ Every push to `main`, including a merge by any authorized collaborator, runs the
 1. Logs into Azure with GitHub OIDC.
 2. Requires `AZURE_COMPUTE_DEPLOYMENTS_ENABLED=true`. When it is false, the workflow records that CI completed without an Azure deployment, image publication, or resource change. A manual rollback/redeployment fails in this mode.
 3. Verifies that all five Terraform-managed compute resources still exist. If compute was deliberately destroyed or is unavailable while releases are enabled, it fails before publishing an image or changing a resource.
-4. Requires `JOB_SUBMISSIONS_ENABLED=false`, no unexpired durable worker lease, and zero active or scheduled messages on both worker queues. It additionally proves the only queue senders are the reviewed API and worker identities, so paused submissions cannot race in a new job. Empty queues alone are never sufficient evidence of safety. A running worker is never updated automatically because ACI updates restart every container and a lease/queue snapshot cannot close the receive-to-claim race. The workflow only deletes and recreates workers that were already stopped or terminal, match the reviewed bootstrap contract, have no secure environment variables, and have an existing immutable release image available for restoration. Missing compute is a failed prerequisite, not a successful release skip.
+4. Pauses submissions, then requires zero nonterminal jobs, worker attempts, unresolved provider submissions, undelivered outbox records, and active or scheduled messages on both worker queues. It verifies the dispatcher job, reviewed sender identities, bootstrap contract, and recoverable immutable image before stopping an idle running worker. It then repeats the complete database and queue snapshot before replacing it. Missing or ambiguous evidence is a failed prerequisite, not a successful release skip.
 5. Builds and pushes backend and frontend images tagged with the full commit SHA. Existing tags are rejected rather than overwritten, then their ACR digests are recorded in the workflow summary.
 6. Updates the App Service container image, both ACI workers with the full Terraform bootstrap contract (managed identities, ACR identity, Key Vault settings, restart policy, commands, and environment), and the frontend Container App image. If any mutation fails, the run reports the completed components as a partial release rather than claiming success.
 7. Checks API `/health`, frontend HTTPS availability, and that each replacement worker reaches `Running`; it reports image tags, digests, and URLs.

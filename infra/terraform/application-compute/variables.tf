@@ -47,3 +47,19 @@ variable "job_submissions_enabled" {
   type    = bool
   default = false
 }
+
+variable "outbox_dispatcher_enabled" {
+  description = "Create the scheduled Azure Container Apps outbox dispatcher job."
+  type        = bool
+  default     = false
+}
+variable "outbox_dispatcher_backend_image_tag" {
+  description = "Immutable backend image tag for the dispatcher when enabled."
+  type        = string
+  default     = null
+  nullable    = true
+}
+variable "outbox_dispatcher_schedule" {
+  type    = string
+  default = "*/5 * * * *"
+}

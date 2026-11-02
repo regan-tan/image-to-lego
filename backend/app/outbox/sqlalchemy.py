@@ -19,6 +19,10 @@ class SqlAlchemySubmissionOutboxRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
+    async def validate_access(self) -> None:
+        """Fail before claiming work unless the login can assume the private role."""
+        await self._scalar("select public.submission_outbox_publication_counts()")
+
     async def mark_expired_sends_attention(self) -> int:
         return cast(
             int,

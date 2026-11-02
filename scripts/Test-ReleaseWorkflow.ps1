@@ -19,17 +19,23 @@ $requiredFragments = @(
     "github.event_name == 'push' && github.ref == 'refs/heads/main'",
     "group: azure-development-deployment",
     "cancel-in-progress: false",
-    "JOB_SUBMISSIONS_ENABLED must remain false",
+    "Could not pause new job submissions.",
+    "Deployment completed but could not re-enable job submissions.",
     "ACI_WORKER_RELEASES_ENABLED",
     "AZURE_COMPUTE_DEPLOYMENTS_ENABLED",
-    'RELEASE_CONTROLLER_AZURE_MUTATIONS_ENABLED: "false"',
+    'AZURE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_DEPLOYMENTS_ENABLED }}',
     "DEPLOYMENT_DATABASE_URL",
     "worker_release_active_attempt_count",
+    "NonterminalJobs",
+    "UnresolvedProviderSubmissions",
+    "OutstandingOutboxPublications",
     "az servicebus queue show",
     "QueueSendersVerified",
     "does not match the reviewed bootstrap contract",
     "secureEnvironmentVariables[].name",
     "has no recoverable immutable backend image",
+    "stop_and_recreate",
+    "az container stop",
     "az acr repository show",
     "Refusing to overwrite existing",
     "az webapp config container set",
@@ -168,9 +174,9 @@ $manualRollback = $eligiblePush.Clone(); $manualRollback.EventName = "workflow_d
 Assert-DeploymentEligibility -Expected $true -Scenario $manualRollback
 
 function Get-ReleaseMode {
-    param([string]$EventName, [string]$ComputeDeploymentsEnabled, [string]$ControllerMutationsEnabled = "false")
+    param([string]$EventName, [string]$ComputeDeploymentsEnabled, [string]$DeploymentsEnabled = "false")
 
-    if ($ComputeDeploymentsEnabled -eq "true" -and $ControllerMutationsEnabled -eq "true") {
+    if ($ComputeDeploymentsEnabled -eq "true" -and $DeploymentsEnabled -eq "true") {
         return "deploy"
     }
     if ($EventName -eq "workflow_dispatch") {
@@ -185,8 +191,8 @@ if ((Get-ReleaseMode -EventName "push" -ComputeDeploymentsEnabled "false") -ne "
 if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "false") -ne "reject") {
     throw "A manual rollback during intentional compute downtime must fail."
 }
-if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "true") -ne "reject") {
-    throw "A repository variable alone must not activate Azure mutations."
+if ((Get-ReleaseMode -EventName "workflow_dispatch" -ComputeDeploymentsEnabled "true" -DeploymentsEnabled "true") -ne "deploy") {
+    throw "Activation must allow the controlled first deployment."
 }
 
 if ($workflow.Contains('echo "skip=true" >> "$GITHUB_OUTPUT"')) {
@@ -204,6 +210,7 @@ if (-not $releaseModeMatch.Success) {
 $releaseMode = $releaseModeMatch.Groups["body"].Value
 foreach ($requiredModeControl in @(
     'AZURE_COMPUTE_DEPLOYMENTS_ENABLED',
+    'AZURE_DEPLOYMENTS_ENABLED',
     'EVENT_NAME',
     'workflow_dispatch',
     'echo "enabled=false"',
