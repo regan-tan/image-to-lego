@@ -405,8 +405,11 @@ jobs:
           conversion_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-conversion-dev --query principalId --output tsv)"
           github_deployment_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-github-deployment-dev --query principalId --output tsv)"
           dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev --query principalId --output tsv)"
+          # Existing approved human sender assignments: one queue-scoped and one
+          # inherited from the namespace. Keep the set exact; reject other senders.
+          human_sender_ids="4f85c9b6-cca5-4e2a-b4d7-c5ae21b0fb96:f68dba8e-be79-43ae-a2d5-5ab94848e436"
           queue_senders_verified=true
-          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id:$github_deployment_principal_id" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id:$github_deployment_principal_id"; do
+          for expected in "generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id:$github_deployment_principal_id:$human_sender_ids" "conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id:$github_deployment_principal_id:$human_sender_ids"; do
             queue_name="${expected%%:*}"; expected_ids="${expected#*:}"
             actual_ids="$(az role assignment list --scope "$subscription_resource/Microsoft.ServiceBus/namespaces/$namespace/queues/$queue_name" --include-inherited --query "[?roleDefinitionName=='Azure Service Bus Data Sender'].principalId" --output tsv | sort -u | tr '\n' ':')"
             wanted_ids="$(tr ':' '\n' <<< "$expected_ids" | sort -u | tr '\n' ':')"
