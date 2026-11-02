@@ -17,7 +17,7 @@ jobs:
   dispatch:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     env:
       AZURE_DEPLOYMENT_CLIENT_ID: ${{ vars.AZURE_DEPLOYMENT_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -48,4 +48,4 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
       - name: Dispatch pending submission messages
         working-directory: backend
-        run: python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45
+        run: uv run --frozen python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45
