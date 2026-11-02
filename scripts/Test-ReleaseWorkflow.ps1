@@ -25,6 +25,8 @@ $requiredFragments = @(
     "AZURE_COMPUTE_DEPLOYMENTS_ENABLED",
     'AZURE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_DEPLOYMENTS_ENABLED }}',
     "DEPLOYMENT_DATABASE_URL",
+    "psql_database_url",
+    "postgresql+asyncpg://",
     "worker_release_active_attempt_count",
     "NonterminalJobs",
     "UnresolvedProviderSubmissions",
@@ -37,6 +39,8 @@ $requiredFragments = @(
     "stop_and_recreate",
     "az container stop",
     "az acr repository show",
+    "bootstrap-898adc56df2e",
+    "09df7acff2a193c94af7c67a8657da9bd87d2aaa",
     "Refusing to overwrite existing",
     "az webapp config container set",
     "az container create",
@@ -57,6 +61,29 @@ if ($workflow.Contains("az role assignment list --all --include-inherited --scop
     throw "Service Bus sender verification must not combine --all with a scoped inherited role lookup."
 }
 
+if ($workflow.Contains("Microsoft.App/jobs/caj-itl-outbox-dispatcher-dev") -or $workflow.Contains("az containerapp job")) {
+    throw "The Express Container Apps environment cannot depend on a Container Apps Job."
+}
+
+if (-not $workflow.Contains('github_deployment_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-github-deployment-dev')) {
+    throw "Service Bus sender verification must include the GitHub deployment identity."
+}
+if (-not $workflow.Contains('dispatcher_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-outbox-dispatcher-dev')) {
+    throw "Service Bus sender verification must include the existing dispatcher identity."
+}
+if (-not $workflow.Contains('generation:$api_principal_id:$generation_principal_id:$dispatcher_principal_id:$github_deployment_principal_id') -or
+    -not $workflow.Contains('conversion:$api_principal_id:$conversion_principal_id:$dispatcher_principal_id:$github_deployment_principal_id')) {
+    throw "Both Service Bus queues must include the API, worker, existing dispatcher, and GitHub deployment sender identities."
+}
+
+if (-not $workflow.Contains('postgresql+asyncpg://*) psql_database_url="postgresql://${DEPLOYMENT_DATABASE_URL#postgresql+asyncpg://}"')) {
+    throw "The release workflow must safely adapt the async SQLAlchemy URL for psql."
+}
+
+if (-not $workflow.Contains("sudo apt-get install --yes postgresql-client")) {
+    throw "The release workflow must install the psql client it uses."
+}
+
 if ($workflow -notmatch 'az role assignment list --scope "\$subscription_resource/Microsoft\.ServiceBus/namespaces/\$namespace/queues/\$queue_name" --include-inherited') {
     throw "Service Bus sender verification must inspect inherited assignments at each queue scope."
 }
@@ -71,6 +98,7 @@ if ($workflow.Contains('-c \"select public.worker_release_active_attempt_count()
 
 foreach ($requiredQuiescenceControl in @(
     'quiescence_counts="$(psql ',
+    '"$psql_database_url"',
     '-c "select public.worker_release_active_attempt_count()',
     '" || {',
     'Could not query database quiescence counts.',
@@ -81,8 +109,37 @@ foreach ($requiredQuiescenceControl in @(
     }
 }
 
+if ($workflow -notmatch '\$worker_image_tag" == "bootstrap-898adc56df2e" && "\$RELEASE_SHA" != "\$initial_worker_handoff_sha"') {
+    throw "Only the explicitly verified bootstrap image may bypass the normal full-SHA worker image check."
+}
+
 if ($workflow -notmatch '(?s)quiescence_counts="\$\(psql .*?\)" \|\| \{.*?read -r active_attempts') {
     throw "Database quiescence queries must fail closed before their counts are parsed."
+}
+
+$dispatcherWorkflowPath = Join-Path $PSScriptRoot "..\.github\workflows\dispatch-outbox.yml"
+if (-not (Test-Path -LiteralPath $dispatcherWorkflowPath -PathType Leaf)) {
+    throw "Submission-outbox dispatcher workflow was not found: $dispatcherWorkflowPath"
+}
+$dispatcherWorkflow = Get-Content -LiteralPath $dispatcherWorkflowPath -Raw
+foreach ($fragment in @(
+    'cron: "*/5 * * * *"',
+    'workflow_dispatch:',
+    "if: github.ref == 'refs/heads/main'",
+    'group: submission-outbox-dispatcher',
+    'cancel-in-progress: false',
+    'timeout-minutes: 10',
+    'AZURE_TOKEN_CREDENTIALS: AzureCliCredential',
+    'DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}',
+    'AZURE_SERVICE_BUS_NAMESPACE: image-to-lego-bus-dev-01.servicebus.windows.net',
+    'AZURE_SERVICE_BUS_GENERATION_QUEUE: generation',
+    'AZURE_SERVICE_BUS_QUEUE: conversion',
+    'azure/login@v2',
+    'uv run --frozen python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45'
+)) {
+    if (-not $dispatcherWorkflow.Contains($fragment)) {
+        throw "Submission-outbox dispatcher workflow is missing required control: $fragment"
+    }
 }
 
 if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
