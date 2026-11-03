@@ -29,10 +29,16 @@ data "azurerm_user_assigned_identity" "frontend" {
   name                = "id-image-to-lego-frontend-dev"
   resource_group_name = data.azurerm_resource_group.dev.name
 }
+data "azurerm_user_assigned_identity" "outbox_dispatcher" {
+  count               = var.outbox_dispatcher_enabled ? 1 : 0
+  name                = "id-image-to-lego-outbox-dispatcher-dev"
+  resource_group_name = data.azurerm_resource_group.dev.name
+}
 
 locals {
-  worker_backend_image = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-backend:${var.worker_backend_image_tag}"
-  frontend_image       = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-frontend:${var.frontend_image_tag}"
+  worker_backend_image    = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-backend:${var.worker_backend_image_tag}"
+  frontend_image          = "${data.azurerm_container_registry.backend.login_server}/image-to-lego-frontend:${var.frontend_image_tag}"
+  outbox_dispatcher_image = var.outbox_dispatcher_backend_image_tag == null ? null : "${data.azurerm_container_registry.backend.login_server}/image-to-lego-backend:${var.outbox_dispatcher_backend_image_tag}"
   common_worker_environment = {
     APP_ENV                            = var.app_environment
     AZURE_STORAGE_ACCOUNT_URL          = "https://storageimgtolego.blob.core.windows.net"

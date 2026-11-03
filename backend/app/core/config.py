@@ -9,6 +9,11 @@ SERVICE_BUS_MAX_LOCK_RENEWAL_LIMIT_SECONDS = 60 * 60
 WORKER_JOB_LEASE_SECONDS = 120
 WORKER_JOB_LEASE_RENEWAL_SECONDS = 30
 WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS = 5
+WORKER_RELEASE_DRAIN_POLL_SECONDS = 5
+OUTBOX_DISPATCHER_CLAIM_LEASE_SECONDS = 60
+OUTBOX_DISPATCHER_KNOWN_FAILURE_RETRY_SECONDS = 30
+OUTBOX_DISPATCHER_MAX_MESSAGES = 20
+OUTBOX_DISPATCHER_MAX_RUNTIME_SECONDS = 45
 
 
 class Settings(BaseSettings):
@@ -35,6 +40,18 @@ class Settings(BaseSettings):
     azure_service_bus_namespace: str | None = None
     azure_service_bus_queue: str | None = None
     azure_service_bus_generation_queue: str | None = None
+    outbox_dispatcher_claim_lease_seconds: int = Field(
+        default=OUTBOX_DISPATCHER_CLAIM_LEASE_SECONDS, ge=1, le=600
+    )
+    outbox_dispatcher_known_failure_retry_seconds: int = Field(
+        default=OUTBOX_DISPATCHER_KNOWN_FAILURE_RETRY_SECONDS, ge=1, le=3600
+    )
+    outbox_dispatcher_max_messages: int = Field(
+        default=OUTBOX_DISPATCHER_MAX_MESSAGES, ge=1, le=1000
+    )
+    outbox_dispatcher_max_runtime_seconds: int = Field(
+        default=OUTBOX_DISPATCHER_MAX_RUNTIME_SECONDS, ge=1, le=3600
+    )
     job_submissions_enabled: bool = True
     service_bus_max_lock_renewal_seconds: int = Field(
         default=SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS,
@@ -49,6 +66,11 @@ class Settings(BaseSettings):
     )
     worker_job_lease_recovery_buffer_seconds: int = Field(
         default=WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS,
+        ge=1,
+        le=60,
+    )
+    worker_release_drain_poll_seconds: int = Field(
+        default=WORKER_RELEASE_DRAIN_POLL_SECONDS,
         ge=1,
         le=60,
     )

@@ -7,16 +7,16 @@ variable "location" {
   default = "malaysiawest"
 }
 variable "api_backend_image_tag" {
-  type    = string
-  default = "dev-20261029-205014"
+  description = "Approved immutable backend image tag from a release record."
+  type        = string
 }
 variable "worker_backend_image_tag" {
-  type    = string
-  default = "bootstrap-898adc56df2e"
+  description = "Approved immutable worker image tag from a release record."
+  type        = string
 }
 variable "frontend_image_tag" {
-  type    = string
-  default = "dev-20261030-nginxfix"
+  description = "Approved immutable frontend image tag from a release record."
+  type        = string
 }
 variable "supabase_url" {
   type     = string
@@ -46,4 +46,20 @@ variable "app_environment" {
 variable "job_submissions_enabled" {
   type    = bool
   default = false
+}
+
+variable "outbox_dispatcher_enabled" {
+  description = "Create the scheduled Azure Container Apps outbox dispatcher job."
+  type        = bool
+  default     = false
+}
+variable "outbox_dispatcher_backend_image_tag" {
+  description = "Immutable backend image tag for the dispatcher when enabled."
+  type        = string
+  default     = null
+  nullable    = true
+}
+variable "outbox_dispatcher_schedule" {
+  type    = string
+  default = "*/5 * * * *"
 }

@@ -29,3 +29,25 @@ variable "conversion_queue_name" {
   type    = string
   default = "conversion"
 }
+
+variable "outbox_dispatcher_enabled" {
+  description = "Create the opt-in outbox dispatcher identity and permissions."
+  type        = bool
+  default     = false
+}
+
+variable "outbox_dispatcher_database_url_secret_name" {
+  description = "Existing Key Vault database connection secret the dispatcher may read."
+  type        = string
+  default     = "database-url"
+}
+
+variable "github_oidc_subject" {
+  description = "Exact verified GitHub OIDC subject for main."
+  type        = string
+
+  validation {
+    condition     = can(regex("^repo:[^/@:]+(@[0-9]+)?/[^/@:]+(@[0-9]+)?:ref:refs/heads/main$", var.github_oidc_subject))
+    error_message = "github_oidc_subject must be the legacy or immutable main-branch GitHub OIDC subject."
+  }
+}

@@ -9,6 +9,8 @@ from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient
 from azure.servicebus.exceptions import ServiceBusError
 
+GENERATION_MESSAGE_VERSION = 1
+
 
 class GenerationQueueError(Exception):
     """A generation message could not be durably published."""
@@ -75,5 +77,11 @@ class AzureServiceBusGenerationQueue:
 
 
 def _message(*, job_id: UUID, owner_id: UUID) -> ServiceBusMessage:
-    body = json.dumps({"jobId": str(job_id), "ownerId": str(owner_id)})
+    body = json.dumps(
+        {
+            "messageVersion": GENERATION_MESSAGE_VERSION,
+            "jobId": str(job_id),
+            "ownerId": str(owner_id),
+        }
+    )
     return ServiceBusMessage(body, content_type="application/json")
