@@ -1,4 +1,6 @@
-import { buildGuideWarnings, placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
+import { useRef, useState } from "react";
+
+import { placementBuildStagesForStep, type LegoBuildStep } from "../legoBuildInstructions";
 import { colorLabel, partLabel } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import type { LegoModel } from "../schemas/legoModels";
@@ -34,7 +36,6 @@ export function BuildGuideWorkspace({
   const placementStages = placementBuildStagesForStep(model, steps, selectedStepIndex);
   const isFirstStep = selectedStepIndex === 0;
   const isLastStep = selectedStepIndex === steps.length - 1;
-  const warnings = buildGuideWarnings(model);
 
   return (
     <section className="build-guide" aria-labelledby="build-guide-title">
@@ -50,15 +51,15 @@ export function BuildGuideWorkspace({
 
         <aside className="build-guide__step-panel" aria-label="Current build step">
           <div className="build-guide__guide-header" aria-live="polite" aria-atomic="true">
-            <p className="eyebrow">Build guide / draft</p>
+            <p className="eyebrow">Assembly / draft</p>
             <h2 id="build-guide-title">Build guide</h2>
             <div className="build-guide__step-status">
-              <h3>Step {step.stepNumber}</h3>
+              <div className="build-guide__step-heading"><StepJump key={selectedStepIndex} stepNumber={step.stepNumber} stepCount={steps.length} onStepChange={onStepChange} /></div>
               <p>Add {step.partCount} {step.partCount === 1 ? "brick" : "bricks"}</p>
             </div>
             <div className="build-guide__progress-summary">
               <p>Step {step.stepNumber} of {steps.length}</p>
-              <p>{step.partCount} added this step · {step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
+              <p>{step.cumulativePartCount} of {step.totalModelPartCount} parts built</p>
             </div>
             <progress
               className="build-guide__progress"
@@ -66,20 +67,7 @@ export function BuildGuideWorkspace({
               value={step.stepNumber}
               max={steps.length}
             />
-            <ol className="build-guide__step-list" aria-label="Build steps">
-              {steps.map((buildStep, index) => (
-                <li key={buildStep.stepNumber}>
-                  <button
-                    type="button"
-                    className={index === selectedStepIndex ? "is-selected" : ""}
-                    aria-current={index === selectedStepIndex ? "step" : undefined}
-                    onClick={() => onStepChange(index)}
-                  >
-                    {String(buildStep.stepNumber).padStart(2, "0")}
-                  </button>
-                </li>
-              ))}
-            </ol>
+
           </div>
 
           <div className="build-guide__parts">
@@ -87,7 +75,7 @@ export function BuildGuideWorkspace({
               Parts needed this step
               <span aria-hidden="true">{step.parts.length} {step.parts.length === 1 ? "type" : "types"}</span>
             </h4>
-            <ul>
+            <ul className="build-guide__part-list">
               {step.parts.map((part) => (
                 <li key={`${part.partId ?? part.brickType}-${part.colorId ?? part.color}`}>
                   <LegoPartThumbnail part={part} />
@@ -106,8 +94,8 @@ export function BuildGuideWorkspace({
                 </li>
               ))}
             </ul>
-            <section className="build-guide__placements" aria-labelledby="placement-guidance-title">
-              <h4 id="placement-guidance-title">Placement guidance</h4>
+            <details className="build-guide__placements">
+              <summary>Placement guidance</summary>
               <ol>
                 {step.placementGuidance.map((placement) => (
                   <li key={placement.placementIndex}>
@@ -115,13 +103,8 @@ export function BuildGuideWorkspace({
                   </li>
                 ))}
               </ol>
-            </section>
-            <section className="build-guide__warnings" aria-labelledby="build-guide-warnings-title">
-              <h4 id="build-guide-warnings-title">Buildability notes</h4>
-              <ul>
-                {warnings.map((warning) => <li key={warning}>{warning}</li>)}
-              </ul>
-            </section>
+            </details>
+
           </div>
 
           <div className="build-guide__footer">
@@ -143,10 +126,52 @@ export function BuildGuideWorkspace({
                 {isLastStep ? "Build complete" : "Next"}
               </button>
             </div>
-            <p>Assembly guidance · review buildability notes before building.</p>
           </div>
         </aside>
       </div>
     </section>
+  );
+}
+
+function StepJump({ stepNumber, stepCount, onStepChange }: {
+  stepNumber: number;
+  stepCount: number;
+  onStepChange: (stepIndex: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  function closeEditor() {
+    setDraft(null);
+    requestAnimationFrame(() => buttonRef.current?.focus());
+  }
+
+  if (draft === null) {
+    return (
+      <span>Step <button ref={buttonRef} type="button" className="build-guide__step-jump"
+        aria-label={`Step ${stepNumber}. Click to jump to a step`}
+        onClick={() => setDraft(String(stepNumber))}>
+        {stepNumber}
+      </button><span className="build-guide__step-total"> out of {stepCount}</span></span>
+    );
+  }
+
+  return (
+    <form className="build-guide__step-editor" onSubmit={(event) => {
+      event.preventDefault();
+      const target = Number(draft);
+      if (!Number.isInteger(target) || target < 1 || target > stepCount) return;
+      closeEditor();
+      onStepChange(target - 1);
+    }}>
+      <label>Step <input type="number" aria-label="Step number" min={1} max={stepCount}
+        step={1} required value={draft} autoFocus
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => setDraft(null)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); closeEditor(); }
+        }} /></label>
+    </form>
   );
 }

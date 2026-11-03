@@ -19,6 +19,12 @@ class StoredBlobProperties:
     sha256: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ListedBlob:
+    name: str
+    last_modified: datetime
+
+
 class BlobStorageError(Exception):
     pass
 
@@ -50,6 +56,10 @@ class BlobStorage(Protocol):
         mime_type: str,
         sha256: str,
     ) -> bool: ...
+
+    async def list_blobs(self, *, prefix: str) -> list[ListedBlob]: ...
+
+    async def delete_blob(self, *, blob_name: str) -> None: ...
 
 
 class AzureBlobStorage:
@@ -201,6 +211,29 @@ class AzureBlobStorage:
         except AzureError as error:
             raise BlobStorageError("Could not store the generated model.") from error
         return True
+
+    async def list_blobs(self, *, prefix: str) -> list[ListedBlob]:
+        container_client = self._service_client.get_container_client(self._container_name)
+        try:
+            return [
+                ListedBlob(name=properties.name, last_modified=properties.last_modified)
+                async for properties in container_client.list_blobs(name_starts_with=prefix)
+            ]
+        except AzureError as error:
+            raise BlobStorageError("Could not list blobs.") from error
+
+    async def delete_blob(self, *, blob_name: str) -> None:
+        blob_client = self._service_client.get_blob_client(
+            container=self._container_name,
+            blob=blob_name,
+        )
+        try:
+            await blob_client.delete_blob()
+        except ResourceNotFoundError:
+            # Already gone, for example after an earlier interrupted sweep; the goal is reached.
+            return
+        except AzureError as error:
+            raise BlobStorageError("Could not delete the blob.") from error
 
     async def close(self) -> None:
         await self._service_client.close()

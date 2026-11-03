@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 
 import { useAppLayout } from "../components/appLayoutContext";
 import { CubeIcon, ImageIcon, PlusIcon } from "../components/Icons";
-import { StatusBadge } from "../components/StatusBadge";
+import { ProjectStatusFilter } from "../components/ProjectStatusFilter";
+import { PROJECT_STATUS_LABELS } from "../projectStatus";
 import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import { useProjects } from "../hooks/useProjects";
 import type { Project } from "../schemas/projects";
@@ -59,8 +60,8 @@ export function ProjectsPage() {
 
       {hasProjects ? (
         <>
-          <section className="workspace-welcome" aria-labelledby="workspace-welcome-title"><div><p className="eyebrow">Made for makers</p><h2 id="workspace-welcome-title">Every creation starts<br />with a single image.</h2><p>Upload a photo, watch it become 3D, and explore your very own brick-built version.</p><button type="button" className="button button--secondary" onClick={openNewProject}>Explore the studio ↗</button></div><span className="workspace-welcome__bricks" aria-hidden="true">▦</span></section>
-          <div className="projects-toolbar"><h2>Recent projects <span>{projectList.length.toString().padStart(2, "0")}</span></h2><div><label className="visually-hidden" htmlFor="project-search">Search projects</label><input id="project-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search projects..." /><label className="visually-hidden" htmlFor="project-status">Filter projects</label><select id="project-status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All projects</option><option value="needs_photo">Needs photo</option><option value="photo_ready">Photo ready</option><option value="generating">Generating</option><option value="model_ready">Model ready</option><option value="failed">Failed</option></select></div></div>
+          <section className="workspace-welcome" aria-labelledby="workspace-welcome-title"><div><p className="eyebrow">Made for makers</p><h2 id="workspace-welcome-title">Every creation starts<br />with a single image.</h2><p>Upload a photo, watch it become 3D, and explore your very own brick-built version.</p></div><span className="workspace-welcome__bricks" aria-hidden="true">▦</span></section>
+          <div className="projects-toolbar"><h2>Recent projects</h2><div><label className="visually-hidden" htmlFor="project-search">Search projects</label><input id="project-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search projects..." /><ProjectStatusFilter value={status} onChange={setStatus} /></div></div>
         <ul className="project-grid">
           {visibleProjects.map((project) => (
             <li key={project.id}>
@@ -90,7 +91,10 @@ function ProjectCard({ project, accessToken, userId }: ProjectCardProps) {
       <div className="project-card__body">
         <h2 className="project-card__name">{project.name}</h2>
         <div className="project-card__footer">
-          <StatusBadge status={project.status} />
+          <span className="project-status">
+            <span className="project-status__dot" data-status={project.status} aria-hidden="true" />
+            {PROJECT_STATUS_LABELS[project.status]}
+          </span>
           <p className="project-card__meta">Updated {projectDateFormat.format(new Date(project.updatedAt))}</p>
         </div>
       </div>

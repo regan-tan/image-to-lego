@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
+from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobSasPermissions
 from azure.storage.blob.aio import BlobServiceClient
 
@@ -119,3 +120,26 @@ async def test_download_read_sas_sets_an_attachment_file_name(
 
     assert captured["content_disposition"] == 'attachment; filename="model.glb"'
     assert cast(BlobSasPermissions, captured["permission"]).read is True
+
+
+class FakeMissingBlobClient:
+    async def delete_blob(self) -> None:
+        raise ResourceNotFoundError("The specified blob does not exist.")
+
+
+class FakeServiceClientWithMissingBlob(FakeBlobServiceClient):
+    def get_blob_client(self, container: str, blob: str) -> FakeMissingBlobClient:
+        del container, blob
+        return FakeMissingBlobClient()
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_already_missing_blob_succeeds() -> None:
+    storage = AzureBlobStorage(
+        account_url="https://legostorage.blob.core.windows.net",
+        container_name="artifacts",
+        service_client=cast(BlobServiceClient, FakeServiceClientWithMissingBlob()),
+    )
+
+    await storage.delete_blob(blob_name="projects/project-id/uploads/upload-id/image.png")
+    await storage.close()

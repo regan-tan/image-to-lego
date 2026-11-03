@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { Session } from "@supabase/supabase-js";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { IDLE_TIMEOUT_MS, idleSessionKey } from "./idleSession";
 
 const authMock = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -13,6 +14,8 @@ const authMock = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signOut: vi.fn(),
   signUp: vi.fn(),
+  updateUser: vi.fn(),
+  refreshSession: vi.fn(),
 }));
 
 vi.mock("./lib/supabase", () => ({
@@ -42,13 +45,14 @@ function renderApp(initialRoute: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <MemoryRouter initialEntries={[initialRoute]}>
       <QueryClientProvider client={client}>
         <App />
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  return { ...view, client };
 }
 
 function mockSignedOutSession() {
@@ -100,16 +104,21 @@ function mockSignedInSession() {
 
 describe("App", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.stubGlobal("fetch", vi.fn());
     mockSignedOutSession();
     authMock.signUp.mockResolvedValue({ data: { session: null }, error: null });
     authMock.signInWithPassword.mockResolvedValue({ data: { session: null }, error: null });
     authMock.signInWithOAuth.mockResolvedValue({ error: null });
     authMock.signOut.mockResolvedValue({ error: null });
+    authMock.updateUser.mockResolvedValue({ data: { user: session.user }, error: null });
+    authMock.refreshSession.mockResolvedValue({ data: { session }, error: null });
   });
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -119,6 +128,35 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: /Your ideas.*Made of.*bricks/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Get started/ })).toHaveAttribute("href", "/login");
+  });
+
+  it("locks an expired saved session before loading private project data", async () => {
+    mockSignedInSession();
+    localStorage.setItem(idleSessionKey(session), String(Date.now() - IDLE_TIMEOUT_MS));
+    renderApp("/workspace");
+
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(screen.getByText(/Your session expired after 10 minutes/)).toBeInTheDocument();
+    expect(authMock.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("logs out an idle user and removes cached private data", async () => {
+    mockSignedInSession();
+    mockApi();
+    const { client } = renderApp("/workspace");
+    await screen.findByRole("heading", { name: "Your creations." });
+    client.setQueryData(["private-test-data"], { secret: "private" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+
+    await act(async () => {
+      vi.setSystemTime(Date.now() + IDLE_TIMEOUT_MS);
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(screen.getByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(authMock.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(client.getQueryData(["private-test-data"])).toBeUndefined();
   });
 
   it("renders the login page", async () => {
@@ -237,6 +275,73 @@ describe("App", () => {
     );
   });
 
+  it("saves a trimmed display name and updates the account menu when Supabase mutates the session", async () => {
+    const currentSession = { ...session, user: { ...session.user, user_metadata: {} } };
+    authMock.getSession.mockResolvedValue({ data: { session: currentSession } });
+    mockApi();
+    authMock.updateUser.mockImplementation(async ({ data }: { data: { full_name: string } }) => {
+      currentSession.user.user_metadata = { full_name: data.full_name };
+      const notify = authMock.onAuthStateChange.mock.calls[0][0] as (event: string, next: Session) => void;
+      notify("USER_UPDATED", currentSession);
+      return { data: { user: currentSession.user }, error: null };
+    });
+    renderApp("/profile");
+    const input = await screen.findByLabelText("Display name");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "  Reiwen Tan  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Display name saved.")).toBeInTheDocument();
+    expect(authMock.updateUser).toHaveBeenCalledWith({ data: { full_name: "Reiwen Tan" } });
+    expect(authMock.refreshSession).toHaveBeenCalledOnce();
+    expect(input).toHaveValue("Reiwen Tan");
+    expect(screen.getByRole("button", { name: "Account menu" })).toHaveTextContent("Reiwen Tan");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("validates display names before saving", async () => {
+    mockSignedInSession();
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ id: session.user.id, email: session.user.email, displayName: "Builder", avatarUrl: null }));
+    renderApp("/profile");
+    const input = await screen.findByLabelText("Display name");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.submit(input.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("between 1 and 80 characters");
+    fireEvent.change(input, { target: { value: "x".repeat(81) } });
+    fireEvent.submit(input.closest("form")!);
+    expect(screen.getByRole("alert")).toHaveTextContent("between 1 and 80 characters");
+    expect(authMock.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("preserves the draft after a failed save and lets the user retry", async () => {
+    mockSignedInSession();
+    mockApi();
+    authMock.updateUser.mockResolvedValueOnce({ data: { user: null }, error: { message: "Unavailable" } });
+    renderApp("/profile");
+    const input = await screen.findByLabelText("Display name");
+    fireEvent.change(input, { target: { value: "Reiwen" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We could not save your display name.");
+    expect(input).toHaveValue("Reiwen");
+    expect(authMock.refreshSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Display name saved.")).toBeInTheDocument();
+    expect(authMock.updateUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a successful save separately from a failed session refresh", async () => {
+    mockSignedInSession();
+    mockApi();
+    authMock.refreshSession.mockResolvedValueOnce({ data: { session: null }, error: { message: "Unavailable" } });
+    renderApp("/profile");
+    const input = await screen.findByLabelText("Display name");
+    fireEvent.change(input, { target: { value: "Reiwen" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText(/Your name was saved, but your session could not refresh/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(input).toHaveValue("Reiwen");
+    expect(authMock.updateUser).toHaveBeenCalledOnce();
+  });
+
   it("signs out from the account menu and returns to login", async () => {
     mockSignedInSession();
     mockApi();
@@ -245,8 +350,38 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
+    expect(authMock.signOut).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, sign out" }));
     expect(authMock.signOut).toHaveBeenCalledOnce();
     expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+  });
+
+  it("keeps the session when sign-out confirmation is cancelled", async () => {
+    mockSignedInSession();
+    mockApi();
+    renderApp("/workspace");
+    fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(screen.getByRole("dialog", { name: "Sign out?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "No, stay signed in" }));
+    expect(screen.queryByRole("dialog", { name: "Sign out?" })).not.toBeInTheDocument();
+    expect(authMock.signOut).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Your creations." })).toBeInTheDocument();
+  });
+
+  it("keeps the confirmation open on sign-out failure and allows retry", async () => {
+    mockSignedInSession();
+    mockApi();
+    authMock.signOut.mockResolvedValueOnce({ error: { message: "Unavailable" } });
+    renderApp("/workspace");
+    fireEvent.click(await screen.findByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, sign out" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We could not sign you out.");
+    expect(screen.getByRole("dialog", { name: "Sign out?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, sign out" }));
+    expect(await screen.findByRole("heading", { name: "Make something extraordinary." })).toBeInTheDocument();
+    expect(authMock.signOut).toHaveBeenCalledTimes(2);
   });
 
   it("redirects a private project URL to sign in", async () => {
@@ -287,9 +422,16 @@ describe("Signed-in app", () => {
 
     const card = await screen.findByRole("link", { name: /Castle/ });
     expect(card).toHaveAttribute("href", `/projects/${castleProject.id}`);
-    expect(within(card).getByText("3D model ready")).toBeInTheDocument();
+    expect(within(card).getByText("Model ready")).toBeInTheDocument();
     expect(screen.getByText("1 project")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Your first build starts here." })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Filter projects" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Needs photo" }));
+    expect(screen.queryByRole("link", { name: /Castle/ })).not.toBeInTheDocument();
+    expect(screen.getByText("No projects match the current search or filter.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Filter projects" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "All projects" }));
+    expect(screen.getByRole("link", { name: /Castle/ })).toBeInTheDocument();
   });
 
   it("shows the signed-in email in the account menu and closes it with Escape", async () => {
@@ -301,13 +443,16 @@ describe("Signed-in app", () => {
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("builder@example.com")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Profile" })).toHaveAttribute("href", "/profile");
+    expect(screen.getByRole("link", { name: "My profile" })).toHaveAttribute("href", "/profile");
 
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(screen.queryByText("builder@example.com")).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
   it("opens How it works only when asked and closes it again", async () => {
@@ -317,7 +462,8 @@ describe("Signed-in app", () => {
     await screen.findByRole("heading", { name: "Your creations." });
     expect(screen.queryByRole("dialog", { name: "How it works" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "How it works" }));
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "About this app" }));
     expect(screen.getByRole("dialog", { name: "How it works" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Generate a 3D model" })).toBeInTheDocument();
 

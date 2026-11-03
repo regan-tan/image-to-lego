@@ -1,14 +1,13 @@
+import { useEffect, useId, useRef, useState } from "react";
+
 import {
   colorLabel,
   createPurchaseReadyPartsList,
   type LegoPartsListResult,
   type LegoPartGroup,
-  type UnresolvedPurchasePart,
   partColorVerificationLabel,
   partLabel,
-  purchaseReadinessReasonLabel,
   serializePartsListCsv,
-  serializePurchaseReadyPartsCsv,
 } from "../legoPartsList";
 import { legoColorHex } from "../legoColors";
 import { LegoPartThumbnail } from "./LegoPartThumbnail";
@@ -55,16 +54,14 @@ export function PartsListWorkspace({
     <section className="parts-list-workspace" aria-labelledby="parts-list-title">
       <div className="parts-list-workspace__heading">
         <div>
-          <h2 id="parts-list-title">Parts list</h2>
+          <div className="parts-list-title-row">
+            <h2 id="parts-list-title">Parts list</h2>
+            <PartsListInfo parts={partsList.parts} algorithmVersion={algorithmVersion} partColorVerificationVersion={partColorVerificationVersion} />
+          </div>
           <p>{partsList.totalPartCount} total parts · {partsList.uniquePartTypeCount} unique part types</p>
         </div>
         <PartsListDownloadButton parts={partsList.parts} />
       </div>
-      <PurchaseReadyPartsExport
-        parts={partsList.parts}
-        algorithmVersion={algorithmVersion}
-        partColorVerificationVersion={partColorVerificationVersion}
-      />
       <div className="parts-list__table-wrap" role="region" aria-label="Parts inventory" tabIndex={0}>
         <table className="parts-list__table">
           <colgroup>
@@ -84,73 +81,51 @@ export function PartsListWorkspace({
   );
 }
 
-function PurchaseReadyPartsExport({
-  parts,
-  algorithmVersion,
-  partColorVerificationVersion,
-}: {
+function PartsListInfo({ parts, algorithmVersion, partColorVerificationVersion }: {
   parts: LegoPartGroup[];
   algorithmVersion?: string;
   partColorVerificationVersion?: string;
 }) {
-  const purchaseReady = createPurchaseReadyPartsList(
-    parts,
-    algorithmVersion,
-    partColorVerificationVersion,
-  );
-  const unresolvedByReason = new Map<UnresolvedPurchasePart["reason"], number>();
-  for (const unresolvedPart of purchaseReady.unresolvedParts) {
-    unresolvedByReason.set(
-      unresolvedPart.reason,
-      (unresolvedByReason.get(unresolvedPart.reason) ?? 0) + 1,
-    );
-  }
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
+  const unresolvedCount = createPurchaseReadyPartsList(parts, algorithmVersion, partColorVerificationVersion).unresolvedParts.length;
 
-  function handleDownload() {
-    const csv = serializePurchaseReadyPartsCsv(purchaseReady.parts);
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "lego-purchase-ready-parts.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+  useEffect(() => {
+    if (!isOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) setIsOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen]);
 
   return (
-    <section className="parts-list-sourcing" aria-labelledby="parts-list-sourcing-title">
-      <div>
-        <h3 id="parts-list-sourcing-title">Sourcing export</h3>
-        <p>
-          Exports verified manufactured part/color pairs only. It does not confirm current
-          availability, stock, pricing, or sellers.
-        </p>
-        {purchaseReady.unresolvedParts.length > 0 ? (
-          <div className="form-error" role="alert">
-            <p>
-              {purchaseReady.unresolvedParts.length} part/color row
-              {purchaseReady.unresolvedParts.length === 1 ? " is" : "s are"} excluded from the
-              purchase-ready CSV.
-            </p>
-            <ul>
-              {[...unresolvedByReason.entries()].map(([reason, count]) => (
-                <li key={reason}>
-                  {count}: {purchaseReadinessReasonLabel(reason)}
-                </li>
-              ))}
-            </ul>
-            <p>The complete parts-list CSV remains available for review.</p>
-          </div>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        className="button button--secondary"
-        onClick={handleDownload}
-        disabled={purchaseReady.parts.length === 0}
-      >
-        Download purchase-ready CSV
+    <span className="parts-list-info" ref={containerRef}
+      onMouseEnter={() => setIsOpen(true)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) setIsOpen(false);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false);
+      }}>
+      <button type="button" className="parts-list-info__trigger" aria-label="About parts list verification" aria-expanded={isOpen} aria-describedby={isOpen ? tooltipId : undefined} onFocus={() => setIsOpen(true)} onClick={() => setIsOpen(true)}>
+        <span aria-hidden="true">!</span>
       </button>
-    </section>
+      {isOpen ? (
+        <span id={tooltipId} className="parts-list-info__tooltip" role="tooltip">
+          The CSV includes the complete model inventory. Only verified manufactured part/color pairs should be used for sourcing. Verification does not confirm current availability, stock, pricing, or sellers.
+          {unresolvedCount > 0 ? <span>{unresolvedCount} part/color {unresolvedCount === 1 ? "row needs" : "rows need"} additional verification. Check the Verification column.</span> : null}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

@@ -1,24 +1,28 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { SignOutIcon, UserIcon } from "./Icons";
+import { HelpIcon, SignOutIcon, UserIcon } from "./Icons";
 
 interface AccountMenuProps {
   email: string | undefined;
+  name?: string;
+  onAbout: () => void;
   onSignOut: () => void;
 }
 
-export function AccountMenu({ email, onSignOut }: AccountMenuProps) {
+export function AccountMenu({ email, name, onAbout, onSignOut }: AccountMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
-  const initial = email?.charAt(0).toUpperCase() || "?";
+  const displayName = name?.trim() || email?.split("@")[0] || "Your account";
+  const initials = displayName.split(/\s+/).slice(0, 2).map((word) => word.charAt(0)).join("").toUpperCase();
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
+    containerRef.current?.querySelector<HTMLAnchorElement>("a")?.focus();
 
     function handlePointerDown(event: PointerEvent) {
       if (!containerRef.current?.contains(event.target as Node)) {
@@ -41,7 +45,9 @@ export function AccountMenu({ email, onSignOut }: AccountMenuProps) {
   }, [isOpen]);
 
   return (
-    <div className="account-menu" ref={containerRef}>
+    <div className="account-menu" ref={containerRef} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false);
+    }}>
       <button
         ref={triggerRef}
         type="button"
@@ -51,7 +57,9 @@ export function AccountMenu({ email, onSignOut }: AccountMenuProps) {
         aria-controls={panelId}
         onClick={() => setIsOpen((current) => !current)}
       >
-        {initial}
+        <span className="account-menu__avatar" aria-hidden="true">{initials}</span>
+        <span className="account-menu__name">{displayName}</span>
+        <span className="account-menu__chevron" aria-hidden="true">⌃</span>
       </button>
       {isOpen ? (
         <div id={panelId} className="account-menu__panel">
@@ -62,9 +70,22 @@ export function AccountMenu({ email, onSignOut }: AccountMenuProps) {
           <div className="account-menu__divider" />
           <Link to="/profile" className="account-menu__item" onClick={() => setIsOpen(false)}>
             <UserIcon />
-            Profile
+            My profile
           </Link>
-          <button type="button" className="account-menu__item" onClick={onSignOut}>
+          <button type="button" className="account-menu__item" onClick={() => {
+            setIsOpen(false);
+            triggerRef.current?.focus();
+            onAbout();
+          }}>
+            <HelpIcon />
+            About this app
+          </button>
+          <div className="account-menu__divider" />
+          <button type="button" className="account-menu__item" onClick={() => {
+            setIsOpen(false);
+            triggerRef.current?.focus();
+            onSignOut();
+          }}>
             <SignOutIcon />
             Sign out
           </button>

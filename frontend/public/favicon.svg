@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <g stroke="#252822" stroke-width="4" stroke-linejoin="round">
+    <!-- Stepped ears give the head a brick-built silhouette. -->
+    <path fill="#d5d7ce" d="M14 43 25 34h89v69l-11 10H14Z"/>
+    <path fill="#f8f8f4" d="M14 43h89v70H14Z"/>
+    <path fill="#e5e6de" d="m14 43 11-9h89l-11 9Z"/>
+    <path fill="#e1b72e" d="m14 43 8-8V15h16v12h12v16Z"/>
+    <path fill="#ffd744" d="M14 43V23h16v12h12v8Z"/>
+    <path fill="#e1b72e" d="m78 43 8-8V27h12V15h16v28Z"/>
+    <path fill="#ffd744" d="M78 43v-8h12V23h13v20Z"/>
+  </g>
+  <!-- Offset joints suggest stacked bricks without obscuring the face. -->
+  <path d="M16 62h85M16 91h85M61 45v15M28 93v17M89 93v17" fill="none" stroke="#b7b9ae" stroke-width="3"/>
+  <g fill="#252822">
+    <rect x="29" y="69" width="16" height="15" rx="2"/>
+    <rect x="73" y="69" width="16" height="15" rx="2"/>
+    <path d="M53 90h12v7l-6 5-6-5Z"/>
+  </g>
+  <path d="m45 103 7 5h14l7-5" fill="none" stroke="#252822" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

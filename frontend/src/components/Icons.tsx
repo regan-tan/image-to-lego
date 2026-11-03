@@ -136,6 +136,17 @@ export function DownloadIcon(props: IconProps) {
   return <StrokeIcon {...props}><path d="M12 4v12" /><path d="m7 11 5 5 5-5" /><path d="M4 20h16" /></StrokeIcon>;
 }
 
+export function TrashIcon(props: IconProps) {
+  return (
+    <StrokeIcon {...props}>
+      <path d="M4 7h16" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </StrokeIcon>
+  );
+}
+
 export function UploadIcon(props: IconProps) {
   return (
     <StrokeIcon {...props}>
@@ -147,15 +158,5 @@ export function UploadIcon(props: IconProps) {
 }
 
 export function LogoMark() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
-      <rect width="28" height="28" rx="7" fill="#ffcd00" />
-      <g fill="none" stroke="#101820" strokeOpacity="0.45" strokeWidth="1.6">
-        <circle cx="9.5" cy="9.5" r="3.2" />
-        <circle cx="18.5" cy="9.5" r="3.2" />
-        <circle cx="9.5" cy="18.5" r="3.2" />
-        <circle cx="18.5" cy="18.5" r="3.2" />
-      </g>
-    </svg>
-  );
+  return <img className="logo-mark" src="/favicon.svg" alt="" width="28" height="28" />;
 }
