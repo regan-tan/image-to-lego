@@ -647,6 +647,15 @@ jobs:
             sleep 10
           done
           curl --fail --silent --show-error --max-time 30 "https://$frontend_fqdn/" >/dev/null
+          # HTTP 200 on /login alone does not prove Supabase auth is usable.
+          # The frontend's startup script must generate populated runtime config.
+          runtime_config_file="$RUNNER_TEMP/runtime-config.js"
+          curl --fail --silent --show-error --max-time 30 "https://$frontend_fqdn/runtime-config.js" > "$runtime_config_file"
+          if ! grep --extended-regexp --quiet 'supabaseUrl: "https://[^"]+"' "$runtime_config_file" || \
+             ! grep --extended-regexp --quiet 'supabasePublishableKey: "[^"]+"' "$runtime_config_file"; then
+            echo "Frontend runtime-config.js is missing a nonempty Supabase URL or publishable key." >&2
+            exit 1
+          fi
           backend_image="$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA"
           frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
           if ! az webapp config container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --output json | grep --fixed-strings --quiet "$backend_image"; then
