@@ -208,6 +208,35 @@ jobs:
         run: npm run test -- --run
       - name: Production build
         run: npm run build
+      - name: Smoke-test runtime authentication config in built Nginx image
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file frontend/Dockerfile --tag image-to-lego-frontend:runtime-smoke .
+          docker run --detach --name itl-frontend-runtime-smoke --publish 127.0.0.1:18080:8080 \
+            --env API_UPSTREAM=https://example.org \
+            --env VITE_API_BASE_URL= \
+            --env VITE_SUPABASE_URL=https://example.supabase.co \
+            --env VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_smoke \
+            image-to-lego-frontend:runtime-smoke
+          trap 'docker rm --force itl-frontend-runtime-smoke >/dev/null 2>&1 || true' EXIT
+          found=false
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:18080/runtime-config.js > "$RUNNER_TEMP/runtime-config.js" 2>/dev/null; then
+              found=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$found" != true ]] || \
+             ! grep --fixed-strings --quiet 'https://example.supabase.co' "$RUNNER_TEMP/runtime-config.js" || \
+             ! grep --fixed-strings --quiet 'sb_publishable_smoke' "$RUNNER_TEMP/runtime-config.js"; then
+            echo "Frontend startup failed to generate an HTTP-accessible runtime-config.js with the configured Supabase values." >&2
+            docker logs itl-frontend-runtime-smoke >&2
+            exit 1
+          fi
+          echo "Nginx runtime-config.js creation and interpolation passed."
 
   terraform:
     name: Terraform
