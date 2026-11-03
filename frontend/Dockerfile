@@ -16,6 +16,8 @@ FROM nginx:1.27-alpine
 
 COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY frontend/docker-entrypoint.d/40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+# The official nginx entrypoint skips non-executable .sh files.
+RUN chmod 755 /docker-entrypoint.d/40-runtime-config.sh
 COPY --from=build /workspace/frontend/dist /usr/share/nginx/html
 
 EXPOSE 8080
