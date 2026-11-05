@@ -724,7 +724,10 @@ def _repair_local_candidate_ids(
         and (
             candidate_id in required_supporter_ids
             or candidate_id in anchored_supporter_ids
-            or candidate.cells.issubset(repair_cells)
+            # A replacement can preserve a baseline projection ray by extending
+            # beyond the cells occupied by its displaced placement.
+            # Keeping only subsets makes that replacement unavailable.
+            or bool(candidate.cells & repair_cells)
         )
     }
     producer_ids_by_coordinate: dict[tuple[float, float, float], list[int]] = defaultdict(list)
@@ -857,7 +860,17 @@ def _solve_support_repair(
     model.maximize(sum(coverage))
     solver, stage_one = _solve(model, LOCAL_REPAIR_MAX_DETERMINISTIC_TIME)
     if not _has_usable_incumbent(stage_one):
-        raise V4SolveFailure(LOCAL_REPAIR_BOUND_FAILURE)
+        raise V4SolveFailure(
+            f"{LOCAL_REPAIR_BOUND_FAILURE} "
+            f"status={stage_one.status}; allowed_repair_count={allowed_repair_count}; "
+            f"baseline_mutable_count={len(baseline_ids - frozen_ids)}; "
+            f"unsupported_locked_count={len(tuple(unsupported_locked))}; "
+            f"local_candidate_count={len(local_ids)}; "
+            f"baseline_coverage={baseline_coverage}; "
+            f"solver_runtime_seconds={stage_one.runtime_seconds:.6f}; "
+            "constraints=part_bound,non_overlap,direct_support,"
+            "locked_support,baseline_projection_coverage."
+        )
 
     achieved_coverage = stage_one.objective_value
     assert achieved_coverage is not None

@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 LEGO_MODEL_MIME_TYPE = "application/json"
 _TERMINAL_JOB_STATUSES = frozenset({JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED})
 SUPPORTED_CONVERSION_MESSAGE_VERSION = 1
+MAX_LOGGED_CONVERSION_FAILURE_REASON_LENGTH = 500
 _ThreadResult = TypeVar("_ThreadResult")
 
 
@@ -135,7 +136,16 @@ class ConversionJobProcessor:
                     ),
                 )
             )
-        except ConversionError:
+        except ConversionError as error:
+            reason = " ".join(str(error).split())
+            logger.warning(
+                "Conversion failed: job_id=%s algorithm_version=%s reason=%s",
+                worker_job.conversion.job.id,
+                worker_job.conversion.algorithm_version,
+                reason[:MAX_LOGGED_CONVERSION_FAILURE_REASON_LENGTH]
+                if reason
+                else type(error).__name__,
+            )
             await self._fail(
                 worker_job,
                 attempt_id=attempt_id,

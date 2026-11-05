@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import trimesh
 from ortools.sat.python import cp_model
@@ -22,6 +24,8 @@ from app.conversion.surface_grid_v4 import (
 )
 from app.workers.conversion_worker import serialize_lego_model
 
+DOG_MODEL_PATH = Path.home() / "Downloads" / "dog-model.glb"
+
 
 def _one_by_one_plate() -> core.BrickType:
     return next(
@@ -29,6 +33,17 @@ def _one_by_one_plate() -> core.BrickType:
         for part in core.BRICK_CATALOGUE
         if part.shape == "rectangular"
         and part.length_studs == 1
+        and part.width_studs == 1
+        and part.height_plates == 1
+    )
+
+
+def _two_by_one_plate() -> core.BrickType:
+    return next(
+        part
+        for part in core.BRICK_CATALOGUE
+        if part.shape == "rectangular"
+        and part.length_studs == 2
         and part.width_studs == 1
         and part.height_plates == 1
     )
@@ -238,6 +253,86 @@ def test_local_repair_adds_support_without_replacing_an_unrelated_baseline_place
         baseline_cell,
     }
     assert analyze_buildability((slope, *result.placements)).unsupported_placement_count == 0
+
+
+def test_local_repair_keeps_an_intersecting_replacement_that_preserves_coverage() -> None:
+    """A required supporter needs a replacement beyond the old local region."""
+    baseline = core.BrickPlacement(_two_by_one_plate(), core.GridPosition(0, 0, 0), 0)
+    required_supporter = core.BrickPlacement(_two_by_one_plate(), core.GridPosition(1, 0, 0), 0)
+    replacement = core.BrickPlacement(_two_by_one_plate(), core.GridPosition(-1, 0, 0), 0)
+    candidates = tuple(
+        surface_grid_v4._Candidate(placement, core._placement_cells(placement))
+        for placement in (baseline, required_supporter, replacement)
+    )
+    candidate_males = tuple(
+        frozenset(surface_grid_v4._male_connector_coordinates((candidate.placement,)))
+        for candidate in candidates
+    )
+    candidate_receivers = tuple(
+        frozenset(surface_grid_v4._receiver_connector_coordinates(candidate.placement))
+        for candidate in candidates
+    )
+    locked_slope = _slope_4286(x=2)
+    target_cells = frozenset(cell for candidate in candidates for cell in candidate.cells)
+    variable_pixels = tuple(
+        sorted(
+            surface_grid_v4._pixels_for_cells(candidates[0].cells),
+            key=surface_grid_v4._pixel_order,
+        )
+    )
+    cells_by_pixel = surface_grid_v4._cells_by_pixel(target_cells)
+    local_ids = surface_grid_v4._repair_local_candidate_ids(
+        candidates,
+        frozenset({0}),
+        {1},
+        set(),
+        set(),
+        candidate_males,
+        candidate_receivers,
+        set(),
+        base_z=0,
+    )
+
+    assert local_ids == (0, 1, 2)
+
+    with pytest.raises(V4SolveFailure, match="local part bound"):
+        surface_grid_v4._solve_support_repair(
+            candidates,
+            frozenset({0}),
+            frozenset(),
+            (0, 1),
+            (locked_slope,),
+            candidate_males,
+            candidate_receivers,
+            set(),
+            0,
+            variable_pixels,
+            cells_by_pixel,
+            allowed_repair_count=3,
+        )
+
+    repaired = surface_grid_v4._solve_support_repair(
+        candidates,
+        frozenset({0}),
+        frozenset(),
+        local_ids,
+        (locked_slope,),
+        candidate_males,
+        candidate_receivers,
+        set(),
+        0,
+        variable_pixels,
+        cells_by_pixel,
+        allowed_repair_count=3,
+    )
+
+    assert repaired.repaired_ids == (1, 2)
+    repaired_placements = tuple(
+        candidates[candidate_id].placement for candidate_id in repaired.repaired_ids
+    )
+    assert analyze_buildability(
+        (locked_slope, *repaired_placements)
+    ).unsupported_placement_count == 0
 
 
 def test_compact_local_repair_stays_within_its_derived_part_bound() -> None:
@@ -729,3 +824,24 @@ def test_v4_real_path_serializes_the_canonical_output() -> None:
     assert model.metadata.algorithm_version == core.SURFACE_GRID_V4
     assert b'"algorithmVersion":"surface-grid-v4"' in serialized
     assert b'"buildability"' in serialized
+
+
+@pytest.mark.skipif(
+    not DOG_MODEL_PATH.is_file(),
+    reason="The local dog-model.glb regression fixture is not available.",
+)
+def test_v4_local_dog_model_support_repair_regression() -> None:
+    source = DOG_MODEL_PATH.read_bytes()
+
+    assert len(source) == 1_393_684
+    model = core.convert_glb(
+        source,
+        core.ConversionSettings(
+            target_parts=300,
+            up_axis=core.Axis.Y,
+            algorithm_version=core.SURFACE_GRID_V4,
+        ),
+    )
+
+    assert model.part_count == 571
+    assert analyze_buildability(model.placements).unsupported_placement_count == 0
