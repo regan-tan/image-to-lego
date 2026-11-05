@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     azure_service_bus_namespace: str | None = None
     azure_service_bus_queue: str | None = None
     azure_service_bus_generation_queue: str | None = None
+    outbox_auto_dispatch_enabled: bool = False
+    outbox_dispatcher_database_url: str | None = None
     outbox_dispatcher_claim_lease_seconds: int = Field(
         default=OUTBOX_DISPATCHER_CLAIM_LEASE_SECONDS, ge=1, le=600
     )

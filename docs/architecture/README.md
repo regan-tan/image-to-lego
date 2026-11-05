@@ -12,11 +12,13 @@ flowchart LR
     API -->|"owner-scoped metadata<br/>implemented"| SupabaseDb["Supabase PostgreSQL<br/>projects + artifact lifecycle"]
     API -->|"single-blob create-only SAS + declared-metadata confirmation<br/>implemented"| Blob["Azure Blob Storage<br/>private source images"]
     Web -->|"direct HTTPS PUT<br/>binary never enters API"| Blob
-    API -->|"reconstruction job/run + identifier-only message"| GenerationBus["Azure Service Bus<br/>generation queue"]
+    API -->|"job/run + submission intent<br/>one transaction"| Outbox[("PostgreSQL submission outbox")]
+    API -->|"optional post-commit trigger"| Dispatcher["Fenced outbox dispatcher<br/>private database login"]
+    Dispatcher -->|"identifier-only message"| GenerationBus["Azure Service Bus<br/>generation queue"]
     GenerationBus -->|"at-least-once delivery"| GenerationWorker["Python generation worker"]
     GenerationWorker -->|"submit/status/result"| Fal["fal.ai / TRELLIS"]
     GenerationWorker -->|"validated source + canonical GLB"| Blob
-    API -->|"conversion job/run + identifier-only message"| ConversionBus["Azure Service Bus<br/>conversion queue"]
+    Dispatcher -->|"identifier-only message"| ConversionBus["Azure Service Bus<br/>conversion queue"]
     ConversionBus -->|"at-least-once delivery"| ConversionWorker["Python conversion worker"]
     ConversionWorker -->|"verified GLB + canonical LEGO JSON"| Blob
 ```
@@ -60,13 +62,18 @@ so both workers treat duplicate messages as normal. The database uniqueness cons
 `provider_job_id` prevents normal duplicate delivery from submitting another paid fal request. Unique
 partial indexes make output artifact publication idempotent for each reconstruction and conversion job.
 
-The API creates each durable job/run before publishing. This slice intentionally does not add a
-transactional outbox: a failed initial publish marks the new job failed and returns 503. The conversion
-worker atomically claims queued work, verifies the reconstructed GLB SHA-256, and uses create-only
-canonical Blob naming plus the output index to make duplicate delivery harmless. If a generation worker
-crashes after claiming a provider submission but before persisting its ID, later delivery treats the
-running, ID-less job as ambiguous: it waits while the claim is fresh and then fails it unconfirmed rather
-than risking duplicate paid work. The design does not claim distributed exactly-once delivery.
+The API creates each durable job/run and submission-outbox intent in one transaction. When
+`OUTBOX_AUTO_DISPATCH_ENABLED` is enabled and its separate
+`OUTBOX_DISPATCHER_DATABASE_URL` is configured, a newly committed `201 Created` schedules one bounded
+best-effort dispatcher pass after the response path; idempotent `200` replays do not. The dispatcher
+uses its private database role, claims and fences each intent, and then publishes the existing
+identifier-only queue message. It preserves uncertain-publication handling and leaves failed work in the
+durable outbox for the GitHub Actions dispatcher to recover. The conversion worker atomically claims
+queued work, verifies the reconstructed GLB SHA-256, and uses create-only canonical Blob naming plus the
+output index to make duplicate delivery harmless. If a generation worker crashes after claiming a
+provider submission but before persisting its ID, later delivery treats the running, ID-less job as
+ambiguous: it waits while the claim is fresh and then fails it unconfirmed rather than risking duplicate
+paid work. The design does not claim distributed exactly-once delivery.
 
 ## Trust boundaries
 

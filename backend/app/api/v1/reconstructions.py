@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +10,7 @@ from app.api.dependencies import CurrentOwnerId
 from app.core.database import DatabaseSession
 from app.core.errors import ApplicationError
 from app.domain.jobs import JobStatusRecord, ReconstructionJob
+from app.outbox.auto_dispatch import schedule_auto_dispatch
 from app.repositories.jobs import JobRepository
 from app.repositories.reconstruction import ReconstructionRepository
 from app.repositories.sqlalchemy_jobs import SqlAlchemyJobRepository
@@ -69,6 +70,7 @@ IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 async def create_reconstruction(
     request: CreateReconstructionRequest,
     http_request: Request,
+    background_tasks: BackgroundTasks,
     owner_id: CurrentOwnerId,
     idempotency_key: IdempotencyKey,
     repository: ReconstructionRepositoryDependency,
@@ -94,6 +96,8 @@ async def create_reconstruction(
         )
     except ApplicationError as error:
         raise _http_error(error) from error
+    if created:
+        schedule_auto_dispatch(background_tasks, http_request.app.state.settings)
     return JSONResponse(
         status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         content=_reconstruction_response(reconstruction).model_dump(mode="json", by_alias=True),
