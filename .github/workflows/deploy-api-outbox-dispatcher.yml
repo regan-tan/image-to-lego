@@ -108,19 +108,30 @@ jobs:
           REGISTRY_SERVER: ${{ steps.preflight.outputs.registry_server }}
         run: |
           set -euo pipefail
-          if existing_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv 2>&1)"; then
-            [[ "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ACR returned an invalid digest for an existing backend SHA tag." >&2; exit 1; }
+          tag_list_file="$RUNNER_TEMP/backend-tags.json"
+          tag_list_error_file="$RUNNER_TEMP/backend-tags-error.txt"
+          if ! az acr repository show-tags --name "$AZURE_ACR_NAME" --repository image-to-lego-backend --output json >"$tag_list_file" 2>"$tag_list_error_file"; then
+            echo "Could not list ACR backend image tags; refusing to publish or deploy." >&2
+            if [[ -s "$tag_list_error_file" ]]; then
+              sed -E \
+                -e 's/(Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/Ig' \
+                -e 's/([?&](sig|se|sp|sv|skoid|sktid)=)[^&[:space:]]+/\1[REDACTED]/Ig' \
+                "$tag_list_error_file" >&2
+            else
+              echo "Azure CLI exited without an error message." >&2
+            fi
+            exit 1
+          fi
+          jq -e 'type == "array"' "$tag_list_file" >/dev/null || { echo "ACR returned an invalid tag list." >&2; exit 1; }
+          if jq -e --arg release_sha "$RELEASE_SHA" 'any(.[]; . == $release_sha)' "$tag_list_file" >/dev/null; then
             echo "Reusing immutable backend SHA tag; it will not be overwritten."
             if [[ "$ROLLBACK" == "true" ]]; then
               echo "Using the requested known-good rollback image."
             fi
-          elif [[ "$existing_digest" == *"manifest unknown"* || "$existing_digest" == *"ManifestUnknownError"* ]]; then
+          else
             [[ "$ROLLBACK" != "true" ]] || { echo "A rollback requires a previously published known-good backend SHA tag." >&2; exit 1; }
             az acr login --name "$AZURE_ACR_NAME"
             docker buildx build --push --tag "$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA" backend
-          else
-            echo "Could not determine whether the backend SHA tag exists; refusing to publish or deploy." >&2
-            exit 1
           fi
           backend_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv)"
           [[ "$backend_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ACR did not return a valid digest for the immutable backend SHA tag." >&2; exit 1; }
