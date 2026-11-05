@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -15,6 +16,7 @@ from app.core.errors import ApplicationError
 from app.domain.artifacts import Artifact, ArtifactStatus
 from app.domain.jobs import Job, JobStatus, JobType, ReconstructionJob, WorkerReconstructionJob
 from app.main import create_app
+from app.outbox import auto_dispatch
 from app.providers.blob_storage import BlobNotFoundError, BlobStorageError, StoredBlobProperties
 from app.providers.reconstruction import (
     ReconstructionOutput,
@@ -281,6 +283,103 @@ async def test_reconstruction_creates_and_replays_as_durable_requests(
     await client.aclose()
     assert created.status_code == 201
     assert replayed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_new_reconstruction_schedules_one_dispatch_but_replay_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeReconstructionRepository()
+    api_settings = Settings(
+        database_url="postgresql+asyncpg://api.example.test/app",
+        outbox_auto_dispatch_enabled=True,
+        outbox_dispatcher_database_url="postgresql+asyncpg://dispatcher.example.test/app",
+    )
+    app = create_app(api_settings)
+    dispatched_settings: list[Settings] = []
+
+    async def record_dispatch(settings: Settings) -> None:
+        dispatched_settings.append(settings)
+
+    async def current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(str(OWNER_ID), None, None, None)
+
+    monkeypatch.setattr(auto_dispatch, "_run_auto_dispatch", record_dispatch)
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_reconstruction_repository] = lambda: repository
+    body = {"projectId": str(PROJECT_ID), "sourceArtifactId": str(SOURCE_ID)}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/v1/reconstructions", headers={"Idempotency-Key": "key"}, json=body
+        )
+        repository.initiation = ReconstructionInitiation(
+            reconstruction=repository.initiation.reconstruction,
+            created=False,
+        )
+        replayed = await client.post(
+            "/api/v1/reconstructions", headers={"Idempotency-Key": "key"}, json=body
+        )
+
+    assert created.status_code == 201
+    assert replayed.status_code == 200
+    assert [settings.database_url for settings in dispatched_settings] == [
+        "postgresql+asyncpg://dispatcher.example.test/app"
+    ]
+    assert api_settings.database_url == "postgresql+asyncpg://api.example.test/app"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reconstruction_replays_schedule_only_the_committed_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ConcurrentRepository(FakeReconstructionRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self._created = False
+
+        async def create_or_get(self, **_: object) -> ReconstructionInitiation:
+            if self._created:
+                return ReconstructionInitiation(
+                    reconstruction=self.initiation.reconstruction, created=False
+                )
+            self._created = True
+            return self.initiation
+
+    repository = ConcurrentRepository()
+    app = create_app(
+        Settings(
+            outbox_auto_dispatch_enabled=True,
+            outbox_dispatcher_database_url="postgresql+asyncpg://dispatcher.example.test/app",
+        )
+    )
+    dispatches: list[Settings] = []
+
+    async def record_dispatch(settings: Settings) -> None:
+        dispatches.append(settings)
+
+    async def current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(str(OWNER_ID), None, None, None)
+
+    monkeypatch.setattr(auto_dispatch, "_run_auto_dispatch", record_dispatch)
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_reconstruction_repository] = lambda: repository
+    body = {"projectId": str(PROJECT_ID), "sourceArtifactId": str(SOURCE_ID)}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        responses = await asyncio.gather(
+            *[
+                client.post(
+                    "/api/v1/reconstructions", headers={"Idempotency-Key": "key"}, json=body
+                )
+                for _ in range(4)
+            ]
+        )
+
+    assert sorted(response.status_code for response in responses) == [200, 200, 200, 201]
+    assert len(dispatches) == 1
 
 
 @pytest.mark.asyncio

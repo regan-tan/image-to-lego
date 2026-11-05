@@ -7,6 +7,12 @@
 > recreation are recorded in [the Terraform lifecycle runbook](azure-terraform-lifecycle.md).
 > This note does not amend an accepted architecture decision; that requires team review.
 > For the executable App Service/ACI release process, use [GitHub Actions Azure release setup](github-actions-azure-cicd.md), not the historical Container Apps commands below.
+>
+> Container Apps Jobs were evaluated for the submission-outbox dispatcher but cannot be deployed in
+> the existing Express environment. A separate Standard environment could not be provisioned because
+> the selected region had no capacity. Those unsuccessful Terraform experiments are not part of the
+> release path and must not be committed or applied. The dispatcher is instead a bounded opt-in API
+> pass, with the existing GitHub Actions dispatcher retained as scheduled/manual fallback.
 
 ## Status and scope
 

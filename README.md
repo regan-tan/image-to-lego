@@ -227,10 +227,14 @@ the artifact MIME type. On success, the worker bounds the provider result downlo
 canonical GLB at `projects/{projectId}/reconstructions/{jobId}/model.glb`; fal-hosted URLs are never
 stored as canonical artifacts.
 
-There is deliberately no transactional outbox in this slice. If the initial Service Bus publish fails,
-the just-created job is marked failed and the API returns 503. A crash between a paid fal submission and
-persistence of its request ID is treated conservatively: the worker waits while the submission claim is
-fresh, then fails it as unconfirmed rather than risking a duplicate paid request.
+Job creation writes the job and its submission-outbox intent in one database transaction. On a new
+`201 Created` response, the API can optionally start one bounded, best-effort dispatcher pass after
+that transaction commits. The dispatcher uses a separate database login and the existing fenced
+outbox protocol before it publishes identifier-only Service Bus messages. A failed automatic pass
+does not change the successful response or submit work directly; the scheduled/manual GitHub Actions
+dispatcher remains the recovery path. A crash between a paid fal submission and persistence of its
+request ID is treated conservatively: the worker waits while the submission claim is fresh, then fails
+it as unconfirmed rather than risking a duplicate paid request.
 
 Completed LEGO-model JSON includes engineering-only fidelity metadata. It records binary orthographic
 silhouette IoU for front (XZ), side (YZ), and top (XY) views, plus their mean and the target-versus-
@@ -478,6 +482,8 @@ Never commit real credentials. Root and service-specific `.env.example` files co
 | `AZURE_SERVICE_BUS_NAMESPACE` | API/worker | Service Bus fully qualified namespace |
 | `AZURE_SERVICE_BUS_QUEUE` | API/worker | Durable conversion queue name |
 | `AZURE_SERVICE_BUS_GENERATION_QUEUE` | API/worker | Durable image-to-3D generation queue name |
+| `OUTBOX_AUTO_DISPATCH_ENABLED` | API | Opt in to one post-commit, bounded dispatcher pass for new jobs (default `false`) |
+| `OUTBOX_DISPATCHER_DATABASE_URL` | API dispatcher pass | Separate private dispatcher-login URL; never use `DATABASE_URL` for this role |
 | `SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS` | Worker | Maximum processing and message-lock renewal time (default 900; allowed 60-3600) |
 | `WORKER_JOB_LEASE_SECONDS` | Worker | Database attempt-lease duration (default 120; allowed 60-600) |
 | `WORKER_JOB_LEASE_RENEWAL_SECONDS` | Worker | Database attempt-lease renewal interval (default 30; must be less than the lease) |

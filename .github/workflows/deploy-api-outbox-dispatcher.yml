@@ -1,0 +1,234 @@
+name: Deploy API outbox dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Approved full 40-character commit SHA reachable from main.
+        required: true
+        type: string
+      rollback:
+        description: Deploy a previously recorded known-good backend SHA.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: api-outbox-dispatcher-release
+  cancel-in-progress: false
+
+jobs:
+  deploy-api:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      ROLLBACK: ${{ inputs.rollback }}
+      AZURE_RESOURCE_GROUP: rg-image-to-lego-dev
+      AZURE_ACR_NAME: itl2b70703f
+      AZURE_API_NAME: app-image-to-lego-api-dev-2b70703f
+      AZURE_KEY_VAULT_NAME: kv-itl-2b70703f
+      AZURE_SERVICE_BUS_NAMESPACE_NAME: image-to-lego-bus-dev-01
+      AZURE_DEPLOYMENT_CLIENT_ID: ${{ vars.AZURE_DEPLOYMENT_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Check out main history
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify approved main commit
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a full 40-character lowercase commit SHA." >&2; exit 1; }
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "release_sha is not reachable from main." >&2; exit 1; }
+          git checkout --detach "$RELEASE_SHA"
+          if git cat-file -e "$RELEASE_SHA:backend/app/outbox/auto_dispatch.py"; then
+            echo "supports_auto_dispatch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supports_auto_dispatch=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          version: "0.12.18"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Validate backend dispatcher behavior
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run mypy app
+          uv run pytest -q
+      - name: Log in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_DEPLOYMENT_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Verify configuration, identity, and deployment access
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+          registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          current_image="$(az webapp config show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query linuxFxVersion --output tsv)"
+          [[ -n "$current_image" && "$current_image" != "null" ]] || { echo "The App Service has no readable Linux container image configuration." >&2; exit 1; }
+          dispatcher_reference="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='OUTBOX_DISPATCHER_DATABASE_URL'].value | [0]" --output tsv)"
+          [[ "$dispatcher_reference" == @Microsoft.KeyVault* && "$dispatcher_reference" == *"dispatcher-database-url"* ]] || { echo "OUTBOX_DISPATCHER_DATABASE_URL must already reference the dedicated dispatcher-database-url Key Vault secret." >&2; exit 1; }
+          auto_dispatch="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='OUTBOX_AUTO_DISPATCH_ENABLED'].value | [0]" --output tsv)"
+          [[ "$auto_dispatch" == "false" || "$auto_dispatch" == "true" ]] || { echo "OUTBOX_AUTO_DISPATCH_ENABLED must be an explicit true or false App Service setting." >&2; exit 1; }
+          app_id="$(az webapp identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query userAssignedIdentities --output json | jq -r 'keys[0]')"
+          [[ -n "$app_id" && "$app_id" != "null" ]] || { echo "The API user-assigned identity could not be determined." >&2; exit 1; }
+          app_principal_id="$(az identity show --ids "$app_id" --query principalId --output tsv)"
+          key_vault_id="$(az keyvault show --name "$AZURE_KEY_VAULT_NAME" --query id --output tsv)"
+          key_vault_count="$(az role assignment list --assignee "$app_principal_id" --scope "$key_vault_id" --include-inherited --query "[?roleDefinitionName=='Key Vault Secrets User'] | length(@)" --output tsv)"
+          secret_count="$(az role assignment list --assignee "$app_principal_id" --scope "$key_vault_id/secrets/dispatcher-database-url" --include-inherited --query "[?roleDefinitionName=='Key Vault Secrets User'] | length(@)" --output tsv)"
+          [[ "$key_vault_count" =~ ^[1-9][0-9]*$ || "$secret_count" =~ ^[1-9][0-9]*$ ]] || { echo "The API identity lacks Key Vault Secrets User access required for the dispatcher secret." >&2; exit 1; }
+          for queue_name in generation conversion; do
+            queue_scope="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ServiceBus/namespaces/$AZURE_SERVICE_BUS_NAMESPACE_NAME/queues/$queue_name"
+            sender_count="$(az role assignment list --assignee "$app_principal_id" --scope "$queue_scope" --include-inherited --query "[?roleDefinitionName=='Azure Service Bus Data Sender'] | length(@)" --output tsv)"
+            [[ "$sender_count" =~ ^[1-9][0-9]*$ ]] || { echo "The API identity lacks Azure Service Bus Data Sender on $queue_name." >&2; exit 1; }
+          done
+          reference_status="$(az rest --method get --url "https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Web/sites/$AZURE_API_NAME/config/configreferences/appsettings/OUTBOX_DISPATCHER_DATABASE_URL?api-version=2022-03-01" --query "properties.status" --output tsv)"
+          [[ "$reference_status" == "Resolved" ]] || { echo "The dedicated dispatcher Key Vault reference is not resolved (status: $reference_status)." >&2; exit 1; }
+          deployment_principal_id="$(az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name id-image-to-lego-github-deployment-dev --query principalId --output tsv)"
+          api_scope="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Web/sites/$AZURE_API_NAME"
+          deploy_roles="$(az role assignment list --assignee "$deployment_principal_id" --scope "$api_scope" --include-inherited --query "[].roleDefinitionName" --output tsv)"
+          grep --extended-regexp --quiet '^(Website Contributor|Contributor)$' <<< "$deploy_roles" || { echo "The GitHub OIDC identity does not have an App Service deployment role." >&2; exit 1; }
+          acr_id="$(az acr show --name "$AZURE_ACR_NAME" --query id --output tsv)"
+          acr_push_count="$(az role assignment list --assignee "$deployment_principal_id" --scope "$acr_id" --include-inherited --query "[?roleDefinitionName=='AcrPush'] | length(@)" --output tsv)"
+          [[ "$acr_push_count" =~ ^[1-9][0-9]*$ ]] || { echo "The GitHub OIDC identity lacks AcrPush on the backend registry; refusing to pause submissions." >&2; exit 1; }
+          echo "registry_server=$registry_server" >> "$GITHUB_OUTPUT"
+          echo "previous_image=$current_image" >> "$GITHUB_OUTPUT"
+      - name: Publish or reuse immutable backend image
+        id: image
+        shell: bash
+        env:
+          REGISTRY_SERVER: ${{ steps.preflight.outputs.registry_server }}
+        run: |
+          set -euo pipefail
+          if existing_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv 2>&1)"; then
+            [[ "$existing_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ACR returned an invalid digest for an existing backend SHA tag." >&2; exit 1; }
+            echo "Reusing immutable backend SHA tag; it will not be overwritten."
+            if [[ "$ROLLBACK" == "true" ]]; then
+              echo "Using the requested known-good rollback image."
+            fi
+          elif [[ "$existing_digest" == *"manifest unknown"* || "$existing_digest" == *"ManifestUnknownError"* ]]; then
+            [[ "$ROLLBACK" != "true" ]] || { echo "A rollback requires a previously published known-good backend SHA tag." >&2; exit 1; }
+            az acr login --name "$AZURE_ACR_NAME"
+            docker buildx build --push --tag "$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA" backend
+          else
+            echo "Could not determine whether the backend SHA tag exists; refusing to publish or deploy." >&2
+            exit 1
+          fi
+          backend_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv)"
+          [[ "$backend_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ACR did not return a valid digest for the immutable backend SHA tag." >&2; exit 1; }
+          echo "backend_digest=$backend_digest" >> "$GITHUB_OUTPUT"
+          echo "backend_image=$REGISTRY_SERVER/image-to-lego-backend@$backend_digest" >> "$GITHUB_OUTPUT"
+      - name: Pause job submissions
+        id: pause-submissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=false --output none
+          echo "paused=true" >> "$GITHUB_OUTPUT"
+          actual="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)"
+          [[ "$actual" == "false" ]] || { echo "Could not pause new job submissions." >&2; exit 1; }
+      - name: Deploy API image only
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ steps.image.outputs.backend_image }}
+          REGISTRY_SERVER: ${{ steps.preflight.outputs.registry_server }}
+        run: |
+          set -euo pipefail
+          az webapp config container set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --container-image-name "$BACKEND_IMAGE" --container-registry-url "https://$REGISTRY_SERVER"
+          az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME"
+      - name: Verify API health and deployed image
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ steps.image.outputs.backend_image }}
+        run: |
+          set -euo pipefail
+          hostname="$(az webapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query defaultHostName --output tsv)"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error --max-time 15 "https://$hostname/health"; then break; fi
+            [[ "$attempt" == "30" ]] && { echo "API health check did not succeed." >&2; exit 1; }
+            sleep 10
+          done
+          actual="$(az webapp config show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query linuxFxVersion --output tsv)"
+          [[ "$actual" == *"$BACKEND_IMAGE"* ]] || { echo "API image configuration does not report the requested immutable image digest." >&2; exit 1; }
+      - name: Set automatic dispatch for the deployed API
+        shell: bash
+        env:
+          SUPPORTS_AUTO_DISPATCH: ${{ steps.target.outputs.supports_auto_dispatch }}
+        run: |
+          set -euo pipefail
+          status="$(az rest --method get --url "https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.Web/sites/$AZURE_API_NAME/config/configreferences/appsettings/OUTBOX_DISPATCHER_DATABASE_URL?api-version=2022-03-01" --query "properties.status" --output tsv)"
+          [[ "$status" == "Resolved" ]] || { echo "Dispatcher Key Vault reference is no longer resolved." >&2; exit 1; }
+          if [[ "$SUPPORTS_AUTO_DISPATCH" == "true" ]]; then
+            desired="true"
+          else
+            desired="false"
+          fi
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings "OUTBOX_AUTO_DISPATCH_ENABLED=$desired" --output none
+          enabled="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='OUTBOX_AUTO_DISPATCH_ENABLED'].value | [0]" --output tsv)"
+          [[ "$enabled" == "$desired" ]] || { echo "Could not set OUTBOX_AUTO_DISPATCH_ENABLED=$desired." >&2; exit 1; }
+      - name: Verify configured API before reopening submissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostname="$(az webapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query defaultHostName --output tsv)"
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error --max-time 15 "https://$hostname/health"; then break; fi
+            [[ "$attempt" == "30" ]] && { echo "Configured API health check did not succeed." >&2; exit 1; }
+            sleep 10
+          done
+      - name: Reopen job submissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=true --output none
+          submissions="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)"
+          [[ "$submissions" == "true" ]] || { echo "Could not reopen job submissions." >&2; exit 1; }
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### API-only dispatcher release complete
+          - Commit: \`$RELEASE_SHA\`
+          - Backend image: \`${{ steps.image.outputs.backend_image }}\`
+          - Previous API image: \`${{ steps.preflight.outputs.previous_image }}\`
+          - Rollback requested: \`$ROLLBACK\`
+          - Workers, frontend, queues, Terraform, and database migrations: unchanged
+          - Fallback: Dispatch submission outbox workflow remains available.
+          EOF
+      - name: Report paused-submission recovery procedure
+        if: failure()
+        shell: bash
+        env:
+          SUBMISSIONS_PAUSED: ${{ steps.pause-submissions.outputs.paused }}
+        run: |
+          if [[ "$SUBMISSIONS_PAUSED" == "true" ]]; then
+            cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Recovery required
+          - \`JOB_SUBMISSIONS_ENABLED\` was set to \`false\` and has intentionally not been reopened.
+          - Inspect the failed step and App Service logs. Rerun this workflow with the approved SHA after fixing the prerequisite, or set \`rollback=true\` and use a previously recorded known-good SHA.
+          - Reopen submissions only after the selected API image and its \`/health\` endpoint have been verified. The workflow performs that final admission change automatically on a successful run.
+          EOF
+          else
+            echo "### Deployment stopped before submission admission was confirmed paused" >> "$GITHUB_STEP_SUMMARY"
+          fi

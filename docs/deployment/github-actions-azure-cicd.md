@@ -7,17 +7,105 @@ Nothing in this document authorizes a Terraform apply or a deployment. The initi
 ## Current inactive release boundary
 
 The release controller, atomic submission admission, transactional submission outbox, and fenced
-dispatcher logic are implemented and tested offline. They are not an operational Azure release
-system. In particular, there is no reliable scheduled dispatcher runtime or live dispatcher database
-credential. **Do not deploy the current API changes without a functioning dispatcher:** newly
-accepted jobs persist a pending outbox intent and will not reach Service Bus until a dispatcher
-publishes it.
+dispatcher logic are implemented. The API's automatic dispatcher trigger is opt-in and best effort:
+it runs one bounded pass only after a new job commits, using the separate private dispatcher database
+login. It never changes a successful `201` into an error. The scheduled/manual GitHub Actions workflow
+remains the durable recovery mechanism for pending intents when an automatic pass is disabled, misses,
+or fails.
 
-Before the next rollout milestone, a reviewed operator must apply the production migrations,
-grant the dispatcher database login membership in `image_to_lego_outbox_dispatcher`, and enable
-the opt-in dispatcher identity and scheduled job in both Terraform roots. Older deployed worker
-images must not be replaced before the reviewed bootstrap sequence has completed.
-The workflow is intentionally inactive until repository variable `AZURE_DEPLOYMENTS_ENABLED=true` is
+The dispatcher migration is a separate database operation; it is already applied for this target
+release and this workflow must not rerun it. A reviewed operator must grant the dispatcher database
+login membership in `image_to_lego_outbox_dispatcher` and configure the private dispatcher URL.
+Older deployed worker images must not be replaced before the reviewed bootstrap sequence has
+completed.
+
+## Automatic submission-outbox dispatch
+
+Keep `OUTBOX_AUTO_DISPATCH_ENABLED=false` until the private dispatcher login and Service Bus sender
+access have been verified. No credential value belongs in source control.
+
+For local development, set these values in `backend/.env` (which remains untracked):
+
+```text
+OUTBOX_AUTO_DISPATCH_ENABLED=true
+OUTBOX_DISPATCHER_DATABASE_URL=postgresql+asyncpg://<dispatcher-login>:<password>@<host>/<database>
+AZURE_SERVICE_BUS_NAMESPACE=<namespace>.servicebus.windows.net
+AZURE_SERVICE_BUS_GENERATION_QUEUE=generation
+AZURE_SERVICE_BUS_QUEUE=conversion
+```
+
+The existing `DefaultAzureCredential` chain uses an Azure CLI login locally when available; it does
+not require managed identity. Run `az login`, use an identity with **Azure Service Bus Data Sender** on
+the namespace or the two queues, then submit a job and inspect application logs for the bounded
+dispatcher result. A pending outbox row or a safe logged failure is recoverable through the GitHub
+Actions workflow; do not retry by calling fal.ai or sending a queue message by hand.
+
+For App Service, add the same nonsecret queue settings and keep
+`OUTBOX_AUTO_DISPATCH_ENABLED=false` until the controlled release has verified the new image. Set
+`OUTBOX_DISPATCHER_DATABASE_URL` to an App Setting containing a Key Vault reference to
+`dispatcher-database-url`, not the ordinary `DATABASE_URL`. Enable the App Service managed identity,
+grant it **Key Vault Secrets User** for that secret and **Azure Service Bus Data Sender** for both
+queues. `DefaultAzureCredential` selects the managed identity in App Service; Azure CLI is neither
+configured nor required there. Verify by creating one job, confirming its `201` response and an
+outbox dispatcher log result, then confirm the worker receives the identifier-only message. The GitHub
+Actions dispatcher remains available for recovery and manual verification without any API credential
+change.
+
+## Controlled API-only dispatcher release
+
+`.github/workflows/deploy-api-outbox-dispatcher.yml` is separate from `ci.yml` and is available only
+through `workflow_dispatch` on `main`. It does not read the global compute-release flags and it does
+not modify either ACI worker, the frontend Container App, Service Bus, Terraform, or database schema.
+The existing `ci.yml` worker-release controller and every one of its safety checks remain unchanged.
+The existing **Dispatch submission outbox** workflow remains the fallback dispatcher during and after
+this release.
+
+Before the first controlled release, configure these App Service settings without placing any secret
+value in GitHub or source control:
+
+```text
+OUTBOX_AUTO_DISPATCH_ENABLED=false
+OUTBOX_DISPATCHER_DATABASE_URL=@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/dispatcher-database-url/)
+```
+
+The dedicated Key Vault reference must remain in place for every later release and rollback; never
+replace it with `DATABASE_URL` or a literal connection string. Choose an approved full commit SHA
+reachable from `main`. The workflow checks out that exact SHA, runs backend linting, type checking,
+and tests, then uses the existing GitHub OIDC identity's `AcrPush` permission to publish the backend
+image itself when its SHA tag is absent. If that immutable tag already exists, it is reused and is
+never overwritten. The workflow resolves the ACR digest after publication or reuse and deploys that
+digest, not the tag. Image publication always completes before submissions are paused.
+
+The read-only preflight confirms the existing App Service image and settings. It fails closed unless
+`OUTBOX_DISPATCHER_DATABASE_URL` still references `dispatcher-database-url`, the single-reference
+Azure API reports `properties.status` as `Resolved`, the API identity has Key Vault and both
+queue-sender roles, and the GitHub OIDC identity has both the App Service deployment role and
+`AcrPush`. `OUTBOX_AUTO_DISPATCH_ENABLED` may already be `true` after a successful run; requiring it
+to be false would prevent a later approved release.
+
+Only after image publication and those read-only checks pass, the workflow sets
+`JOB_SUBMISSIONS_ENABLED=false`, changes only the App Service container image, and verifies `/health`
+plus the configured digest. It checks the Key Vault reference again, then enables
+`OUTBOX_AUTO_DISPATCH_ENABLED=true` for a dispatcher-capable target and verifies health after the
+setting recycle before reopening submissions. All other App Service settings, including the private
+Key Vault reference, are preserved. A failed run intentionally leaves submissions paused once it has
+paused them; its job summary gives the recovery procedure and it never guesses at recovery or rolls
+back a database migration.
+
+To roll back, keep submissions paused, inspect the workflow summary and App Service logs, then run
+the same API-only workflow on `main` with `rollback=true` and the previously recorded known-good
+40-character backend SHA. A rollback requires that exact ACR tag to exist, reuses its resolved
+digest, and never builds or overwrites it. It repeats every preflight check and reopens submissions
+only after the old image is healthy and the dispatcher secret is resolved. When the rollback target
+does not contain the automatic-dispatch implementation, the workflow explicitly sets
+`OUTBOX_AUTO_DISPATCH_ENABLED=false` before that final health check. If a run leaves submissions
+paused, do not set `JOB_SUBMISSIONS_ENABLED=true` manually: repair the failed prerequisite and rerun
+the approved release or rollback until the workflow has verified health and reopened admissions. If
+the automatic dispatcher is unavailable, leave it false and manually run **Dispatch submission
+outbox**; do not send queue messages directly or retry fal.ai.
+
+The existing all-compute workflow is intentionally inactive until repository variable
+`AZURE_DEPLOYMENTS_ENABLED=true` is
 set during the first controlled activation. `AZURE_COMPUTE_DEPLOYMENTS_ENABLED` must also be `true`.
 Before either variable is enabled, main-branch merges run validation only and make no Azure mutations.
 

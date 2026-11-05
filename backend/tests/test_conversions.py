@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.domain.artifacts import Artifact, ArtifactStatus
 from app.domain.jobs import ConversionJob, Job, JobStatus, JobType, WorkerConversionJob
 from app.main import create_app
+from app.outbox import auto_dispatch
 from app.providers.blob_storage import BlobStorageError, StoredBlobProperties
 from app.repositories.conversion import ConversionInitiation, ConversionInitiationRejection
 from app.workers.conversion_worker import ConversionJobProcessor, serialize_lego_model
@@ -236,6 +237,47 @@ async def test_conversion_create_and_exact_replay_are_durable_requests(
     await client.aclose()
     assert created.status_code == 201
     assert replayed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_new_conversion_schedules_dispatch_but_replay_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = FakeConversionRepository()
+    app = create_app(
+        Settings(
+            outbox_auto_dispatch_enabled=True,
+            outbox_dispatcher_database_url="postgresql+asyncpg://dispatcher.example.test/app",
+        )
+    )
+    dispatched_settings: list[Settings] = []
+
+    async def record_dispatch(settings: Settings) -> None:
+        dispatched_settings.append(settings)
+
+    async def current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(str(OWNER_ID), None, None, None)
+
+    monkeypatch.setattr(auto_dispatch, "_run_auto_dispatch", record_dispatch)
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_conversion_repository] = lambda: repository
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
+        )
+        repository.initiation = ConversionInitiation(
+            conversion=repository.initiation.conversion,
+            created=False,
+        )
+        replayed = await client.post(
+            "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=request_body()
+        )
+
+    assert created.status_code == 201
+    assert replayed.status_code == 200
+    assert len(dispatched_settings) == 1
 
 
 @pytest.mark.asyncio
