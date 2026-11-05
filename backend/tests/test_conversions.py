@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -10,7 +11,14 @@ import trimesh
 
 from app.api.v1.conversions import get_conversion_repository
 from app.api.v1.reconstructions import get_job_repository
-from app.conversion import Axis, BrickPlacement, ConversionSettings, GridPosition, convert_glb
+from app.conversion import (
+    Axis,
+    BrickPlacement,
+    ConversionError,
+    ConversionSettings,
+    GridPosition,
+    convert_glb,
+)
 from app.conversion.colors import COLORS_BY_ID
 from app.conversion.core import BRICK_CATALOGUE
 from app.conversion.part_catalogue import PART_BY_ID
@@ -702,3 +710,33 @@ async def test_invalid_glb_becomes_a_safe_failed_job() -> None:
     )
     assert repository.failures[0][0] == "conversion_failed"
     assert not blob.uploads
+
+
+@pytest.mark.asyncio
+async def test_conversion_failure_logs_a_single_line_sanitized_reason(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = box_glb()
+    repository = FakeConversionRepository()
+    repository.worker_job = worker_job(content)
+    blob = FakeBlobStorage(content)
+
+    def fail_conversion(*_: object) -> object:
+        raise ConversionError("repair status=INFEASIBLE\nwith a multiline detail")
+
+    monkeypatch.setattr("app.workers.conversion_worker.convert_glb", fail_conversion)
+    caplog.set_level(logging.WARNING, logger="app.workers.conversion_worker")
+
+    await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
+        job_id=repository.worker_job.conversion.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
+
+    assert repository.failures == [
+        ("conversion_failed", "The reconstructed model could not be converted to LEGO.")
+    ]
+    assert "Conversion failed:" in caplog.text
+    assert "repair status=INFEASIBLE with a multiline detail" in caplog.text
+    assert "\nwith a multiline detail" not in caplog.text
