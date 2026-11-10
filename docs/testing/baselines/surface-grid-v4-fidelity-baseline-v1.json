@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "conversion-fidelity-baseline-v1",
+  "baselineId": "surface-grid-v4-synthetic-fixtures-v1",
+  "sourceCommit": "67f41115aa123ef62525d730157cea918f0bfb82",
+  "converterSourceCommit": "67f41115aa123ef62525d730157cea918f0bfb82",
+  "fixtureVersion": "synthetic-fixtures-v1",
+  "fixtureGenerator": {
+    "trimeshVersion": "4.12.2",
+    "pythonVersion": "3.12.14",
+    "binaryFormat": "glb"
+  },
+  "evaluator": {
+    "benchmarkSchemaVersion": "conversion-benchmark-v1",
+    "silhouetteMetricsVersion": "silhouette-v1",
+    "geometryMetricsVersion": "placement-surface-proxy-v1",
+    "surfaceSampleCountPerDirection": 384,
+    "nearestSurfaceBatchSize": 16,
+    "distanceUnits": "mm",
+    "gridUnits": {
+      "xMmPerStud": 8.0,
+      "yMmPerStud": 8.0,
+      "zMmPerPlate": 3.2
+    },
+    "p95Definition": "95th percentile of the combined source-to-LEGO and LEGO-to-source nearest-surface sample distances",
+    "approximateMetrics": [
+      "placement-surface-proxy-v1 retains primitive inter-brick faces and is not an exact boolean-union exterior surface",
+      "openingDiagnostic is a top-view 2D enclosed-void fill ratio, not a 3D hole-preservation proof",
+      "volumetricIoU is intentionally not computed"
+    ]
+  },
+  "fixtures": [
+    {"caseId": "box", "sourceSha256": "4fb014994c535fd9f88e01b0aec5984a00989c1efab691d71eaae0a12c1d0489", "triangleCount": 12, "watertight": true, "upAxis": "y", "defaultTargetParts": 12},
+    {"caseId": "thin-wall", "sourceSha256": "119ea18d997d74b009da1b1e233f846d49bf94466f129a9e5fba35d733ebabcb", "triangleCount": 12, "watertight": true, "upAxis": "y", "defaultTargetParts": 12},
+    {"caseId": "sphere", "sourceSha256": "f48448cdcd9e24028c6b927429f1dc9e5caf83c8079c003279a201268dda5396", "triangleCount": 320, "watertight": true, "upAxis": "y", "defaultTargetParts": 16},
+    {"caseId": "cylinder", "sourceSha256": "d25f8e3e3c1d0fa604a3e312a60a8331a07b0da1cd537de1e2697d12a31f4ec6", "triangleCount": 80, "watertight": true, "upAxis": "y", "defaultTargetParts": 16},
+    {"caseId": "pyramid", "sourceSha256": "474a566b10c751933ed19161b013baeaf3bd24fec9339eb1db09612beabb679b", "triangleCount": 6, "watertight": true, "upAxis": "y", "defaultTargetParts": 16},
+    {"caseId": "l-profile", "sourceSha256": "732c0dd93d9de28fd7ed1f4aa9b6cc2546f7b559a80da50320128e865f2280c8", "triangleCount": 24, "watertight": true, "upAxis": "y", "defaultTargetParts": 16},
+    {"caseId": "ring", "sourceSha256": "04e6e0dcd0f70d5bdbf7ceb1605ca0de401ccc30389cb641af5289fce4a81fa6", "triangleCount": 160, "watertight": true, "upAxis": "y", "defaultTargetParts": 16},
+    {"caseId": "open-box", "sourceSha256": "7a5648f3d8e311f1c3376c497405101ff9148a963565c490b2bfc216384833d1", "triangleCount": 10, "watertight": false, "upAxis": "y", "defaultTargetParts": 12}
+  ],
+  "runs": [
+    {
+      "targetParts": 100,
+      "algorithmVersion": "surface-grid-v4",
+      "experimentalStagedWedgeRefinement": false,
+      "status": "completed_with_converter_failures",
+      "results": [
+        {"caseId": "box", "status": "completed", "actualParts": 341, "gridDimensions": [14, 7, 27], "sourceBoundingBoxDimensionsMm": [104.0, 48.0, 83.2], "frontIou": 0.891723, "sideIou": 0.823129, "topIou": 0.795918, "meanIou": 0.836923, "symmetricChamferMm": 4.591284, "normalizedChamfer": 0.032431, "p95NearestSurfaceMm": 16.0, "openingFilledVoidRatio": null, "runtimeSeconds": 24.704676},
+        {"caseId": "thin-wall", "status": "completed", "actualParts": 298, "gridDimensions": [23, 14, 6], "sourceBoundingBoxDimensionsMm": [176.0, 104.0, 16.0], "frontIou": 0.793651, "sideIou": 0.77381, "topIou": 0.884354, "meanIou": 0.817272, "symmetricChamferMm": 2.133236, "normalizedChamfer": 0.010403, "p95NearestSurfaceMm": 6.4, "openingFilledVoidRatio": null, "runtimeSeconds": 18.844073},
+        {"caseId": "sphere", "status": "converter_failed", "reason": "surface-grid-v4 local support repair was infeasible within its configured part bound"},
+        {"caseId": "cylinder", "status": "completed", "actualParts": 449, "gridDimensions": [12, 14, 30], "sourceBoundingBoxDimensionsMm": [88.0, 104.0, 92.8], "frontIou": 0.852558, "sideIou": 0.924003, "topIou": 0.847506, "meanIou": 0.874689, "symmetricChamferMm": 4.697978, "normalizedChamfer": 0.0285, "p95NearestSurfaceMm": 17.599094, "openingFilledVoidRatio": null, "runtimeSeconds": 47.13857},
+        {"caseId": "pyramid", "status": "completed", "actualParts": 162, "gridDimensions": [11, 8, 27], "sourceBoundingBoxDimensionsMm": [80.0, 56.0, 83.2], "frontIou": 0.897112, "sideIou": 0.715898, "topIou": 0.630462, "meanIou": 0.747824, "symmetricChamferMm": 3.183155, "normalizedChamfer": 0.024812, "p95NearestSurfaceMm": 9.376955, "openingFilledVoidRatio": null, "runtimeSeconds": 17.131492},
+        {"caseId": "l-profile", "status": "completed", "actualParts": 462, "gridDimensions": [16, 8, 39], "sourceBoundingBoxDimensionsMm": [120.0, 56.0, 121.6], "frontIou": 0.84642, "sideIou": 0.85223, "topIou": 0.817586, "meanIou": 0.838745, "symmetricChamferMm": 3.354366, "normalizedChamfer": 0.018658, "p95NearestSurfaceMm": 10.603744, "openingFilledVoidRatio": null, "runtimeSeconds": 26.677934},
+        {"caseId": "ring", "status": "completed", "actualParts": 349, "gridDimensions": [16, 16, 9], "sourceBoundingBoxDimensionsMm": [120.0, 120.0, 25.6], "frontIou": 0.832451, "sideIou": 0.832451, "topIou": 0.739269, "meanIou": 0.80139, "symmetricChamferMm": 2.998531, "normalizedChamfer": 0.017471, "p95NearestSurfaceMm": 9.6, "openingFilledVoidRatio": 0.358031, "runtimeSeconds": 17.955324},
+        {"caseId": "open-box", "status": "completed", "actualParts": 444, "gridDimensions": [16, 11, 27], "sourceBoundingBoxDimensionsMm": [120.0, 80.0, 83.2], "frontIou": 0.899345, "sideIou": 0.868859, "topIou": 0.847317, "meanIou": 0.87184, "symmetricChamferMm": 7.60303, "normalizedChamfer": 0.045664, "p95NearestSurfaceMm": 28.092548, "openingFilledVoidRatio": null, "runtimeSeconds": 38.758636}
+      ]
+    },
+    {
+      "targetParts": 300,
+      "algorithmVersion": "surface-grid-v4",
+      "experimentalStagedWedgeRefinement": false,
+      "status": "completed_with_converter_failures",
+      "results": [
+        {"caseId": "box", "status": "completed", "actualParts": 1352, "gridDimensions": [25, 12, 48], "sourceBoundingBoxDimensionsMm": [192.0, 88.0, 150.4], "frontIou": 0.884669, "sideIou": 0.889267, "topIou": 0.87648, "meanIou": 0.883472, "symmetricChamferMm": 7.011645, "normalizedChamfer": 0.027042, "p95NearestSurfaceMm": 25.143044, "openingFilledVoidRatio": null, "runtimeSeconds": 103.313047},
+        {"caseId": "thin-wall", "status": "completed", "actualParts": 648, "gridDimensions": [41, 25, 6], "sourceBoundingBoxDimensionsMm": [320.0, 192.0, 16.0], "frontIou": 0.813492, "sideIou": 0.800265, "topIou": 0.937453, "meanIou": 0.850403, "symmetricChamferMm": 2.916803, "normalizedChamfer": 0.007809, "p95NearestSurfaceMm": 6.678142, "openingFilledVoidRatio": null, "runtimeSeconds": 57.89148},
+        {"caseId": "sphere", "status": "converter_failed", "reason": "stud-connectivity-v1 found an unsupported evaluated placement"},
+        {"caseId": "cylinder", "status": "completed", "actualParts": 972, "gridDimensions": [17, 20, 42], "sourceBoundingBoxDimensionsMm": [128.0, 152.0, 131.2], "frontIou": 0.890551, "sideIou": 0.92706, "topIou": 0.891912, "meanIou": 0.903174, "symmetricChamferMm": 7.278837, "normalizedChamfer": 0.030568, "p95NearestSurfaceMm": 27.422737, "openingFilledVoidRatio": null, "runtimeSeconds": 114.156454},
+        {"caseId": "pyramid", "status": "converter_failed", "reason": "stud-connectivity-v1 found an unsupported evaluated placement"},
+        {"caseId": "l-profile", "status": "completed", "actualParts": 505, "gridDimensions": [23, 11, 57], "sourceBoundingBoxDimensionsMm": [176.0, 80.0, 179.2], "frontIou": 0.37313, "sideIou": 0.737411, "topIou": 0.678045, "meanIou": 0.596195, "symmetricChamferMm": 10.144143, "normalizedChamfer": 0.038482, "p95NearestSurfaceMm": 37.258768, "openingFilledVoidRatio": null, "runtimeSeconds": 67.992659},
+        {"caseId": "ring", "status": "completed", "actualParts": 464, "gridDimensions": [23, 23, 12], "sourceBoundingBoxDimensionsMm": [176.0, 176.0, 35.2], "frontIou": 0.869237, "sideIou": 0.869237, "topIou": 0.797571, "meanIou": 0.845348, "symmetricChamferMm": 4.561604, "normalizedChamfer": 0.018146, "p95NearestSurfaceMm": 12.8, "openingFilledVoidRatio": 0.268843, "runtimeSeconds": 35.398929},
+        {"caseId": "open-box", "status": "completed", "actualParts": 1331, "gridDimensions": [23, 16, 39], "sourceBoundingBoxDimensionsMm": [176.0, 120.0, 121.6], "frontIou": 0.929705, "sideIou": 0.91421, "topIou": 0.891912, "meanIou": 0.911942, "symmetricChamferMm": 8.860891, "normalizedChamfer": 0.036126, "p95NearestSurfaceMm": 37.330001, "openingFilledVoidRatio": null, "runtimeSeconds": 103.463597}
+      ]
+    },
+    {
+      "targetParts": 600,
+      "algorithmVersion": "surface-grid-v4",
+      "experimentalStagedWedgeRefinement": false,
+      "status": "partial_not_feasible_for_full_suite",
+      "reason": "The simplest box case took 214.508614 seconds; the complete eight-case run was not started in this constrained environment.",
+      "notRunCases": ["thin-wall", "sphere", "cylinder", "pyramid", "l-profile", "ring", "open-box"],
+      "results": [
+        {"caseId": "box", "status": "completed_geometry_unavailable", "actualParts": 2566, "gridDimensions": [31, 16, 60], "sourceBoundingBoxDimensionsMm": [240.0, 120.0, 188.8], "frontIou": 0.864764, "sideIou": 0.921643, "topIou": 0.906778, "meanIou": 0.897728, "symmetricChamferMm": null, "normalizedChamfer": null, "p95NearestSurfaceMm": null, "openingFilledVoidRatio": null, "runtimeSeconds": 214.508614, "geometricReason": "surface triangle limit exceeded"}
+      ]
+    }
+  ],
+  "comparisonRule": "Only compare completed records with matching fixture source SHA-256, sourceCommit or reviewed converter-equivalent code, converter settings, evaluator versions, sample count, and metric definitions. Runtime is environment-dependent."
+}
