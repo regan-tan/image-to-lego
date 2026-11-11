@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import trimesh
@@ -320,6 +322,113 @@ def test_reliable_version_is_explicit_and_preserves_a_hard_cap() -> None:
     assert model.metadata.algorithm_version == core.SURFACE_GRID_V5_RELIABLE
     assert model.part_count <= 8
     assert analyze_buildability(model.placements).unsupported_placement_count == 0
+
+
+def test_shape_aware_version_is_explicit_and_uses_the_reliable_fallback() -> None:
+    source = trimesh.creation.box(extents=(4.0, 3.0, 2.0)).export(file_type="glb")
+    assert isinstance(source, bytes)
+
+    model = core.convert_glb(
+        source,
+        core.ConversionSettings(
+            target_parts=8,
+            max_parts=8,
+            algorithm_version=core.SURFACE_GRID_V6_SHAPE_AWARE,
+        ),
+    )
+
+    assert model.metadata.algorithm_version == core.SURFACE_GRID_V6_SHAPE_AWARE
+    assert model.part_count <= 8
+    assert model.metadata.diagnostics is not None
+    assert model.metadata.diagnostics.physical_collision_pair_count == 0
+    assert model.metadata.diagnostics.unsupported_evaluated_placement_count == 0
+    assert model.metadata.diagnostics.shape_aware_rejection_reason is not None
+    serialized = serialize_lego_model(model)
+    assert b'"shapeAware"' in serialized
+    assert b'"physicalCollisionPairs":0' in serialized
+
+
+def test_shape_aware_refinement_selects_4286_for_a_source_ramp() -> None:
+    """The candidate wins only because its actual slope silhouette fits the mesh."""
+    brick = PART_BY_ID["3005"]
+    baseline = tuple(
+        core.BrickPlacement(brick, core.GridPosition(x, 0, 0), 0)
+        for x in range(3)
+    )
+    source_slope = _slope_4286(z=0)
+    vertices = core._slope_vertices((source_slope,))[0]
+    faces = (
+        (0, 1, 2),
+        (3, 5, 4),
+        (0, 4, 1),
+        (0, 3, 4),
+        (1, 4, 5),
+        (1, 5, 2),
+        (0, 2, 5),
+        (0, 5, 3),
+    )
+
+    refined, candidate_count, accepted_count, rejected_count = core._shape_aware_4286_refinement(
+        baseline,
+        vertices,
+        faces,
+        core.GridSize(3, 1, 3),
+        target_parts=3,
+        protected_empty_cells=frozenset(),
+        max_parts=3,
+    )
+
+    assert candidate_count == 2
+    assert accepted_count == 1
+    assert rejected_count == 1
+    assert [(placement.brick_type.part_id, placement.position) for placement in refined] == [
+        ("4286", core.GridPosition(0, 0, 0))
+    ]
+    refined_score = core._fidelity_for_placements(vertices, faces, refined, 3).mean_iou
+    baseline_score = core._fidelity_for_placements(vertices, faces, baseline, 3).mean_iou
+    assert refined_score > baseline_score
+    assert analyze_buildability(refined).unsupported_placement_count == 0
+
+
+def test_shape_aware_refinement_preserves_baseline_when_a_slope_worsens_source_fit() -> None:
+    brick = PART_BY_ID["3005"]
+    baseline = tuple(
+        core.BrickPlacement(brick, core.GridPosition(x, 0, 0), 0)
+        for x in range(3)
+    )
+    vertices = (
+        (0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 3.0), (3.0, 0.0, 3.0), (3.0, 1.0, 3.0), (0.0, 1.0, 3.0),
+    )
+    faces = ((0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6))
+
+    refined, _, accepted_count, rejected_count = core._shape_aware_4286_refinement(
+        baseline, vertices, faces, core.GridSize(3, 1, 3), 3, frozenset(), 3
+    )
+
+    assert refined == baseline
+    assert accepted_count == 0
+    assert rejected_count == 2
+
+
+def test_shape_aware_policy_rejects_silhouette_gain_with_material_chamfer_regression() -> None:
+    baseline = core._fidelity_for_placements(
+        ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 1.0, 0.0)),
+        ((0, 1, 2),),
+        (),
+        3,
+    )
+    proposal = replace(baseline, mean_iou=baseline.mean_iou + 0.01)
+    incumbent_geometry = SimpleNamespace(
+        status="available", symmetric_chamfer_mm=2.628469, percentile_95_nearest_surface_mm=8.008274
+    )
+    proposal_geometry = SimpleNamespace(
+        status="available", symmetric_chamfer_mm=2.700512, percentile_95_nearest_surface_mm=8.096295
+    )
+
+    assert not core._shape_aware_fidelity_is_acceptable(
+        baseline, proposal, incumbent_geometry, proposal_geometry
+    )
 
 
 def test_reliable_capped_open_box_produces_a_mechanically_valid_incumbent() -> None:
