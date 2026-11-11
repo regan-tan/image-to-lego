@@ -344,17 +344,79 @@ def test_reliable_capped_open_box_produces_a_mechanically_valid_incumbent() -> N
 def test_reliable_uncapped_sphere_repairs_every_elevated_locked_slope() -> None:
     sphere = next(case for case in benchmark.synthetic_cases() if case.case_id == "sphere")
     source = benchmark.glb_bytes(sphere.mesh)
-
-    model = core.convert_glb(
-        source,
-        core.ConversionSettings(
-            target_parts=100,
-            algorithm_version=core.SURFACE_GRID_V5_RELIABLE,
-        ),
+    settings = core.ConversionSettings(
+        target_parts=100,
+        algorithm_version=core.SURFACE_GRID_V5_RELIABLE,
     )
 
-    assert model.part_count == 292
-    assert analyze_buildability(model.placements).unsupported_placement_count == 0
+    model = core.convert_glb(source, settings)
+
+    assert model.placements
+    assert model.metadata.diagnostics is not None
+    assert model.metadata.diagnostics.stage_one_has_incumbent
+    assert model.metadata.diagnostics.stage_two_has_incumbent
+
+    # The reliable conversion locks the v3 slopes, then repairs their verified
+    # connectors. CP-SAT may return different feasible rectangular incumbents
+    # on different supported platforms, so validate the mechanical contract
+    # instead of an incidental total part count.
+    baseline = core._convert_surface_grid_v3(
+        source,
+        core.ConversionSettings(target_parts=settings.target_parts, up_axis=settings.up_axis),
+    )
+    locked_slopes = tuple(
+        placement
+        for placement in baseline.placements
+        if placement.brick_type.shape != "rectangular"
+    )
+    final_slopes = tuple(
+        placement
+        for placement in model.placements
+        if placement.brick_type.shape != "rectangular"
+    )
+    assert model.metadata.grid_size == baseline.metadata.grid_size
+    assert core._placement_geometry(final_slopes) == core._placement_geometry(locked_slopes)
+
+    buildability = analyze_buildability(model.placements)
+    base_z = min(placement.position.z for placement in model.placements)
+    supported_indices = {edge.upper_placement_index for edge in buildability.edges}
+    elevated_locked_slope_indices = {
+        index
+        for index, placement in enumerate(model.placements)
+        if placement.brick_type.shape != "rectangular" and placement.position.z > base_z
+    }
+    assert elevated_locked_slope_indices
+    assert all(
+        resolve_part_mechanical_metadata(model.placements[index].brick_type) is not None
+        for index in elevated_locked_slope_indices
+    )
+    assert elevated_locked_slope_indices <= supported_indices
+    assert buildability.unsupported_placement_count == 0
+
+    occupied_cells: set[core.GridPosition] = set()
+    for placement in model.placements:
+        placement_cells = core._placement_source_cells(placement)
+        assert not occupied_cells & placement_cells
+        occupied_cells.update(placement_cells)
+
+    mesh = core._load_mesh(source)
+    vertices = [
+        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
+    ]
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
+    source_occupancy = core._source_occupancy(
+        core._normalize_vertices(vertices, settings.up_axis),
+        faces,
+        baseline.metadata.grid_size,
+    )
+    protected_empty_cells = core._v5_protected_empty_cells(
+        source_occupancy,
+        baseline.metadata.grid_size,
+    )
+    assert not any(
+        core._placement_source_cells(placement) & protected_empty_cells
+        for placement in model.placements
+    )
 
 
 def test_legacy_converter_rejects_a_hard_part_limit() -> None:
