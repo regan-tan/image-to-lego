@@ -29,7 +29,12 @@ from app.conversion import (
     order_placements_for_instructions,
 )
 from app.conversion.colors import COLORS_BY_ID
-from app.conversion.core import MAX_INPUT_BYTES, SURFACE_GRID_V4, SURFACE_GRID_V5_RELIABLE
+from app.conversion.core import (
+    MAX_INPUT_BYTES,
+    SURFACE_GRID_V4,
+    SURFACE_GRID_V5_RELIABLE,
+    SURFACE_GRID_V6_SHAPE_AWARE,
+)
 from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
 from app.domain.artifacts import ArtifactStatus
@@ -289,6 +294,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     catalogue_geometry_verified = model.metadata.algorithm_version in {
         SURFACE_GRID_V4,
         SURFACE_GRID_V5_RELIABLE,
+        SURFACE_GRID_V6_SHAPE_AWARE,
     }
     metadata: dict[str, object] = {
         "algorithmVersion": model.metadata.algorithm_version,
@@ -356,6 +362,16 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     }
     if catalogue_geometry_verified:
         metadata["partColorVerificationVersion"] = PART_COLOR_VERIFICATION_VERSION
+    if model.metadata.algorithm_version == SURFACE_GRID_V6_SHAPE_AWARE:
+        diagnostics = model.metadata.diagnostics
+        if diagnostics is None:
+            raise ConversionError("shape-aware conversion did not provide diagnostics.")
+        metadata["shapeAware"] = {
+            "physicalCollisionPairs": diagnostics.physical_collision_pair_count,
+            "candidateCount": diagnostics.shape_aware_candidate_count,
+            "acceptedRefinementCount": diagnostics.shape_aware_accepted_refinement_count,
+            "fallbackReason": diagnostics.shape_aware_rejection_reason,
+        }
 
     # This is deliberately a diagnostic guide, not a claim that the model is
     # physically buildable.  Keep the reasons in the artifact so a client does

@@ -7,7 +7,7 @@ used by ``convert_glb``.  It is not used by production conversion.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from typing import Final, cast
@@ -282,6 +282,12 @@ def case_record(
                 abs(model.part_count - settings.target_parts) / settings.target_parts, 6
             ),
         },
+        "partQuantities": [
+            {"partId": part_id, "quantity": quantity}
+            for part_id, quantity in sorted(
+                Counter(placement.brick_type.part_id for placement in model.placements).items()
+            )
+        ],
         "silhouette": fidelity,
         "geometric": asdict(geometric),
         "openingDiagnostic": asdict(opening),

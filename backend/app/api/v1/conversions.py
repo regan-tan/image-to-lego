@@ -26,7 +26,10 @@ class CreateConversionRequest(BaseModel):
     up_axis: Literal["x", "y", "z"] = Field(alias="upAxis")
     max_parts: int | None = Field(default=None, alias="maxParts")
     algorithm_version: Literal[
-        "surface-grid-v3", "surface-grid-v4", "surface-grid-v5-reliable"
+        "surface-grid-v3",
+        "surface-grid-v4",
+        "surface-grid-v5-reliable",
+        "surface-grid-v6-shape-aware",
     ] = Field(
         default="surface-grid-v4",
         alias="algorithmVersion",

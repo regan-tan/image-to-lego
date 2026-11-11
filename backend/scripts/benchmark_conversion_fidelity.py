@@ -50,7 +50,12 @@ def parse_arguments() -> argparse.Namespace:
     source_group.add_argument("--source", type=Path)
     parser.add_argument(
         "--algorithm",
-        choices=(core.SURFACE_GRID_V3, core.SURFACE_GRID_V4, core.SURFACE_GRID_V5_RELIABLE),
+        choices=(
+            core.SURFACE_GRID_V3,
+            core.SURFACE_GRID_V4,
+            core.SURFACE_GRID_V5_RELIABLE,
+            core.SURFACE_GRID_V6_SHAPE_AWARE,
+        ),
         default=core.SURFACE_GRID_V4,
     )
     parser.add_argument("--target-parts", type=int)
@@ -79,8 +84,14 @@ def main() -> int:
         _validate_target_parts(arguments.target_parts)
     if arguments.max_parts is not None:
         _validate_target_parts(arguments.max_parts)
-    if arguments.max_parts is not None and arguments.algorithm != core.SURFACE_GRID_V5_RELIABLE:
-        raise SystemExit("--max-parts requires --algorithm surface-grid-v5-reliable.")
+    if arguments.max_parts is not None and arguments.algorithm not in {
+        core.SURFACE_GRID_V5_RELIABLE,
+        core.SURFACE_GRID_V6_SHAPE_AWARE,
+    }:
+        raise SystemExit(
+            "--max-parts requires --algorithm surface-grid-v5-reliable or "
+            "surface-grid-v6-shape-aware."
+        )
     if arguments.source is not None:
         if not arguments.source.is_file():
             print("Source path must name a readable GLB file.", file=sys.stderr)

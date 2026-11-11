@@ -318,6 +318,7 @@ async def test_conversion_submission_pause_rejects_before_creating_a_job() -> No
         (None, "surface-grid-v4"),
         ("surface-grid-v3", "surface-grid-v3"),
         ("surface-grid-v4", "surface-grid-v4"),
+        ("surface-grid-v6-shape-aware", "surface-grid-v6-shape-aware"),
     ],
 )
 async def test_conversion_request_persists_requested_algorithm_version(
@@ -358,6 +359,24 @@ async def test_reliable_conversion_request_persists_the_opt_in_hard_cap(
 
 
 @pytest.mark.asyncio
+async def test_shape_aware_conversion_request_accepts_the_opt_in_hard_cap(
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
+) -> None:
+    client, repository = api_context
+    body = request_body()
+    body["algorithmVersion"] = "surface-grid-v6-shape-aware"
+    body["maxParts"] = 24
+
+    response = await client.post(
+        "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=body
+    )
+    await client.aclose()
+
+    assert response.status_code == 201
+    assert repository.create_requests[0]["max_parts"] == 24
+
+
+@pytest.mark.asyncio
 async def test_legacy_conversion_rejects_a_hard_cap(
     api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
 ) -> None:
@@ -373,7 +392,8 @@ async def test_legacy_conversion_rejects_a_hard_cap(
     assert response.status_code == 422
     assert (
         response.json()["detail"]
-        == "Maximum parts is available only with surface-grid-v5-reliable."
+        == "Maximum parts is available only with surface-grid-v5-reliable or "
+        "surface-grid-v6-shape-aware."
     )
 
 

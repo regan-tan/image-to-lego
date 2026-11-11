@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from hashlib import sha256
 from io import BytesIO
 from math import isfinite, prod
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import trimesh
 
@@ -33,11 +33,15 @@ from app.conversion.part_catalogue import (
 )
 from app.conversion.wedge_41769_41770 import WEDGE_PART_IDS, transformed_footprint
 
+if TYPE_CHECKING:
+    from app.conversion.benchmark import GeometricMetrics
+
 logger = logging.getLogger(__name__)
 
 SURFACE_GRID_V3 = "surface-grid-v3"
 SURFACE_GRID_V4 = "surface-grid-v4"
 SURFACE_GRID_V5_RELIABLE = "surface-grid-v5-reliable"
+SURFACE_GRID_V6_SHAPE_AWARE = "surface-grid-v6-shape-aware"
 ALGORITHM_VERSION = SURFACE_GRID_V4
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
@@ -59,6 +63,18 @@ RELIABLE_HARD_CAP_GRID_DIVISOR = 4
 SLOPE_ORIENTATIONS = (0, 90, 180, 270)
 SLOPE_33_PROFILE = "rise_33_3"
 SLOPE_33_HEIGHT_PROFILES = ((0, 1, 3), (0, 2, 3))
+# V6 considers only nearby placements in the already-selected v5 grid.  This
+# keeps source-aware fitting bounded and prevents a second global solver.
+SHAPE_AWARE_MAX_4286_CANDIDATES = 64
+# A 128-by-128 projection changes in discrete pixels.  Requiring more than
+# one mean-view pixel avoids treating rasterization noise as a fidelity gain.
+SHAPE_AWARE_MIN_MEAN_IOU_GAIN = 1 / (3 * 128 * 128)
+# The canonical surface proxy samples deterministic points, but remains an
+# approximation of mould geometry.  These tolerances avoid rejecting a local
+# substitution for sub-sample movement while rejecting material regressions.
+SHAPE_AWARE_CHAMFER_ABSOLUTE_TOLERANCE_MM = 0.05
+SHAPE_AWARE_CHAMFER_RELATIVE_TOLERANCE = 0.01
+SHAPE_AWARE_P95_TOLERANCE_MM = 0.1
 # This is the established source-occupancy topology: an empty voxel connected
 # to the boundary by a face, edge, or corner is exterior.  It deliberately
 # avoids treating diagonal gaps in a sampled shell as proven source interior.
@@ -175,6 +191,12 @@ class ConversionDiagnostics:
     stage_two_has_incumbent: bool
     repair_candidate_count: int
     repair_final_placement_count: int
+    shape_aware_candidate_count: int = 0
+    shape_aware_accepted_refinement_count: int = 0
+    shape_aware_rejected_refinement_count: int = 0
+    shape_aware_rejection_reason: str | None = None
+    physical_collision_pair_count: int = 0
+    unsupported_evaluated_placement_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +225,8 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         return _convert_surface_grid_v4(glb_bytes, settings)
     if settings.algorithm_version == SURFACE_GRID_V5_RELIABLE:
         return _convert_surface_grid_v5_reliable(glb_bytes, settings)
+    if settings.algorithm_version == SURFACE_GRID_V6_SHAPE_AWARE:
+        return _convert_surface_grid_v6_shape_aware(glb_bytes, settings)
     raise ConversionError("The requested conversion algorithm is not supported.")
 
 
@@ -555,6 +579,251 @@ def _convert_surface_grid_v5_reliable(glb_bytes: bytes, settings: ConversionSett
     )
 
 
+def _convert_surface_grid_v6_shape_aware(
+    glb_bytes: bytes, settings: ConversionSettings
+) -> LegoModel:
+    """Refine the reliable baseline with bounded, verified 4286 substitutions."""
+    baseline = _convert_surface_grid_v5_reliable(
+        glb_bytes,
+        replace(settings, algorithm_version=SURFACE_GRID_V5_RELIABLE),
+    )
+    from app.conversion.buildability import analyze_buildability
+    from app.conversion.physical_geometry import colliding_placement_pairs
+
+    collisions = colliding_placement_pairs(baseline.placements)
+    if collisions:
+        raise ConversionError("surface-grid-v6-shape-aware detected physical body collisions.")
+    diagnostics = baseline.metadata.diagnostics
+    if diagnostics is None:
+        raise ConversionError("surface-grid-v6-shape-aware requires reliable diagnostics.")
+    mesh = _load_mesh(glb_bytes)
+    vertices = [(float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices]
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces]
+    normalized_vertices = _normalize_vertices(vertices, settings.up_axis)
+    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
+    source_occupancy = _source_occupancy(
+        normalized_vertices, faces, baseline.metadata.grid_size
+    )
+    protected_empty_cells = _v5_protected_empty_cells(
+        source_occupancy, baseline.metadata.grid_size
+    )
+    refined, candidate_count, accepted_count, rejected_count = _shape_aware_4286_refinement(
+        baseline.placements,
+        scaled_vertices,
+        faces,
+        baseline.metadata.grid_size,
+        settings.target_parts,
+        protected_empty_cells,
+        settings.max_parts,
+    )
+    accepted = refined != baseline.placements
+    final_collisions = colliding_placement_pairs(refined)
+    if final_collisions:
+        raise ConversionError("surface-grid-v6-shape-aware refinement created a body collision.")
+    unsupported_placement_count = analyze_buildability(refined).unsupported_placement_count
+    if unsupported_placement_count:
+        raise ConversionError(
+            "surface-grid-v6-shape-aware refinement created unsupported placements."
+        )
+    reason = None
+    if not accepted:
+        reason = (
+            "No legal verified 4286 substitution passed the combined source-fidelity policy; "
+            "41769, 41770, and 15068 remain mechanically ineligible."
+        )
+    return LegoModel(
+        placements=refined,
+        part_count=len(refined),
+        dimensions=_model_dimensions(refined),
+        metadata=replace(
+            baseline.metadata,
+            algorithm_version=SURFACE_GRID_V6_SHAPE_AWARE,
+            occupied_cell_count=len(
+                {cell for placement in refined for cell in _placement_cells(placement)}
+            ),
+            fidelity=_fidelity_for_placements(
+                scaled_vertices, faces, refined, settings.target_parts
+            ),
+            diagnostics=replace(
+                diagnostics,
+                shape_aware_candidate_count=candidate_count,
+                shape_aware_accepted_refinement_count=accepted_count,
+                shape_aware_rejected_refinement_count=rejected_count,
+                shape_aware_rejection_reason=reason,
+                physical_collision_pair_count=len(final_collisions),
+                unsupported_evaluated_placement_count=unsupported_placement_count,
+            ),
+        ),
+    )
+
+
+def _shape_aware_4286_refinement(
+    baseline: tuple[BrickPlacement, ...],
+    scaled_vertices: Collection[tuple[float, float, float]],
+    faces: Collection[tuple[int, int, int]],
+    grid_size: GridSize,
+    target_parts: int,
+    protected_empty_cells: Collection[GridPosition],
+    max_parts: int | None,
+) -> tuple[tuple[BrickPlacement, ...], int, int, int]:
+    """Try legal local 4286 replacements with bounded source-aware validation.
+
+    Existing non-rectangular placements are frozen because they are v3/v5's
+    mechanically repaired slopes.  A candidate only replaces rectangular body
+    volume that it physically intersects, then the entire resulting assembly is
+    checked for support and body collisions.
+    """
+    from app.conversion.buildability import analyze_buildability
+    from app.conversion.physical_geometry import physical_microcells, placements_overlap
+
+    slope = next(part for part in BRICK_CATALOGUE if part.part_id == "4286")
+    protected = frozenset(protected_empty_cells)
+    frozen = tuple(
+        placement for placement in baseline if placement.brick_type.shape != "rectangular"
+    )
+    rectangular = tuple(
+        placement for placement in baseline if placement.brick_type.shape == "rectangular"
+    )
+    candidate_coordinates: set[tuple[int, int, int, int]] = set()
+    for orientation in SLOPE_ORIENTATIONS:
+        length, width = slope.length_studs, slope.width_studs
+        if orientation in (90, 270):
+            length, width = width, length
+        for placement in rectangular:
+            for z in range(
+                max(0, placement.position.z - slope.height_plates + 1),
+                min(grid_size.height_plates - slope.height_plates, placement.position.z) + 1,
+            ):
+                for y in range(
+                    max(0, placement.position.y - width + 1),
+                    min(
+                        grid_size.depth_studs - width,
+                        placement.position.y + placement.brick_type.width_studs - 1,
+                    )
+                    + 1,
+                ):
+                    for x in range(
+                        max(0, placement.position.x - length + 1),
+                        min(
+                            grid_size.width_studs - length,
+                            placement.position.x + placement.brick_type.length_studs - 1,
+                        )
+                        + 1,
+                    ):
+                        candidate_coordinates.add((x, y, z, orientation))
+    candidates = [
+        BrickPlacement(slope, GridPosition(x, y, z), orientation)
+        for x, y, z, orientation in sorted(candidate_coordinates)
+        if _placement_source_cells(
+            BrickPlacement(slope, GridPosition(x, y, z), orientation)
+        ).isdisjoint(protected)
+    ]
+    # The local neighborhood and a stable cap bound complete-model scoring.
+    candidates = candidates[:SHAPE_AWARE_MAX_4286_CANDIDATES]
+    incumbent = baseline
+    baseline_silhouette = _fidelity_for_placements(scaled_vertices, faces, baseline, target_parts)
+    incumbent_silhouette = baseline_silhouette
+    incumbent_geometry = _canonical_shape_aware_geometry(scaled_vertices, faces, baseline)
+    for candidate in candidates:
+        if any(placements_overlap(candidate, placement) for placement in frozen):
+            continue
+        candidate_cells = physical_microcells(candidate)
+        replaced = tuple(
+            placement
+            for placement in rectangular
+            if candidate_cells.isdisjoint(physical_microcells(placement))
+        )
+        if len(replaced) == len(rectangular):
+            continue
+        removed = tuple(placement for placement in rectangular if placement not in replaced)
+        color_source = removed[0]
+        colored_candidate = replace(
+            candidate,
+            color=color_source.color,
+            color_id=color_source.color_id,
+            color_name=color_source.color_name,
+            color_hex=color_source.color_hex,
+        )
+        proposal = frozen + replaced + (colored_candidate,)
+        if max_parts is not None and len(proposal) > max_parts:
+            continue
+        if any(_placement_source_cells(placement) & protected for placement in proposal):
+            continue
+        if analyze_buildability(proposal).unsupported_placement_count:
+            continue
+        if any(
+            placements_overlap(candidate, placement)
+            for placement in replaced
+        ):
+            continue
+        proposal_silhouette = _fidelity_for_placements(
+            scaled_vertices, faces, proposal, target_parts
+        )
+        if (
+            proposal_silhouette.mean_iou
+            < baseline_silhouette.mean_iou + SHAPE_AWARE_MIN_MEAN_IOU_GAIN
+        ):
+            continue
+        # This costly canonical proxy is only calculated for proposals that
+        # first clear the cheap, local silhouette threshold.
+        proposal_geometry = _canonical_shape_aware_geometry(scaled_vertices, faces, proposal)
+        if _shape_aware_fidelity_is_acceptable(
+            baseline_silhouette,
+            proposal_silhouette,
+            incumbent_geometry,
+            proposal_geometry,
+        ) and proposal_silhouette.mean_iou > incumbent_silhouette.mean_iou:
+            incumbent = proposal
+            incumbent_silhouette = proposal_silhouette
+    accepted_count = int(incumbent != baseline)
+    return incumbent, len(candidates), accepted_count, len(candidates) - accepted_count
+
+
+def _canonical_shape_aware_geometry(
+    scaled_vertices: Collection[tuple[float, float, float]],
+    faces: Collection[tuple[int, int, int]],
+    placements: tuple[BrickPlacement, ...],
+) -> GeometricMetrics:
+    """Use the frozen benchmark proxy only after cheap local shortlist scoring."""
+    from app.conversion.benchmark import evaluate_geometric_fidelity
+
+    return evaluate_geometric_fidelity(list(scaled_vertices), list(faces), placements)
+
+
+def _shape_aware_fidelity_is_acceptable(
+    incumbent_silhouette: FidelityMetrics,
+    proposal_silhouette: FidelityMetrics,
+    incumbent_geometry: GeometricMetrics,
+    proposal_geometry: GeometricMetrics,
+) -> bool:
+    """Accept a meaningful silhouette gain only when surface quality is retained."""
+    if proposal_silhouette.mean_iou < (
+        incumbent_silhouette.mean_iou + SHAPE_AWARE_MIN_MEAN_IOU_GAIN
+    ):
+        return False
+    if incumbent_geometry.status != "available" or proposal_geometry.status != "available":
+        return False
+    incumbent_chamfer = incumbent_geometry.symmetric_chamfer_mm
+    proposal_chamfer = proposal_geometry.symmetric_chamfer_mm
+    incumbent_p95 = incumbent_geometry.percentile_95_nearest_surface_mm
+    proposal_p95 = proposal_geometry.percentile_95_nearest_surface_mm
+    if (
+        incumbent_chamfer is None
+        or proposal_chamfer is None
+        or incumbent_p95 is None
+        or proposal_p95 is None
+    ):
+        return False
+    chamfer_tolerance = max(
+        SHAPE_AWARE_CHAMFER_ABSOLUTE_TOLERANCE_MM,
+        incumbent_chamfer * SHAPE_AWARE_CHAMFER_RELATIVE_TOLERANCE,
+    )
+    return (
+        proposal_chamfer <= incumbent_chamfer + chamfer_tolerance
+        and proposal_p95 <= incumbent_p95 + SHAPE_AWARE_P95_TOLERANCE_MM
+    )
+
+
 def pack_occupied_cells(
     occupied_cells: Collection[GridPosition],
     catalogue: tuple[LegoPart, ...] = BRICK_CATALOGUE,
@@ -632,12 +901,19 @@ def _validate_settings(settings: ConversionSettings) -> None:
         settings.max_parts <= 0 or settings.max_parts > MAX_TARGET_PARTS
     ):
         raise ConversionError("Maximum parts must be between 1 and the configured safety limit.")
-    if settings.max_parts is not None and settings.algorithm_version != SURFACE_GRID_V5_RELIABLE:
-        raise ConversionError("Maximum parts is available only with surface-grid-v5-reliable.")
+    if settings.max_parts is not None and settings.algorithm_version not in {
+        SURFACE_GRID_V5_RELIABLE,
+        SURFACE_GRID_V6_SHAPE_AWARE,
+    }:
+        raise ConversionError(
+            "Maximum parts is available only with surface-grid-v5-reliable or "
+            "surface-grid-v6-shape-aware."
+        )
     if settings.algorithm_version not in {
         SURFACE_GRID_V3,
         SURFACE_GRID_V4,
         SURFACE_GRID_V5_RELIABLE,
+        SURFACE_GRID_V6_SHAPE_AWARE,
     }:
         raise ConversionError("The requested conversion algorithm is not supported.")
 
