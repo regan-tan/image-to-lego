@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 SURFACE_GRID_V3 = "surface-grid-v3"
 SURFACE_GRID_V4 = "surface-grid-v4"
+SURFACE_GRID_V5_RELIABLE = "surface-grid-v5-reliable"
 ALGORITHM_VERSION = SURFACE_GRID_V4
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
@@ -49,15 +50,32 @@ MAX_TARGET_PARTS = 10_000
 MAX_GRID_CELLS = 250_000
 MINIMUM_AXIS_EXTENT = 1e-9
 GRID_CELL_BUDGET_FACTORS = (0.5, 1.0, 2.0, 4.0, 8.0)
+# A hard part limit needs a deliberately smaller candidate space than the
+# preferred-detail request. The open-box regression demonstrates that a
+# half-cap grid still creates more than 20,000 candidates and cannot find an
+# incumbent within the fixed deterministic work budget; a quarter-cap grid is
+# both bounded and sufficient to produce a verified model under the cap.
+RELIABLE_HARD_CAP_GRID_DIVISOR = 4
 SLOPE_ORIENTATIONS = (0, 90, 180, 270)
 SLOPE_33_PROFILE = "rise_33_3"
 SLOPE_33_HEIGHT_PROFILES = ((0, 1, 3), (0, 2, 3))
-_EMPTY_SPACE_NEIGHBOR_OFFSETS = tuple(
+# This is the established source-occupancy topology: an empty voxel connected
+# to the boundary by a face, edge, or corner is exterior.  It deliberately
+# avoids treating diagonal gaps in a sampled shell as proven source interior.
+_LEGACY_EMPTY_SPACE_NEIGHBOR_OFFSETS = tuple(
     (x_offset, y_offset, z_offset)
-    for z_offset in (-1, 0, 1)
-    for y_offset in (-1, 0, 1)
     for x_offset in (-1, 0, 1)
+    for y_offset in (-1, 0, 1)
+    for z_offset in (-1, 0, 1)
     if (x_offset, y_offset, z_offset) != (0, 0, 0)
+)
+_FACE_EMPTY_SPACE_NEIGHBOR_OFFSETS = (
+    (-1, 0, 0),
+    (1, 0, 0),
+    (0, -1, 0),
+    (0, 1, 0),
+    (0, 0, -1),
+    (0, 0, 1),
 )
 
 
@@ -76,6 +94,7 @@ class ConversionSettings:
     target_parts: int
     up_axis: Axis = Axis.Y
     algorithm_version: str = ALGORITHM_VERSION
+    max_parts: int | None = None
     experimental_staged_wedge_refinement: bool = False
 
 
@@ -133,6 +152,29 @@ class AlgorithmMetadata:
     candidate_count: int
     occupancy_mode: str
     fidelity: FidelityMetrics
+    diagnostics: ConversionDiagnostics | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversionDiagnostics:
+    """Bounded converter evidence for offline reliability benchmarks only."""
+
+    requested_max_parts: int | None
+    source_is_watertight: bool
+    surface_cell_count: int
+    allowed_interior_cell_count: int
+    protected_empty_cell_count: int
+    unknown_cell_count: int
+    candidate_count_before_protection: int
+    candidate_count_after_protection: int
+    candidate_count_after_reachability_pruning: int
+    locked_placement_count: int
+    stage_one_status: str
+    stage_one_has_incumbent: bool
+    stage_two_status: str
+    stage_two_has_incumbent: bool
+    repair_candidate_count: int
+    repair_final_placement_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,14 +191,18 @@ class SourceOccupancy:
 
     surface_cells: frozenset[GridPosition]
     safe_interior_cells: frozenset[GridPosition]
+    mesh_is_watertight: bool
 
 
 def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
     """Convert GLB bytes into a deterministic surface model on a plate-height grid."""
+    _validate_settings(settings)
     if settings.algorithm_version == SURFACE_GRID_V3:
         return _convert_surface_grid_v3(glb_bytes, settings)
     if settings.algorithm_version == SURFACE_GRID_V4:
         return _convert_surface_grid_v4(glb_bytes, settings)
+    if settings.algorithm_version == SURFACE_GRID_V5_RELIABLE:
+        return _convert_surface_grid_v5_reliable(glb_bytes, settings)
     raise ConversionError("The requested conversion algorithm is not supported.")
 
 
@@ -344,6 +390,171 @@ def _convert_surface_grid_v4(glb_bytes: bytes, settings: ConversionSettings) -> 
     )
 
 
+def _convert_surface_grid_v5_reliable(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
+    """Use v4 packing with source-aware empty-space and optional hard part limits.
+
+    v4 remains intentionally unchanged for the frozen fidelity baseline.  This
+    path reuses its solver so the new constraints stay close to the established
+    packing and connector semantics.
+    """
+    from app.conversion.surface_grid_v4 import (
+        _enumerate_candidates,
+        projection_hull_target,
+        solve_surface_grid_v4,
+    )
+
+    _validate_settings(settings)
+    grid_target_parts = settings.target_parts
+    if settings.max_parts is not None:
+        # v4's projection hull can require several times the v3 surface count.
+        # Start at a bounded coarser grid so a hard-cap solve has a practical
+        # chance to find an incumbent rather than spending its entire solver
+        # budget proving a high-detail candidate space difficult.
+        grid_target_parts = min(
+            settings.target_parts,
+            max(1, settings.max_parts // RELIABLE_HARD_CAP_GRID_DIVISOR),
+        )
+    baseline = _convert_surface_grid_v3(
+        glb_bytes,
+        ConversionSettings(target_parts=grid_target_parts, up_axis=settings.up_axis),
+    )
+    mesh = _load_mesh(glb_bytes)
+    vertices = [
+        (float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices.tolist()
+    ]
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces.tolist()]
+    normalized_vertices = _normalize_vertices(vertices, settings.up_axis)
+    source_occupancy = _source_occupancy(normalized_vertices, faces, baseline.metadata.grid_size)
+    locked_slopes, locked_slope_cells = _place_supported_slopes(source_occupancy.surface_cells)
+    baseline_slopes = tuple(
+        placement
+        for placement in baseline.placements
+        if placement.brick_type.shape != "rectangular"
+    )
+    if _placement_geometry(locked_slopes) != _placement_geometry(baseline_slopes):
+        raise ConversionError("Locked slopes did not reproduce surface-grid-v3 placements.")
+
+    locked_occupied_cells = frozenset(
+        cell for placement in locked_slopes for cell in _placement_source_cells(placement)
+    )
+    exterior_cells = frozenset(
+        cell
+        for placement in baseline.placements
+        if placement.brick_type.shape == "rectangular"
+        for cell in _placement_cells(placement)
+        if cell not in locked_occupied_cells
+    )
+    protected_empty_cells = _v5_protected_empty_cells(
+        source_occupancy,
+        baseline.metadata.grid_size,
+    )
+    unprotected_target, _ = projection_hull_target(
+        exterior_cells,
+        locked_slope_cells,
+        baseline.metadata.grid_size,
+    )
+    target_cells, required_pixels = projection_hull_target(
+        exterior_cells,
+        locked_slope_cells,
+        baseline.metadata.grid_size,
+        protected_empty_cells=protected_empty_cells,
+    )
+    # v3 reserves only the sampled ramp surface.  v5 must also prevent a
+    # rectangular repair candidate from occupying the physical ramp volume.
+    target_cells = target_cells - locked_occupied_cells
+    packing = solve_surface_grid_v4(
+        target_cells,
+        required_pixels,
+        locked_slope_cells,
+        BRICK_CATALOGUE,
+        target_parts=settings.target_parts,
+        locked_placements=locked_slopes,
+        max_parts=settings.max_parts,
+        reliable_repair=True,
+    )
+    colored_rectangles = _color_placements(
+        packing.placements,
+        normalized_vertices,
+        faces,
+        mesh,
+        baseline.metadata.grid_size,
+    )
+    placements = baseline_slopes + colored_rectangles
+    if any(
+        _placement_source_cells(placement) & protected_empty_cells for placement in placements
+    ):
+        raise ConversionError("surface-grid-v5-reliable occupied source-protected empty space.")
+    if settings.max_parts is not None and len(placements) > settings.max_parts:
+        raise ConversionError("surface-grid-v5-reliable exceeded the requested hard part limit.")
+
+    from app.conversion.buildability import analyze_buildability
+
+    if analyze_buildability(placements).unsupported_placement_count:
+        raise ConversionError(
+            "surface-grid-v5-reliable produced an unsupported evaluated placement."
+        )
+    scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
+    occupied_cell_count = len(
+        {cell for placement in colored_rectangles for cell in _placement_cells(placement)}
+        | set(locked_slope_cells)
+    )
+    return LegoModel(
+        placements=placements,
+        part_count=len(placements),
+        dimensions=_model_dimensions(placements),
+        metadata=AlgorithmMetadata(
+            algorithm_version=SURFACE_GRID_V5_RELIABLE,
+            source_sha256=sha256(glb_bytes).hexdigest(),
+            target_parts=settings.target_parts,
+            occupied_cell_count=occupied_cell_count,
+            grid_size=baseline.metadata.grid_size,
+            candidate_count=packing.candidate_count,
+            occupancy_mode=OCCUPANCY_MODE,
+            fidelity=_fidelity_for_placements(
+                scaled_vertices, faces, placements, settings.target_parts
+            ),
+            diagnostics=ConversionDiagnostics(
+                requested_max_parts=settings.max_parts,
+                source_is_watertight=source_occupancy.mesh_is_watertight,
+                surface_cell_count=len(source_occupancy.surface_cells),
+                allowed_interior_cell_count=len(source_occupancy.safe_interior_cells),
+                protected_empty_cell_count=len(protected_empty_cells),
+                unknown_cell_count=(
+                    0
+                    if source_occupancy.mesh_is_watertight
+                    else (
+                        baseline.metadata.grid_size.cell_count
+                        - len(source_occupancy.surface_cells)
+                    )
+                ),
+                candidate_count_before_protection=len(
+                    _enumerate_candidates(unprotected_target, BRICK_CATALOGUE)
+                ),
+                candidate_count_after_protection=len(
+                    _enumerate_candidates(target_cells, BRICK_CATALOGUE)
+                ),
+                candidate_count_after_reachability_pruning=packing.candidate_count,
+                locked_placement_count=len(locked_slopes),
+                stage_one_status=packing.stage_one.status,
+                stage_one_has_incumbent=(
+                    packing.stage_one.status in {"OPTIMAL", "FEASIBLE"}
+                ),
+                stage_two_status=packing.stage_two.status,
+                stage_two_has_incumbent=(
+                    packing.stage_two.status in {"OPTIMAL", "FEASIBLE"}
+                ),
+                repair_candidate_count=sum(
+                    component.candidate_count for component in packing.repair_diagnostics.components
+                ),
+                repair_final_placement_count=sum(
+                    component.selected_repair_count
+                    for component in packing.repair_diagnostics.components
+                ),
+            ),
+        ),
+    )
+
+
 def pack_occupied_cells(
     occupied_cells: Collection[GridPosition],
     catalogue: tuple[LegoPart, ...] = BRICK_CATALOGUE,
@@ -417,7 +628,17 @@ def _validate_settings(settings: ConversionSettings) -> None:
         raise ConversionError("Target parts must be greater than zero.")
     if settings.target_parts > MAX_TARGET_PARTS:
         raise ConversionError("Target parts exceeds the configured safety limit.")
-    if settings.algorithm_version not in {SURFACE_GRID_V3, SURFACE_GRID_V4}:
+    if settings.max_parts is not None and (
+        settings.max_parts <= 0 or settings.max_parts > MAX_TARGET_PARTS
+    ):
+        raise ConversionError("Maximum parts must be between 1 and the configured safety limit.")
+    if settings.max_parts is not None and settings.algorithm_version != SURFACE_GRID_V5_RELIABLE:
+        raise ConversionError("Maximum parts is available only with surface-grid-v5-reliable.")
+    if settings.algorithm_version not in {
+        SURFACE_GRID_V3,
+        SURFACE_GRID_V4,
+        SURFACE_GRID_V5_RELIABLE,
+    }:
         raise ConversionError("The requested conversion algorithm is not supported.")
 
 
@@ -735,7 +956,7 @@ def _source_occupancy(
         grid_size,
         mesh_is_watertight=mesh.is_watertight,
     )
-    return SourceOccupancy(surface_cells, safe_interior_cells)
+    return SourceOccupancy(surface_cells, safe_interior_cells, mesh.is_watertight)
 
 
 def _safe_interior_cells(
@@ -755,6 +976,20 @@ def _safe_interior_cells(
         for x in range(grid_size.width_studs)
     }
     empty_cells = all_cells - surface_cells
+    exterior_cells = _exterior_empty_cells(
+        empty_cells,
+        grid_size,
+        _LEGACY_EMPTY_SPACE_NEIGHBOR_OFFSETS,
+    )
+    return frozenset(empty_cells - exterior_cells)
+
+
+def _exterior_empty_cells(
+    empty_cells: set[GridPosition],
+    grid_size: GridSize,
+    neighbor_offsets: tuple[tuple[int, int, int], ...],
+) -> set[GridPosition]:
+    """Return empty cells reachable from the grid boundary with one topology."""
     exterior_cells = {
         cell
         for cell in empty_cells
@@ -765,7 +1000,7 @@ def _safe_interior_cells(
     pending = list(exterior_cells)
     while pending:
         cell = pending.pop()
-        for x_offset, y_offset, z_offset in _EMPTY_SPACE_NEIGHBOR_OFFSETS:
+        for x_offset, y_offset, z_offset in neighbor_offsets:
             neighbor = GridPosition(
                 cell.x + x_offset,
                 cell.y + y_offset,
@@ -774,7 +1009,38 @@ def _safe_interior_cells(
             if neighbor in empty_cells and neighbor not in exterior_cells:
                 exterior_cells.add(neighbor)
                 pending.append(neighbor)
-    return frozenset(empty_cells - exterior_cells)
+    return exterior_cells
+
+
+def _v5_protected_empty_cells(
+    occupancy: SourceOccupancy,
+    grid_size: GridSize,
+) -> frozenset[GridPosition]:
+    """Return v5-protected empty cells a watertight source proves are exterior.
+
+    Only face-connected exterior is protected. Cells connected to the boundary
+    solely through an edge or corner are topologically ambiguous after surface
+    voxelization: treating them as protected regresses valid sphere and pyramid
+    fits, while treating them as proved interior risks filling a diagonal gap.
+    They therefore remain unconstrained. For an open mesh this returns no
+    constraints rather than hollowing an uncertain scan.
+    """
+    if not occupancy.mesh_is_watertight:
+        return frozenset()
+    all_cells = frozenset(
+        GridPosition(x, y, z)
+        for z in range(grid_size.height_plates)
+        for y in range(grid_size.depth_studs)
+        for x in range(grid_size.width_studs)
+    )
+    empty_cells = set(all_cells - occupancy.surface_cells)
+    return frozenset(
+        _exterior_empty_cells(
+            empty_cells,
+            grid_size,
+            _FACE_EMPTY_SPACE_NEIGHBOR_OFFSETS,
+        )
+    )
 
 
 def _scale_vertices_to_grid(
@@ -823,6 +1089,34 @@ def _placement_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
         for y in range(width)
         for x in range(length)
     )
+
+
+def _placement_source_cells(placement: BrickPlacement) -> frozenset[GridPosition]:
+    """Return a placement's conservative source-grid occupancy for v5 checks.
+
+    Rectangular parts use their ordinary fit cells.  The sole supported ramp
+    uses its triangular-prism profile, not its enclosing rectangular box.
+    """
+    if placement.brick_type.family != SLOPE_33_FAMILY:
+        return _placement_cells(placement)
+    if placement.brick_type.slope_profile != SLOPE_33_PROFILE:
+        return _placement_cells(placement)
+
+    profile: tuple[int, ...] = (0, 1, 3)
+    if placement.orientation_degrees in (180, 270):
+        profile = tuple(reversed(profile))
+    occupied: set[GridPosition] = set()
+    for length_offset, top_height in enumerate(profile):
+        for width_offset in range(placement.brick_type.width_studs):
+            for height_offset in range(top_height + 1):
+                if placement.orientation_degrees in (0, 180):
+                    x = placement.position.x + length_offset
+                    y = placement.position.y + width_offset
+                else:
+                    x = placement.position.x + width_offset
+                    y = placement.position.y + length_offset
+                occupied.add(GridPosition(x, y, placement.position.z + height_offset))
+    return frozenset(occupied)
 
 
 def _placement_geometry(

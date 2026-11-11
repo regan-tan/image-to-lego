@@ -260,6 +260,7 @@ def case_record(
         "upAxis": settings.up_axis.value,
         "converterSettings": {
             "targetParts": settings.target_parts,
+            "maxParts": settings.max_parts,
             "experimentalStagedWedgeRefinement": settings.experimental_staged_wedge_refinement,
         },
         "gridDimensions": {
@@ -275,6 +276,7 @@ def case_record(
         "parts": {
             "target": settings.target_parts,
             "actual": model.part_count,
+            "maximum": settings.max_parts,
             "delta": model.part_count - settings.target_parts,
             "errorRatio": round(
                 abs(model.part_count - settings.target_parts) / settings.target_parts, 6
@@ -283,6 +285,9 @@ def case_record(
         "silhouette": fidelity,
         "geometric": asdict(geometric),
         "openingDiagnostic": asdict(opening),
+        "conversionDiagnostics": (
+            asdict(model.metadata.diagnostics) if model.metadata.diagnostics is not None else None
+        ),
         "runtime": {"seconds": round(runtime_seconds, 6), "environmentDependent": True},
     }
 

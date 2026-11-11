@@ -50,10 +50,11 @@ def parse_arguments() -> argparse.Namespace:
     source_group.add_argument("--source", type=Path)
     parser.add_argument(
         "--algorithm",
-        choices=(core.SURFACE_GRID_V3, core.SURFACE_GRID_V4),
+        choices=(core.SURFACE_GRID_V3, core.SURFACE_GRID_V4, core.SURFACE_GRID_V5_RELIABLE),
         default=core.SURFACE_GRID_V4,
     )
     parser.add_argument("--target-parts", type=int)
+    parser.add_argument("--max-parts", type=int)
     parser.add_argument(
         "--up-axis", choices=tuple(axis.value for axis in core.Axis), default=core.Axis.Y.value
     )
@@ -76,6 +77,10 @@ def main() -> int:
     arguments = parse_arguments()
     if arguments.target_parts is not None:
         _validate_target_parts(arguments.target_parts)
+    if arguments.max_parts is not None:
+        _validate_target_parts(arguments.max_parts)
+    if arguments.max_parts is not None and arguments.algorithm != core.SURFACE_GRID_V5_RELIABLE:
+        raise SystemExit("--max-parts requires --algorithm surface-grid-v5-reliable.")
     if arguments.source is not None:
         if not arguments.source.is_file():
             print("Source path must name a readable GLB file.", file=sys.stderr)
@@ -115,6 +120,7 @@ def main() -> int:
             target_parts=target_parts,
             up_axis=default_axis if synthetic else core.Axis(arguments.up_axis),
             algorithm_version=arguments.algorithm,
+            max_parts=arguments.max_parts,
         )
         record = _run_case(case_id, case_name, synthetic, source, settings, output_directory)
         records.append(record)

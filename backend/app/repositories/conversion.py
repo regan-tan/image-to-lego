@@ -31,6 +31,7 @@ class ConversionRepository(Protocol):
         project_id: UUID,
         source_artifact_id: UUID,
         target_parts: int,
+        max_parts: int | None,
         up_axis: str,
         algorithm_version: str,
         idempotency_key: str,
