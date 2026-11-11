@@ -29,7 +29,7 @@ from app.conversion import (
     order_placements_for_instructions,
 )
 from app.conversion.colors import COLORS_BY_ID
-from app.conversion.core import MAX_INPUT_BYTES, SURFACE_GRID_V4
+from app.conversion.core import MAX_INPUT_BYTES, SURFACE_GRID_V4, SURFACE_GRID_V5_RELIABLE
 from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
 from app.domain.artifacts import ArtifactStatus
@@ -131,6 +131,7 @@ class ConversionJobProcessor:
                     source_content,
                     ConversionSettings(
                         target_parts=worker_job.conversion.target_parts,
+                        max_parts=worker_job.conversion.max_parts,
                         up_axis=Axis(worker_job.conversion.up_axis),
                         algorithm_version=worker_job.conversion.algorithm_version,
                     ),
@@ -285,7 +286,10 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     # surface-grid-v3 uses its historical one-plate grid representation for bricks.
     # Its part IDs remain useful inventory context, but its geometry is not a
     # manufactured-part representation and must not be exported for sourcing.
-    catalogue_geometry_verified = model.metadata.algorithm_version == SURFACE_GRID_V4
+    catalogue_geometry_verified = model.metadata.algorithm_version in {
+        SURFACE_GRID_V4,
+        SURFACE_GRID_V5_RELIABLE,
+    }
     metadata: dict[str, object] = {
         "algorithmVersion": model.metadata.algorithm_version,
         "sourceSha256": model.metadata.source_sha256,

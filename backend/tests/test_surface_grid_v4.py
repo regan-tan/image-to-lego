@@ -7,7 +7,7 @@ import trimesh
 from ortools.sat.python import cp_model
 
 import app.conversion.surface_grid_v4 as surface_grid_v4
-from app.conversion import core
+from app.conversion import benchmark, core
 from app.conversion.buildability import analyze_buildability
 from app.conversion.mechanical_connectors import (
     MechanicalInterfaceKind,
@@ -139,6 +139,233 @@ def test_v4_occupancy_prevents_overlapping_placements() -> None:
     ]
 
     assert len(occupied) == len(set(occupied))
+
+
+def test_hard_part_limit_accepts_a_feasible_exact_boundary() -> None:
+    cell = core.GridPosition(0, 0, 0)
+
+    result = solve_surface_grid_v4(
+        {cell},
+        _required({cell}),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        max_parts=1,
+    )
+
+    assert len(result.placements) == 1
+
+
+def test_hard_part_limit_counts_locked_parts_and_blocks_repair() -> None:
+    support_cell = core.GridPosition(0, 0, 0)
+
+    with pytest.raises(V4SolveFailure, match="local part bound"):
+        solve_surface_grid_v4(
+            {support_cell},
+            (),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+            locked_placements=(_slope_4286(),),
+            max_parts=1,
+        )
+
+
+def test_hard_part_limit_includes_successful_repair_output() -> None:
+    support_cell = core.GridPosition(0, 0, 0)
+
+    result = solve_surface_grid_v4(
+        {support_cell},
+        (),
+        (),
+        (_one_by_one_plate(),),
+        target_parts=100,
+        locked_placements=(_slope_4286(),),
+        max_parts=2,
+    )
+
+    assert len(result.placements) + 1 == 2
+    buildability = analyze_buildability((_slope_4286(), *result.placements))
+    assert buildability.unsupported_placement_count == 0
+
+
+def test_projection_hull_rejects_explicitly_protected_empty_cells() -> None:
+    occupied = {core.GridPosition(0, 0, 0), core.GridPosition(2, 0, 0)}
+    protected = {core.GridPosition(1, 0, 0)}
+
+    target, _ = projection_hull_target(
+        occupied,
+        (),
+        core.GridSize(3, 1, 1),
+        protected_empty_cells=protected,
+    )
+
+    assert core.GridPosition(1, 0, 0) not in target
+
+
+def test_watertight_source_occupancy_keeps_a_face_enclosed_cell_safe() -> None:
+    grid_size = core.GridSize(3, 3, 3)
+    surface = frozenset(
+        core.GridPosition(x, y, z)
+        for x in range(3)
+        for y in range(3)
+        for z in range(3)
+        if (x, y, z) != (1, 1, 1)
+    )
+
+    interior = core._safe_interior_cells(surface, grid_size, mesh_is_watertight=True)
+
+    assert interior == {core.GridPosition(1, 1, 1)}
+
+
+@pytest.mark.parametrize(
+    ("exterior_cell", "connection"),
+    (
+        (core.GridPosition(0, 1, 1), "face"),
+        (core.GridPosition(0, 0, 1), "edge"),
+        (core.GridPosition(0, 0, 0), "corner"),
+    ),
+)
+def test_v5_protects_empty_space_connected_to_exterior(
+    exterior_cell: core.GridPosition, connection: str
+) -> None:
+    grid_size = core.GridSize(3, 3, 3)
+    cavity = core.GridPosition(1, 1, 1)
+    surface = frozenset(
+        core.GridPosition(x, y, z)
+        for x in range(3)
+        for y in range(3)
+        for z in range(3)
+        if core.GridPosition(x, y, z) not in {cavity, exterior_cell}
+    )
+    occupancy = core.SourceOccupancy(
+        surface_cells=surface,
+        safe_interior_cells=core._safe_interior_cells(
+            surface,
+            grid_size,
+            mesh_is_watertight=True,
+        ),
+        mesh_is_watertight=True,
+    )
+
+    protected = core._v5_protected_empty_cells(occupancy, grid_size)
+
+    assert exterior_cell in protected, connection
+    if connection == "face":
+        assert cavity in protected
+    else:
+        assert cavity not in protected
+
+
+def test_slope_source_cells_follow_the_ramp_profile_not_its_bounding_box() -> None:
+    slope = _slope_4286()
+
+    occupied = core._placement_source_cells(slope)
+
+    assert core.GridPosition(0, 0, 3) not in occupied
+    assert core.GridPosition(2, 0, 3) in occupied
+
+
+def test_reliable_repair_prunes_optional_candidates_deterministically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = surface_grid_v4._Candidate(
+        core.BrickPlacement(_one_by_one_plate(), core.GridPosition(0, 0, 0), 0),
+        frozenset({core.GridPosition(0, 0, 0)}),
+    )
+    candidates = tuple(candidate for _ in range(surface_grid_v4.MAX_RELIABLE_REPAIR_CANDIDATES + 4))
+    monkeypatch.setattr(surface_grid_v4, "MAX_RELIABLE_REPAIR_CANDIDATES", 3)
+
+    pruned = surface_grid_v4._prune_reliable_repair_candidates(
+        candidates,
+        set(range(7)),
+        {0},
+        {core.GridPosition(0, 0, 0)},
+    )
+
+    assert pruned == {0, 1, 2}
+
+
+def test_reliable_repair_candidate_limit_reports_essential_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = surface_grid_v4._Candidate(
+        core.BrickPlacement(_one_by_one_plate(), core.GridPosition(0, 0, 0), 0),
+        frozenset({core.GridPosition(0, 0, 0)}),
+    )
+    monkeypatch.setattr(surface_grid_v4, "MAX_RELIABLE_REPAIR_CANDIDATES", 2)
+
+    with pytest.raises(V4SolveFailure, match="reason=candidate_limit_exhausted"):
+        surface_grid_v4._prune_reliable_repair_candidates(
+            (candidate, candidate, candidate),
+            {0, 1, 2},
+            {0, 1, 2},
+            {core.GridPosition(0, 0, 0)},
+        )
+
+
+def test_reliable_version_is_explicit_and_preserves_a_hard_cap() -> None:
+    source = trimesh.creation.box(extents=(4.0, 3.0, 2.0)).export(file_type="glb")
+    assert isinstance(source, bytes)
+
+    model = core.convert_glb(
+        source,
+        core.ConversionSettings(
+            target_parts=8,
+            max_parts=8,
+            algorithm_version=core.SURFACE_GRID_V5_RELIABLE,
+        ),
+    )
+
+    assert model.metadata.algorithm_version == core.SURFACE_GRID_V5_RELIABLE
+    assert model.part_count <= 8
+    assert analyze_buildability(model.placements).unsupported_placement_count == 0
+
+
+def test_reliable_capped_open_box_produces_a_mechanically_valid_incumbent() -> None:
+    open_box = next(case for case in benchmark.synthetic_cases() if case.case_id == "open-box")
+
+    model = core.convert_glb(
+        benchmark.glb_bytes(open_box.mesh),
+        core.ConversionSettings(
+            target_parts=100,
+            max_parts=100,
+            algorithm_version=core.SURFACE_GRID_V5_RELIABLE,
+        ),
+    )
+
+    assert model.part_count <= 100
+    assert model.metadata.grid_size == core.GridSize(8, 5, 15)
+    assert model.metadata.diagnostics is not None
+    assert model.metadata.diagnostics.stage_one_has_incumbent
+    assert analyze_buildability(model.placements).unsupported_placement_count == 0
+
+
+def test_reliable_uncapped_sphere_repairs_every_elevated_locked_slope() -> None:
+    sphere = next(case for case in benchmark.synthetic_cases() if case.case_id == "sphere")
+    source = benchmark.glb_bytes(sphere.mesh)
+
+    model = core.convert_glb(
+        source,
+        core.ConversionSettings(
+            target_parts=100,
+            algorithm_version=core.SURFACE_GRID_V5_RELIABLE,
+        ),
+    )
+
+    assert model.part_count == 292
+    assert analyze_buildability(model.placements).unsupported_placement_count == 0
+
+
+def test_legacy_converter_rejects_a_hard_part_limit() -> None:
+    source = trimesh.creation.box(extents=(4.0, 3.0, 2.0)).export(file_type="glb")
+    assert isinstance(source, bytes)
+
+    with pytest.raises(core.ConversionError, match="surface-grid-v5-reliable"):
+        core.convert_glb(
+            source,
+            core.ConversionSettings(target_parts=8, max_parts=8),
+        )
 
 
 def test_v4_does_not_select_an_unsupported_non_base_placement() -> None:
@@ -648,6 +875,24 @@ def test_stage_one_without_a_usable_incumbent_fails_explicitly(
     monkeypatch.setattr("app.conversion.surface_grid_v4._solve", fake_solve)
 
     with pytest.raises(V4SolveFailure, match="usable incumbent"):
+        solve_surface_grid_v4(
+            {core.GridPosition(0, 0, 0)},
+            _required({core.GridPosition(0, 0, 0)}),
+            (),
+            (_one_by_one_plate(),),
+            target_parts=100,
+        )
+
+
+def test_unknown_stage_one_is_not_reported_as_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.conversion.surface_grid_v4._solve",
+        lambda *_: (object(), SolverStage("UNKNOWN", None, 0.0, False)),
+    )
+
+    with pytest.raises(V4SolveFailure, match="reason=limit_exhausted"):
         solve_surface_grid_v4(
             {core.GridPosition(0, 0, 0)},
             _required({core.GridPosition(0, 0, 0)}),

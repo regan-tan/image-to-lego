@@ -29,9 +29,11 @@ SOLVER_WORKERS = 1
 LOCKED_SUPPORT_FAILURE = "A locked verified placement has no possible mechanical supporter."
 LOCAL_REPAIR_BOUND_FAILURE = "surface-grid-v4 support repair could not fit its local part bound."
 REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER = 2
+RELIABLE_REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER = 4
+MAX_RELIABLE_REPAIR_CANDIDATES = 2_000
 
 ProjectionPixel = tuple[str, int, int]
-SupportContact = tuple[int, int, int]
+SupportContact = tuple[float, float, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +122,8 @@ def solve_surface_grid_v4(
     *,
     target_parts: int,
     locked_placements: Collection[BrickPlacement] = (),
+    max_parts: int | None = None,
+    reliable_repair: bool = False,
 ) -> V4PackingResult:
     """Select non-overlapping, direct-support-connected rectangles inside A.
 
@@ -129,6 +133,11 @@ def solve_surface_grid_v4(
     """
     target = frozenset(target_cells)
     locked = tuple(locked_placements)
+    if max_parts is not None and len(locked) > max_parts:
+        raise V4SolveFailure(
+            "Hard part limit is lower than the number of locked placements. "
+            f"maximum_parts={max_parts}; locked_placements={len(locked)}."
+        )
     required = frozenset(required_pixels)
     fixed_pixels = _pixels_for_cells(locked_slope_cells)
     variable_pixels = tuple(sorted(required - fixed_pixels, key=_pixel_order))
@@ -156,12 +165,16 @@ def solve_surface_grid_v4(
         candidate_ids_by_cell,
         cells_by_pixel,
     )
+    _add_part_limit(stage_one_model.model, stage_one_model.selected, max_parts, len(locked))
     stage_one_model.model.maximize(sum(stage_one_model.coverage))
     stage_one_solver, stage_one = _solve(
         stage_one_model.model, _stage_one_deterministic_budget(target_parts)
     )
     if not _has_usable_incumbent(stage_one):
-        raise V4SolveFailure("surface-grid-v4 stage one did not provide a usable incumbent.")
+        raise V4SolveFailure(
+            "surface-grid-v4 stage one did not provide a usable incumbent; "
+            f"status={stage_one.status}; reason={_solver_failure_reason(stage_one)}."
+        )
 
     stage_one_ids = _selected_ids(stage_one_solver, stage_one_model.selected)
     achieved_coverage = stage_one.objective_value
@@ -174,6 +187,7 @@ def solve_surface_grid_v4(
         candidate_ids_by_cell,
         cells_by_pixel,
     )
+    _add_part_limit(stage_two_model.model, stage_two_model.selected, max_parts, len(locked))
     stage_two_model.model.add(sum(stage_two_model.coverage) == achieved_coverage)
     stage_two_model.model.minimize(sum(stage_two_model.selected))
     _add_hint(stage_two_model, stage_one_ids)
@@ -192,8 +206,10 @@ def solve_surface_grid_v4(
         _model_base_z(target, locked),
         variable_pixels,
         cells_by_pixel,
+        max_parts=max_parts,
+        reliable_repair=reliable_repair,
     )
-    _validate_placements(placements, target, locked)
+    _validate_placements(placements, target, locked, max_parts=max_parts)
     return V4PackingResult(
         placements=placements,
         stage_one=stage_one,
@@ -237,10 +253,13 @@ def projection_hull_target(
     rectangular_cells: Collection[GridPosition],
     locked_slope_cells: Collection[GridPosition],
     grid_size: GridSize,
+    *,
+    protected_empty_cells: Collection[GridPosition] = (),
 ) -> tuple[frozenset[GridPosition], frozenset[ProjectionPixel]]:
     """Build A from v3 exterior evidence while preserving locked slope cells."""
     exterior = frozenset(rectangular_cells)
     locked = frozenset(locked_slope_cells)
+    protected = frozenset(protected_empty_cells)
     if exterior & locked:
         raise ConversionError("Rectangular v3 cells overlap locked slope cells.")
     required = _pixels_for_cells(exterior | locked)
@@ -254,7 +273,19 @@ def projection_hull_target(
         and ("top", x, y) in required
         and GridPosition(x, y, z) not in locked
     )
-    return exterior | target, required
+    if locked & protected:
+        raise ConversionError("A locked slope intersects source-protected empty space.")
+    return (exterior | target) - protected, required
+
+
+def _add_part_limit(
+    model: cp_model.CpModel,
+    selected: tuple[cp_model.IntVar, ...],
+    max_parts: int | None,
+    locked_count: int,
+) -> None:
+    if max_parts is not None:
+        model.add(sum(selected) <= max_parts - locked_count)
 
 
 def _enumerate_candidates(
@@ -370,6 +401,9 @@ def _repair_locked_verified_support(
     base_z: int,
     variable_pixels: tuple[ProjectionPixel, ...],
     cells_by_pixel: Mapping[ProjectionPixel, tuple[GridPosition, ...]],
+    *,
+    max_parts: int | None,
+    reliable_repair: bool,
 ) -> tuple[tuple[BrickPlacement, ...], RepairDiagnostics]:
     """Repair fixed verified support without perturbing the global packing.
 
@@ -384,11 +418,13 @@ def _repair_locked_verified_support(
     baseline_placements = tuple(
         candidates[candidate_id].placement for candidate_id in sorted(baseline_ids)
     )
-    if baseline_placements and not analyze_buildability(
-        (*locked, *baseline_placements)
-    ).unsupported_placement_count:
+    baseline_buildability = analyze_buildability((*locked, *baseline_placements))
+    if baseline_placements and not baseline_buildability.unsupported_placement_count:
         return baseline_placements, RepairDiagnostics(components=(), solver_call_count=0)
 
+    # A lock supported directly by another lock remains fixed throughout the
+    # repair. A lock supported only by a selected rectangle must be included:
+    # that rectangle can become mutable while repairing a different lock.
     candidate_males = tuple(
         frozenset(_male_connector_coordinates((candidate.placement,))) for candidate in candidates
     )
@@ -396,9 +432,6 @@ def _repair_locked_verified_support(
         frozenset(_receiver_connector_coordinates(candidate.placement)) for candidate in candidates
     )
     locked_males = _male_connector_coordinates(locked)
-    baseline_males = locked_males | set().union(
-        *(candidate_males[candidate_id] for candidate_id in baseline_ids)
-    )
     candidate_ids_by_male_coordinate: dict[tuple[float, float, float], list[int]] = defaultdict(
         list
     )
@@ -416,7 +449,7 @@ def _repair_locked_verified_support(
         receivers = _receiver_connector_coordinates(consumer)
         if not receivers:
             continue
-        if receivers & baseline_males:
+        if receivers & locked_males:
             continue
         supporter_ids = sorted(
             {
@@ -436,7 +469,7 @@ def _repair_locked_verified_support(
         required_supporter_ids.update(
             candidate_id
             for candidate_id in supporter_ids
-            if len(candidates[candidate_id].cells) == smallest_supporter_size
+            if reliable_repair or len(candidates[candidate_id].cells) == smallest_supporter_size
         )
 
     if not unsupported_locked:
@@ -477,6 +510,7 @@ def _repair_locked_verified_support(
         candidate_receivers,
         frozen_males,
         base_z,
+        include_all_supporters=reliable_repair,
     )
     if not local_ids:
         raise V4SolveFailure(LOCKED_SUPPORT_FAILURE)
@@ -492,7 +526,19 @@ def _repair_locked_verified_support(
         len(mutable_baseline_ids),
         len(unsupported_locked),
         len(boundary_support_contacts),
+        allowance_per_unsupported=(
+            RELIABLE_REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER
+            if reliable_repair
+            else REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER
+        ),
     )
+    if max_parts is not None:
+        allowed_repair_count = min(
+            allowed_repair_count,
+            max_parts - len(locked) - len(frozen_ids),
+        )
+    if allowed_repair_count < 0:
+        raise V4SolveFailure("Hard part limit cannot retain the required frozen placements.")
     repair_result = _solve_support_repair(
         candidates,
         baseline_ids,
@@ -713,6 +759,8 @@ def _repair_local_candidate_ids(
     candidate_receivers: tuple[frozenset[tuple[float, float, float]], ...],
     frozen_males: set[tuple[float, float, float]],
     base_z: int,
+    *,
+    include_all_supporters: bool = False,
 ) -> tuple[int, ...]:
     repair_cells = {
         cell for candidate_id in mutable_baseline_ids for cell in candidates[candidate_id].cells
@@ -730,6 +778,13 @@ def _repair_local_candidate_ids(
             or bool(candidate.cells & repair_cells)
         )
     }
+    if include_all_supporters:
+        local_ids = _prune_reliable_repair_candidates(
+            candidates,
+            local_ids,
+            required_supporter_ids | anchored_supporter_ids | mutable_baseline_ids,
+            repair_cells,
+        )
     producer_ids_by_coordinate: dict[tuple[float, float, float], list[int]] = defaultdict(list)
     for candidate_id, males in enumerate(candidate_males):
         if candidates[candidate_id].cells & frozen_cells:
@@ -759,12 +814,66 @@ def _repair_local_candidate_ids(
             len(candidates[supporter_id].cells) for supporter_id in supporter_ids
         )
         for supporter_id in sorted(supporter_ids):
-            if len(candidates[supporter_id].cells) != smallest_supporter_size:
+            if (
+                not include_all_supporters
+                and len(candidates[supporter_id].cells) != smallest_supporter_size
+            ):
                 continue
             if supporter_id not in local_ids:
+                if (
+                    include_all_supporters
+                    and len(local_ids) >= MAX_RELIABLE_REPAIR_CANDIDATES
+                ):
+                    # The local model already contains its deterministic budget
+                    # of the most relevant alternatives.  Omitting a further
+                    # optional chain candidate cannot create an invalid model:
+                    # support constraints still reject any selected placement
+                    # without a retained direct supporter.
+                    continue
                 local_ids.add(supporter_id)
                 pending.append(supporter_id)
     return tuple(sorted(local_ids))
+
+
+def _prune_reliable_repair_candidates(
+    candidates: tuple[_Candidate, ...],
+    candidate_ids: set[int],
+    required_ids: set[int] | frozenset[int],
+    repair_cells: set[GridPosition],
+) -> set[int]:
+    """Keep a bounded, deterministic local repair search space.
+
+    Direct supporters and mutable baseline placements are never dropped.  The
+    remaining alternatives are ordered by how much of the repair component
+    they can replace, then by their physical footprint and stable placement
+    order.  This removes broad, dominated neighbourhood candidates before
+    constructing CP-SAT variables; it does not relax any support or collision
+    constraint.
+    """
+    essential_ids = candidate_ids & set(required_ids)
+    if len(essential_ids) > MAX_RELIABLE_REPAIR_CANDIDATES:
+        raise V4SolveFailure(
+            "Reliable support repair exhausted its local candidate limit; "
+            "reason=candidate_limit_exhausted; "
+            f"essential_candidate_count={len(essential_ids)}; "
+            f"candidate_limit={MAX_RELIABLE_REPAIR_CANDIDATES}."
+        )
+    if len(candidate_ids) <= MAX_RELIABLE_REPAIR_CANDIDATES:
+        return candidate_ids
+
+    optional_ids = candidate_ids - essential_ids
+    ordered_optional_ids = sorted(
+        optional_ids,
+        key=lambda candidate_id: (
+            -len(candidates[candidate_id].cells & repair_cells),
+            len(candidates[candidate_id].cells),
+            _cell_order(candidates[candidate_id].placement.position),
+            candidates[candidate_id].placement.brick_type.part_id,
+            candidates[candidate_id].placement.orientation_degrees,
+        ),
+    )
+    allowance = MAX_RELIABLE_REPAIR_CANDIDATES - len(essential_ids)
+    return essential_ids | set(ordered_optional_ids[:allowance])
 
 
 def _repair_boundary_support_contacts(
@@ -788,6 +897,8 @@ def _repair_part_count_bound(
     mutable_baseline_count: int,
     unsupported_consumer_count: int,
     boundary_support_contact_count: int,
+    *,
+    allowance_per_unsupported: int = REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER,
 ) -> int:
     """Limit a local repair relative to the structure it is permitted to change.
 
@@ -798,7 +909,7 @@ def _repair_part_count_bound(
     """
     return (
         mutable_baseline_count
-        + REPAIR_ALLOWANCE_PER_UNSUPPORTED_CONSUMER * unsupported_consumer_count
+        + allowance_per_unsupported * unsupported_consumer_count
         + boundary_support_contact_count
     )
 
@@ -1120,6 +1231,14 @@ def _has_usable_incumbent(stage: SolverStage) -> bool:
     return stage.status in {"OPTIMAL", "FEASIBLE"} and stage.objective_value is not None
 
 
+def _solver_failure_reason(stage: SolverStage) -> str:
+    if stage.status == "INFEASIBLE":
+        return "infeasible"
+    if stage.status == "UNKNOWN":
+        return "limit_exhausted"
+    return "invalid_solver_result"
+
+
 def _add_hint(model: _Model, selected_ids: Collection[int]) -> None:
     selected_id_set = frozenset(selected_ids)
     for candidate_id, variable in enumerate(model.selected):
@@ -1157,7 +1276,11 @@ def _validate_placements(
     placements: tuple[BrickPlacement, ...],
     target: frozenset[GridPosition],
     locked_placements: Collection[BrickPlacement],
+    *,
+    max_parts: int | None = None,
 ) -> None:
+    if max_parts is not None and len(placements) + len(tuple(locked_placements)) > max_parts:
+        raise V4SolveFailure("Final placements exceed the requested hard part limit.")
     occupied: set[GridPosition] = set()
     base_z = min(cell.z for cell in target)
     for placement in placements:

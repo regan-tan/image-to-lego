@@ -27,6 +27,7 @@ class SqlAlchemyConversionRepository:
         project_id: UUID,
         source_artifact_id: UUID,
         target_parts: int,
+        max_parts: int | None,
         up_axis: str,
         algorithm_version: str,
         idempotency_key: str,
@@ -84,6 +85,7 @@ class SqlAlchemyConversionRepository:
                 if (
                     existing.source_artifact_id != source_artifact_id
                     or existing.target_parts != target_parts
+                    or existing.max_parts != max_parts
                     or existing.up_axis != up_axis
                     or existing.algorithm_version != algorithm_version
                 ):
@@ -120,6 +122,7 @@ class SqlAlchemyConversionRepository:
                 if (
                     existing.source_artifact_id != source_artifact_id
                     or existing.target_parts != target_parts
+                    or existing.max_parts != max_parts
                     or existing.up_axis != up_axis
                     or existing.algorithm_version != algorithm_version
                 ):
@@ -132,10 +135,12 @@ class SqlAlchemyConversionRepository:
                 text(
                     """
                     insert into public.conversion_runs (
-                        job_id, source_artifact_id, target_parts, up_axis, algorithm_version
+                        job_id, source_artifact_id, target_parts, up_axis,
+                        algorithm_version, settings
                     )
                     values (
-                        :job_id, :source_artifact_id, :target_parts, :up_axis, :algorithm_version
+                        :job_id, :source_artifact_id, :target_parts, :up_axis, :algorithm_version,
+                        jsonb_build_object('maxParts', cast(:max_parts as integer))
                     )
                     """
                 ),
@@ -143,6 +148,7 @@ class SqlAlchemyConversionRepository:
                     "job_id": job_id,
                     "source_artifact_id": source_artifact_id,
                     "target_parts": target_parts,
+                    "max_parts": max_parts,
                     "up_axis": up_axis,
                     "algorithm_version": algorithm_version,
                 },
@@ -159,6 +165,7 @@ class SqlAlchemyConversionRepository:
                     up_axis=up_axis,
                     output_artifact_id=None,
                     algorithm_version=algorithm_version,
+                    max_parts=max_parts,
                 ),
                 created=True,
             )
@@ -437,7 +444,8 @@ class SqlAlchemyConversionRepository:
 _CONVERSION_JOB_SELECT = """
     select j.id, j.project_id, j.type, j.status, j.idempotency_key, j.provider_job_id,
            j.error_code, j.error_message, j.created_at, j.updated_at,
-           r.source_artifact_id, r.target_parts, r.up_axis, r.algorithm_version, p.owner_id,
+           r.source_artifact_id, r.target_parts, r.up_axis, r.algorithm_version,
+           nullif(r.settings ->> 'maxParts', '')::integer as max_parts, p.owner_id,
            source.id as source_id, source.project_id as source_project_id,
            source.kind as source_kind, source.blob_name as source_blob_name,
            source.mime_type as source_mime_type, source.size_bytes as source_size_bytes,
@@ -476,6 +484,7 @@ def _conversion_from_row(row: RowMapping) -> ConversionJob:
         up_axis=cast(str, row["up_axis"]),
         output_artifact_id=cast(UUID | None, row["output_artifact_id"]),
         algorithm_version=cast(str, row["algorithm_version"]),
+        max_parts=cast(int | None, row["max_parts"]),
     )
 
 

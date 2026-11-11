@@ -24,7 +24,10 @@ class CreateConversionRequest(BaseModel):
     source_artifact_id: UUID = Field(alias="sourceArtifactId")
     target_parts: int = Field(alias="targetParts")
     up_axis: Literal["x", "y", "z"] = Field(alias="upAxis")
-    algorithm_version: Literal["surface-grid-v3", "surface-grid-v4"] = Field(
+    max_parts: int | None = Field(default=None, alias="maxParts")
+    algorithm_version: Literal[
+        "surface-grid-v3", "surface-grid-v4", "surface-grid-v5-reliable"
+    ] = Field(
         default="surface-grid-v4",
         alias="algorithmVersion",
     )
@@ -75,6 +78,7 @@ async def create_conversion(
                 project_id=request.project_id,
                 source_artifact_id=request.source_artifact_id,
                 target_parts=request.target_parts,
+                max_parts=request.max_parts,
                 up_axis=request.up_axis,
                 algorithm_version=request.algorithm_version,
             ),

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.conversion.core import MAX_TARGET_PARTS
+from app.conversion.core import MAX_TARGET_PARTS, SURFACE_GRID_V5_RELIABLE
 from app.core.errors import ApplicationError
 from app.domain.jobs import ConversionJob
 from app.repositories.conversion import ConversionInitiationRejection, ConversionRepository
@@ -14,6 +14,7 @@ class ConversionRequest:
     project_id: UUID
     source_artifact_id: UUID
     target_parts: int
+    max_parts: int | None
     up_axis: str
     algorithm_version: str
 
@@ -45,6 +46,18 @@ class ConversionInitiationService:
                 code="invalid_target_parts",
                 message="Target parts exceeds the configured safety limit.",
             )
+        if request.max_parts is not None and (
+            request.max_parts <= 0 or request.max_parts > MAX_TARGET_PARTS
+        ):
+            raise ApplicationError(
+                code="invalid_max_parts",
+                message="Maximum parts must be between 1 and the configured safety limit.",
+            )
+        if request.max_parts is not None and request.algorithm_version != SURFACE_GRID_V5_RELIABLE:
+            raise ApplicationError(
+                code="invalid_max_parts",
+                message="Maximum parts is available only with surface-grid-v5-reliable.",
+            )
         normalized_key = idempotency_key.strip()
         if not normalized_key or len(normalized_key) > MAX_IDEMPOTENCY_KEY_LENGTH:
             raise ApplicationError(
@@ -56,6 +69,7 @@ class ConversionInitiationService:
             project_id=request.project_id,
             source_artifact_id=request.source_artifact_id,
             target_parts=request.target_parts,
+            max_parts=request.max_parts,
             up_axis=request.up_axis,
             algorithm_version=request.algorithm_version,
             idempotency_key=normalized_key,

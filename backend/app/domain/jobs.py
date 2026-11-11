@@ -48,6 +48,7 @@ class ConversionJob:
     up_axis: str
     output_artifact_id: UUID | None
     algorithm_version: str = "surface-grid-v4"
+    max_parts: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
