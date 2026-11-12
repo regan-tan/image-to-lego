@@ -20,7 +20,11 @@ from app.conversion import (
     convert_glb,
 )
 from app.conversion.colors import COLORS_BY_ID
-from app.conversion.core import BRICK_CATALOGUE
+from app.conversion.core import (
+    BRICK_CATALOGUE,
+    SURFACE_GRID_V6_SHAPE_AWARE,
+    SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+)
 from app.conversion.part_catalogue import PART_BY_ID
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import Settings
@@ -52,6 +56,7 @@ def conversion_job(
     up_axis: str = "y",
     output_artifact_id: UUID | None = None,
     algorithm_version: str = "surface-grid-v4",
+    max_parts: int | None = None,
 ) -> ConversionJob:
     now = datetime.now(UTC)
     return ConversionJob(
@@ -72,6 +77,7 @@ def conversion_job(
         up_axis=up_axis,
         output_artifact_id=output_artifact_id,
         algorithm_version=algorithm_version,
+        max_parts=max_parts,
     )
 
 
@@ -175,6 +181,7 @@ def worker_job(
     status: JobStatus = JobStatus.QUEUED,
     output_artifact_id: UUID | None = None,
     algorithm_version: str = "surface-grid-v4",
+    max_parts: int | None = None,
 ) -> WorkerConversionJob:
     source = Artifact(
         id=SOURCE_ID,
@@ -193,6 +200,7 @@ def worker_job(
             status=status,
             output_artifact_id=output_artifact_id,
             algorithm_version=algorithm_version,
+            max_parts=max_parts,
         ),
         owner_id=OWNER_ID,
         source_artifact=source,
@@ -319,6 +327,7 @@ async def test_conversion_submission_pause_rejects_before_creating_a_job() -> No
         ("surface-grid-v3", "surface-grid-v3"),
         ("surface-grid-v4", "surface-grid-v4"),
         ("surface-grid-v6-shape-aware", "surface-grid-v6-shape-aware"),
+        ("surface-grid-v7-connectivity-aware", "surface-grid-v7-connectivity-aware"),
     ],
 )
 async def test_conversion_request_persists_requested_algorithm_version(
@@ -330,6 +339,8 @@ async def test_conversion_request_persists_requested_algorithm_version(
     body = request_body()
     if algorithm_version is not None:
         body["algorithmVersion"] = algorithm_version
+    if algorithm_version == "surface-grid-v7-connectivity-aware":
+        body["maxParts"] = 24
 
     response = await client.post(
         "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=body
@@ -377,6 +388,33 @@ async def test_shape_aware_conversion_request_accepts_the_opt_in_hard_cap(
 
 
 @pytest.mark.asyncio
+async def test_connectivity_aware_conversion_requires_and_persists_the_opt_in_hard_cap(
+    api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
+) -> None:
+    client, repository = api_context
+    body = request_body()
+    body["algorithmVersion"] = "surface-grid-v7-connectivity-aware"
+
+    missing_cap = await client.post(
+        "/api/v1/conversions", headers={"Idempotency-Key": "key"}, json=body
+    )
+    assert missing_cap.status_code == 422
+    assert (
+        missing_cap.json()["detail"]
+        == "surface-grid-v7-connectivity-aware requires a maximum parts limit."
+    )
+
+    body["maxParts"] = 24
+    accepted = await client.post(
+        "/api/v1/conversions", headers={"Idempotency-Key": "key-2"}, json=body
+    )
+    await client.aclose()
+
+    assert accepted.status_code == 201
+    assert repository.create_requests[0]["max_parts"] == 24
+
+
+@pytest.mark.asyncio
 async def test_legacy_conversion_rejects_a_hard_cap(
     api_context: tuple[httpx.AsyncClient, FakeConversionRepository],
 ) -> None:
@@ -393,7 +431,7 @@ async def test_legacy_conversion_rejects_a_hard_cap(
     assert (
         response.json()["detail"]
         == "Maximum parts is available only with surface-grid-v5-reliable or "
-        "surface-grid-v6-shape-aware."
+        "surface-grid-v6-shape-aware, or surface-grid-v7-connectivity-aware."
     )
 
 
@@ -491,6 +529,48 @@ async def test_worker_uses_persisted_algorithm_version(algorithm_version: str) -
 
     output = json.loads(blob.uploads[0][1])
     assert output["metadata"]["algorithmVersion"] == algorithm_version
+
+
+def test_v7_serialization_includes_final_optimizer_diagnostics() -> None:
+    v6 = convert_glb(
+        box_glb(),
+        ConversionSettings(
+            target_parts=8,
+            max_parts=8,
+            algorithm_version=SURFACE_GRID_V6_SHAPE_AWARE,
+        ),
+    )
+    assert v6.metadata.diagnostics is not None
+    v7 = replace(
+        v6,
+        metadata=replace(
+            v6.metadata,
+            algorithm_version=SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+            diagnostics=replace(
+                v6.metadata.diagnostics,
+                connectivity_optimization_attempted=True,
+                connectivity_candidate_count=10,
+                connectivity_verified_pair_count=12,
+                connectivity_modeled_edge_count=12,
+                connectivity_solver_status="FEASIBLE",
+                connectivity_accepted=True,
+            ),
+        ),
+    )
+
+    serialized = json.loads(serialize_lego_model(v7))
+
+    assert serialized["metadata"]["connectivityAware"] == {
+        "attempted": True,
+        "eligibilityReason": None,
+        "candidateCount": 10,
+        "verifiedConnectionPairCount": 12,
+        "modeledObjectiveEdgeCount": 12,
+        "solverStatus": "FEASIBLE",
+        "solverRuntimeSeconds": None,
+        "accepted": True,
+        "fallbackReason": None,
+    }
 
 
 def test_legacy_grid_conversion_is_explicitly_not_purchase_ready() -> None:

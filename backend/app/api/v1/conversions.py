@@ -30,6 +30,7 @@ class CreateConversionRequest(BaseModel):
         "surface-grid-v4",
         "surface-grid-v5-reliable",
         "surface-grid-v6-shape-aware",
+        "surface-grid-v7-connectivity-aware",
     ] = Field(
         default="surface-grid-v4",
         alias="algorithmVersion",

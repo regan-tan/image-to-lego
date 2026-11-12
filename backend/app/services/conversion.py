@@ -5,6 +5,7 @@ from app.conversion.core import (
     MAX_TARGET_PARTS,
     SURFACE_GRID_V5_RELIABLE,
     SURFACE_GRID_V6_SHAPE_AWARE,
+    SURFACE_GRID_V7_CONNECTIVITY_AWARE,
 )
 from app.core.errors import ApplicationError
 from app.domain.jobs import ConversionJob
@@ -60,13 +61,22 @@ class ConversionInitiationService:
         if request.max_parts is not None and request.algorithm_version not in {
             SURFACE_GRID_V5_RELIABLE,
             SURFACE_GRID_V6_SHAPE_AWARE,
+            SURFACE_GRID_V7_CONNECTIVITY_AWARE,
         }:
             raise ApplicationError(
                 code="invalid_max_parts",
                 message=(
                     "Maximum parts is available only with surface-grid-v5-reliable or "
-                    "surface-grid-v6-shape-aware."
+                    "surface-grid-v6-shape-aware, or surface-grid-v7-connectivity-aware."
                 ),
+            )
+        if (
+            request.algorithm_version == SURFACE_GRID_V7_CONNECTIVITY_AWARE
+            and request.max_parts is None
+        ):
+            raise ApplicationError(
+                code="invalid_max_parts",
+                message="surface-grid-v7-connectivity-aware requires a maximum parts limit.",
             )
         normalized_key = idempotency_key.strip()
         if not normalized_key or len(normalized_key) > MAX_IDEMPOTENCY_KEY_LENGTH:
