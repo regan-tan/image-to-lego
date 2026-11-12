@@ -274,6 +274,87 @@ def test_cli_smoke_writes_schema_json_csv_and_png(tmp_path: Path) -> None:
     assert (output / "cases" / "box" / "top_overlay.png").is_file()
 
 
+def test_cli_v7_cylinder_reaches_the_real_connectivity_aware_conversion(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "benchmark_conversion_fidelity.py"
+    output = tmp_path / "benchmark"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--suite",
+            "synthetic",
+            "--case",
+            "cylinder",
+            "--algorithm",
+            core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+            "--target-parts",
+            "16",
+            "--max-parts",
+            "16",
+            "--output-dir",
+            str(output),
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    record = summary["cases"][0]
+    assert record["algorithmVersion"] == core.SURFACE_GRID_V7_CONNECTIVITY_AWARE
+    assert record["buildability"] == {
+        "analysisVersion": "stud-connectivity-v1",
+        "connectedComponentCount": 1,
+        "largestComponentFraction": 1.0,
+        "isolatedPlacementCount": 0,
+        "unsupportedPlacementCount": 0,
+    }
+    diagnostics = record["conversionDiagnostics"]
+    assert diagnostics["connectivity_optimization_attempted"]
+    assert diagnostics["connectivity_accepted"]
+
+
+def test_cli_lists_supported_algorithms_and_rejects_unknown_algorithm(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "benchmark_conversion_fidelity.py"
+    help_result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    invalid_result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--suite",
+            "synthetic",
+            "--algorithm",
+            "not-an-algorithm",
+            "--output-dir",
+            str(tmp_path / "invalid"),
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert help_result.returncode == 0
+    for algorithm in (
+        core.SURFACE_GRID_V3,
+        core.SURFACE_GRID_V4,
+        core.SURFACE_GRID_V5_RELIABLE,
+        core.SURFACE_GRID_V6_SHAPE_AWARE,
+        core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+    ):
+        assert algorithm in help_result.stdout
+    assert invalid_result.returncode == 2
+    assert "invalid choice" in invalid_result.stderr
+
+
 def test_cli_records_invalid_glb_without_reporting_success(tmp_path: Path) -> None:
     script = Path(__file__).parents[1] / "scripts" / "benchmark_conversion_fidelity.py"
     source = tmp_path / "invalid.glb"

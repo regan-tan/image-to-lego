@@ -55,6 +55,7 @@ def parse_arguments() -> argparse.Namespace:
             core.SURFACE_GRID_V4,
             core.SURFACE_GRID_V5_RELIABLE,
             core.SURFACE_GRID_V6_SHAPE_AWARE,
+            core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
         ),
         default=core.SURFACE_GRID_V4,
     )
@@ -87,10 +88,11 @@ def main() -> int:
     if arguments.max_parts is not None and arguments.algorithm not in {
         core.SURFACE_GRID_V5_RELIABLE,
         core.SURFACE_GRID_V6_SHAPE_AWARE,
+        core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
     }:
         raise SystemExit(
-            "--max-parts requires --algorithm surface-grid-v5-reliable or "
-            "surface-grid-v6-shape-aware."
+            "--max-parts requires --algorithm surface-grid-v5-reliable, "
+            "surface-grid-v6-shape-aware, or surface-grid-v7-connectivity-aware."
         )
     if arguments.source is not None:
         if not arguments.source.is_file():

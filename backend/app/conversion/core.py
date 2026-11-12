@@ -42,6 +42,7 @@ SURFACE_GRID_V3 = "surface-grid-v3"
 SURFACE_GRID_V4 = "surface-grid-v4"
 SURFACE_GRID_V5_RELIABLE = "surface-grid-v5-reliable"
 SURFACE_GRID_V6_SHAPE_AWARE = "surface-grid-v6-shape-aware"
+SURFACE_GRID_V7_CONNECTIVITY_AWARE = "surface-grid-v7-connectivity-aware"
 ALGORITHM_VERSION = SURFACE_GRID_V4
 OCCUPANCY_MODE = "surface"
 STUD_WIDTH_MM = 8.0
@@ -197,6 +198,15 @@ class ConversionDiagnostics:
     shape_aware_rejection_reason: str | None = None
     physical_collision_pair_count: int = 0
     unsupported_evaluated_placement_count: int = 0
+    connectivity_optimization_attempted: bool = False
+    connectivity_eligibility_reason: str | None = None
+    connectivity_candidate_count: int = 0
+    connectivity_verified_pair_count: int = 0
+    connectivity_modeled_edge_count: int = 0
+    connectivity_solver_status: str | None = None
+    connectivity_solver_runtime_seconds: float | None = None
+    connectivity_accepted: bool = False
+    connectivity_fallback_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +237,14 @@ def convert_glb(glb_bytes: bytes, settings: ConversionSettings) -> LegoModel:
         return _convert_surface_grid_v5_reliable(glb_bytes, settings)
     if settings.algorithm_version == SURFACE_GRID_V6_SHAPE_AWARE:
         return _convert_surface_grid_v6_shape_aware(glb_bytes, settings)
+    if settings.algorithm_version == SURFACE_GRID_V7_CONNECTIVITY_AWARE:
+        # Kept as a local import because the bounded optimizer reuses core's
+        # placement primitives to construct its exact V6-compatible vocabulary.
+        from app.conversion.connectivity_experiment import (
+            convert_surface_grid_v7_connectivity_aware,
+        )
+
+        return convert_surface_grid_v7_connectivity_aware(glb_bytes, settings)
     raise ConversionError("The requested conversion algorithm is not supported.")
 
 
@@ -904,16 +922,23 @@ def _validate_settings(settings: ConversionSettings) -> None:
     if settings.max_parts is not None and settings.algorithm_version not in {
         SURFACE_GRID_V5_RELIABLE,
         SURFACE_GRID_V6_SHAPE_AWARE,
+        SURFACE_GRID_V7_CONNECTIVITY_AWARE,
     }:
         raise ConversionError(
             "Maximum parts is available only with surface-grid-v5-reliable or "
-            "surface-grid-v6-shape-aware."
+            "surface-grid-v6-shape-aware, or surface-grid-v7-connectivity-aware."
         )
+    if (
+        settings.algorithm_version == SURFACE_GRID_V7_CONNECTIVITY_AWARE
+        and settings.max_parts is None
+    ):
+        raise ConversionError("surface-grid-v7-connectivity-aware requires a maximum parts limit.")
     if settings.algorithm_version not in {
         SURFACE_GRID_V3,
         SURFACE_GRID_V4,
         SURFACE_GRID_V5_RELIABLE,
         SURFACE_GRID_V6_SHAPE_AWARE,
+        SURFACE_GRID_V7_CONNECTIVITY_AWARE,
     }:
         raise ConversionError("The requested conversion algorithm is not supported.")
 

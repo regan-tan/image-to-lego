@@ -34,6 +34,7 @@ from app.conversion.core import (
     SURFACE_GRID_V4,
     SURFACE_GRID_V5_RELIABLE,
     SURFACE_GRID_V6_SHAPE_AWARE,
+    SURFACE_GRID_V7_CONNECTIVITY_AWARE,
 )
 from app.conversion.part_catalogue import PART_COLOR_VERIFICATION_VERSION
 from app.core.config import Settings, get_settings
@@ -295,6 +296,7 @@ def serialize_lego_model(model: LegoModel) -> bytes:
         SURFACE_GRID_V4,
         SURFACE_GRID_V5_RELIABLE,
         SURFACE_GRID_V6_SHAPE_AWARE,
+        SURFACE_GRID_V7_CONNECTIVITY_AWARE,
     }
     metadata: dict[str, object] = {
         "algorithmVersion": model.metadata.algorithm_version,
@@ -371,6 +373,21 @@ def serialize_lego_model(model: LegoModel) -> bytes:
             "candidateCount": diagnostics.shape_aware_candidate_count,
             "acceptedRefinementCount": diagnostics.shape_aware_accepted_refinement_count,
             "fallbackReason": diagnostics.shape_aware_rejection_reason,
+        }
+    if model.metadata.algorithm_version == SURFACE_GRID_V7_CONNECTIVITY_AWARE:
+        diagnostics = model.metadata.diagnostics
+        if diagnostics is None:
+            raise ConversionError("connectivity-aware conversion did not provide diagnostics.")
+        metadata["connectivityAware"] = {
+            "attempted": diagnostics.connectivity_optimization_attempted,
+            "eligibilityReason": diagnostics.connectivity_eligibility_reason,
+            "candidateCount": diagnostics.connectivity_candidate_count,
+            "verifiedConnectionPairCount": diagnostics.connectivity_verified_pair_count,
+            "modeledObjectiveEdgeCount": diagnostics.connectivity_modeled_edge_count,
+            "solverStatus": diagnostics.connectivity_solver_status,
+            "solverRuntimeSeconds": diagnostics.connectivity_solver_runtime_seconds,
+            "accepted": diagnostics.connectivity_accepted,
+            "fallbackReason": diagnostics.connectivity_fallback_reason,
         }
 
     # This is deliberately a diagnostic guide, not a claim that the model is
