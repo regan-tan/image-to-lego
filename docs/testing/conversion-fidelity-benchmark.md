@@ -40,6 +40,11 @@ Use `--algorithm surface-grid-v3` to record a comparison with the preserved v3
 path. A user-provided source requires `--target-parts`; synthetic fixtures have
 documented defaults when that option is omitted. `--case` may be repeated.
 
+The benchmark records an offline `openingDiagnostic` and a compact
+`stud-connectivity-v1` buildability summary for every completed case. These
+measurements do not affect conversion routing or algorithm selection; see the
+[Milestone 4 investigation](milestone-4-advanced-part-fitting.md).
+
 The command invokes the real `convert_glb()` entry point. It has no Azure,
 database, queue, provider, authentication, GPU, or network dependency. Invalid
 input, converter limits, and individual conversion failures are written as

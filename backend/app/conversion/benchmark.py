@@ -17,6 +17,7 @@ import trimesh
 from PIL import Image, ImageDraw
 
 from app.conversion import core
+from app.conversion.buildability import BUILDABILITY_ANALYSIS_VERSION, analyze_buildability
 
 BENCHMARK_SCHEMA_VERSION: Final = "conversion-benchmark-v1"
 FIXTURE_VERSION: Final = "synthetic-fixtures-v1"
@@ -248,6 +249,7 @@ def case_record(
 ) -> dict[str, object]:
     """Build the stable benchmark record without changing production metadata."""
     fidelity = asdict(model.metadata.fidelity)
+    buildability = analyze_buildability(model.placements)
     return {
         "schemaVersion": BENCHMARK_SCHEMA_VERSION,
         "status": "completed",
@@ -291,6 +293,13 @@ def case_record(
         "silhouette": fidelity,
         "geometric": asdict(geometric),
         "openingDiagnostic": asdict(opening),
+        "buildability": {
+            "analysisVersion": BUILDABILITY_ANALYSIS_VERSION,
+            "connectedComponentCount": buildability.connected_component_count,
+            "largestComponentFraction": round(buildability.largest_connected_component_ratio, 6),
+            "isolatedPlacementCount": buildability.isolated_placement_count,
+            "unsupportedPlacementCount": buildability.unsupported_placement_count,
+        },
         "conversionDiagnostics": (
             asdict(model.metadata.diagnostics) if model.metadata.diagnostics is not None else None
         ),

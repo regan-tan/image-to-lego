@@ -8,6 +8,10 @@ import pytest
 from PIL import Image
 
 from app.conversion import benchmark, core
+from app.conversion.opening_diagnostics import (
+    placement_projected_opening_overlap,
+    projected_opening_microcells,
+)
 
 
 def _matching_box() -> tuple[list[benchmark.Point3D], list[benchmark.Face], core.BrickPlacement]:
@@ -198,6 +202,35 @@ def test_opening_diagnostic_distinguishes_preserved_and_filled_voids() -> None:
     assert filled_result.filled_void_ratio == 1.0
 
 
+def test_projected_opening_microcells_reject_a_rectangle_over_a_ring_aperture() -> None:
+    ring = next(case for case in benchmark.synthetic_cases() if case.case_id == "ring")
+    source = benchmark.glb_bytes(ring.mesh)
+    mesh = core._load_mesh(source)
+    vertices = [(float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices]
+    normalized = core._normalize_vertices(vertices, ring.up_axis)
+    faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces]
+    grid_size = core.GridSize(8, 8, 6)
+    opening = projected_opening_microcells(
+        core._scale_vertices_to_grid(normalized, grid_size), faces, grid_size
+    )
+    plate = next(
+        part
+        for part in core.BRICK_CATALOGUE
+        if part.shape == "rectangular"
+        and part.length_studs == 1
+        and part.width_studs == 1
+        and part.height_plates == 1
+    )
+
+    assert opening
+    assert placement_projected_opening_overlap(
+        core.BrickPlacement(plate, core.GridPosition(3, 3, 0), 0), opening
+    ) > 0
+    assert placement_projected_opening_overlap(
+        core.BrickPlacement(plate, core.GridPosition(0, 0, 0), 0), opening
+    ) == 0
+
+
 def test_overlay_uses_distinct_missing_and_extra_colors() -> None:
     source = Image.new("1", (2, 1))
     output = Image.new("1", (2, 1))
@@ -236,6 +269,7 @@ def test_cli_smoke_writes_schema_json_csv_and_png(tmp_path: Path) -> None:
     summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
     assert summary["schemaVersion"] == benchmark.BENCHMARK_SCHEMA_VERSION
     assert summary["cases"][0]["status"] == "completed"
+    assert summary["cases"][0]["buildability"]["analysisVersion"] == "stud-connectivity-v1"
     assert (output / "summary.csv").is_file()
     assert (output / "cases" / "box" / "top_overlay.png").is_file()
 
