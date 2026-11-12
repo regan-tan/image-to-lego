@@ -531,6 +531,29 @@ async def test_worker_uses_persisted_algorithm_version(algorithm_version: str) -
     assert output["metadata"]["algorithmVersion"] == algorithm_version
 
 
+@pytest.mark.asyncio
+async def test_worker_uses_the_persisted_v6_hard_cap_and_serializes_it() -> None:
+    content = box_glb()
+    repository = FakeConversionRepository()
+    repository.worker_job = worker_job(
+        content,
+        algorithm_version=SURFACE_GRID_V6_SHAPE_AWARE,
+        max_parts=8,
+    )
+    blob = FakeBlobStorage(content)
+
+    await ConversionJobProcessor(repository=repository, blob_storage=blob).process(
+        job_id=repository.worker_job.conversion.job.id,
+        owner_id=OWNER_ID,
+        attempt_id=uuid4(),
+    )
+
+    output = json.loads(blob.uploads[0][1])
+    assert output["metadata"]["algorithmVersion"] == SURFACE_GRID_V6_SHAPE_AWARE
+    assert output["metadata"]["maxParts"] == 8
+    assert output["partCount"] <= 8
+
+
 def test_v7_serialization_includes_final_optimizer_diagnostics() -> None:
     v6 = convert_glb(
         box_glb(),

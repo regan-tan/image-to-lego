@@ -1,13 +1,18 @@
 import { heightInPlates, type LegoModel } from "./schemas/legoModels";
 import { legoColorLabel } from "./legoColors";
 
-const PURCHASE_READY_ALGORITHM_VERSION = "surface-grid-v4";
+const PURCHASE_READY_ALGORITHM_VERSIONS = new Set([
+  "surface-grid-v4",
+  "surface-grid-v5-reliable",
+  "surface-grid-v6-shape-aware",
+  "surface-grid-v7-connectivity-aware",
+]);
 
 export interface LegoPartGroup {
   brickType: string;
   partId?: string;
   partName?: string;
-  shape?: "rectangular" | "slope_33_3x1";
+  shape?: string;
   geometryAsset?: string;
   lengthStuds: number;
   widthStuds: number;
@@ -197,7 +202,7 @@ export function partColorVerificationLabel(part: LegoPartGroup): string {
 export function purchaseReadinessReasonLabel(reason: UnresolvedPurchasePart["reason"]): string {
   switch (reason) {
     case "unsupported_algorithm_version":
-      return `Purchase-ready export requires a ${PURCHASE_READY_ALGORITHM_VERSION} model artifact.`;
+      return "This model does not include a verified manufactured-part representation.";
     case "missing_part_id":
       return "No catalog part ID was recorded.";
     case "missing_color_id":
@@ -220,7 +225,9 @@ function purchaseReadinessIssue(
   algorithmVersion: string | undefined,
   partColorVerificationVersion: string | undefined,
 ): UnresolvedPurchasePart["reason"] | null {
-  if (algorithmVersion !== PURCHASE_READY_ALGORITHM_VERSION) return "unsupported_algorithm_version";
+  if (!algorithmVersion || !PURCHASE_READY_ALGORITHM_VERSIONS.has(algorithmVersion)) {
+    return "unsupported_algorithm_version";
+  }
   if (!part.partId) return "missing_part_id";
   if (!part.colorId) return "missing_color_id";
   if (part.partColorVerified === false || part.quantity <= 0) return "unverified_part_color";

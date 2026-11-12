@@ -17,6 +17,7 @@ import { reconstructionSchema, type Reconstruction } from "../schemas/reconstruc
 import { conversionSchema, type Conversion } from "../schemas/conversions";
 import { legoModelSchema, type LegoModel } from "../schemas/legoModels";
 import { publicRuntimeConfig } from "../runtimeConfig";
+import type { ConversionAlgorithmVersion } from "../legoBuildComplexity";
 
 const apiBaseUrl = (publicRuntimeConfig?.apiBaseUrl ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
   /\/$/,
@@ -149,7 +150,14 @@ export async function startReconstruction(
 
 export async function startConversion(
   accessToken: string,
-  request: { projectId: string; sourceArtifactId: string; targetParts: number; upAxis: "y" },
+  request: {
+    projectId: string;
+    sourceArtifactId: string;
+    targetParts: number;
+    maxParts?: number;
+    algorithmVersion: ConversionAlgorithmVersion;
+    upAxis: "y";
+  },
   idempotencyKey: string,
 ): Promise<Conversion> {
   const response = await authenticatedRequest("/api/v1/conversions", accessToken, {

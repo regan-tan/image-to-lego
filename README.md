@@ -137,9 +137,12 @@ publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is s
 
 `POST /api/v1/conversions` requires an `Idempotency-Key`, a project ID, a ready
 `reconstructed_model` artifact ID, `targetParts`, and `upAxis`. It may also specify
-`algorithmVersion`; it defaults to `surface-grid-v4`. `surface-grid-v3` remains available for
-explicit requests. Exact replays return the existing conversion job without publishing a second
-message; a reused key with different input returns 409.
+`algorithmVersion`; it defaults to `surface-grid-v4`. `surface-grid-v3` and
+`surface-grid-v5-reliable` remain available for explicit API requests. The consumer UI offers
+Classic V4, capped Reliable V6 (`surface-grid-v6-shape-aware`), and opt-in Experimental
+connectivity V7 (`surface-grid-v7-connectivity-aware`). V6 and V7 require `maxParts`; it is a
+hard limit, while `targetParts` remains a preferred detail target. Exact replays return the existing
+conversion job without publishing a second message; a reused key with different input returns 409.
 The conversion worker verifies the private GLB's SHA-256, calls the deterministic converter, and
 stores stable JSON at `projects/{projectId}/conversions/{jobId}/lego-model.json`. It creates one
 ready `lego_model` artifact per conversion job only after the canonical Blob is durable.
