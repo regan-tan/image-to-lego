@@ -352,6 +352,8 @@ function conversionRequestBody(init: RequestInit | undefined) {
     projectId: string;
     sourceArtifactId: string;
     targetParts: number;
+    maxParts?: number;
+    algorithmVersion: string;
     upAxis: "y";
   };
 }
@@ -541,12 +543,13 @@ describe("project flows", () => {
       projectId: PROJECT_ID,
       sourceArtifactId: MODEL_ARTIFACT_ID,
       targetParts,
+      algorithmVersion: "surface-grid-v4",
       upAxis: "y",
     });
     expect(await screen.findByRole("heading", { name: "Your LEGO model is ready" })).toBeInTheDocument();
   });
 
-  it("freezes the Detailed request body and idempotency key for an ambiguous retry", async () => {
+  it("reuses an idempotency key only for an unchanged conversion request", async () => {
     const api = installFakeApi({
       project: projectDetail({
         status: "model_ready",
@@ -566,9 +569,64 @@ describe("project flows", () => {
 
     await waitFor(() => expect(api.posts("/api/v1/conversions")).toHaveLength(2));
     const attempts = api.posts("/api/v1/conversions");
-    expect(idempotencyKey(attempts[0]?.init)).toBe(idempotencyKey(attempts[1]?.init));
+    expect(idempotencyKey(attempts[0]?.init)).not.toBe(idempotencyKey(attempts[1]?.init));
     expect(conversionRequestBody(attempts[0]?.init).targetParts).toBe(600);
-    expect(conversionRequestBody(attempts[1]?.init).targetParts).toBe(600);
+    expect(conversionRequestBody(attempts[1]?.init).targetParts).toBe(100);
+  });
+
+  it("sends the selected reliable mode and its enforced maximum", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("radio", { name: /Reliable — V6/ }));
+    fireEvent.change(await screen.findByLabelText("Maximum parts"), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
+
+    await waitFor(() => expect(api.posts("/api/v1/conversions")).toHaveLength(1));
+    expect(conversionRequestBody(api.posts("/api/v1/conversions")[0]?.init)).toMatchObject({
+      algorithmVersion: "surface-grid-v6-shape-aware",
+      targetParts: 300,
+      maxParts: 250,
+    });
+  });
+
+  it("labels V7 as experimental and preserves its submitted settings after controls change", async () => {
+    const api = installFakeApi({
+      project: projectDetail({
+        status: "model_ready",
+        sourceImage: READY_SOURCE_IMAGE,
+        latestReconstruction: reconstruction("succeeded"),
+      }),
+      conversionStartFailures: 1,
+    });
+    renderApp(`/projects/${PROJECT_ID}`);
+
+    fireEvent.click(await screen.findByRole("radio", { name: /Experimental connectivity — V7/ }));
+    expect(screen.getByText(/can return a V6-equivalent result/)).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Maximum parts"), { target: { value: "200" } });
+    fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We could not start the conversion.");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Classic — V4/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Convert to LEGO" }));
+
+    await waitFor(() => expect(api.posts("/api/v1/conversions")).toHaveLength(2));
+    expect(conversionRequestBody(api.posts("/api/v1/conversions")[0]?.init)).toMatchObject({
+      algorithmVersion: "surface-grid-v7-connectivity-aware",
+      maxParts: 200,
+    });
+    expect(conversionRequestBody(api.posts("/api/v1/conversions")[1]?.init)).toMatchObject({
+      algorithmVersion: "surface-grid-v4",
+    });
+    expect(idempotencyKey(api.posts("/api/v1/conversions")[0]?.init)).not.toBe(
+      idempotencyKey(api.posts("/api/v1/conversions")[1]?.init),
+    );
   });
 
   it("disables the selected complexity while conversion is queued", async () => {
@@ -645,7 +703,7 @@ describe("project flows", () => {
     expect(await screen.findByRole("img", { name: "Photo of Castle" })).toBeInTheDocument();
 
     const conversion = api.posts("/api/v1/conversions")[0];
-    expect(JSON.parse(String(conversion?.init?.body))).toEqual({ projectId: PROJECT_ID, sourceArtifactId: MODEL_ARTIFACT_ID, targetParts: 300, upAxis: "y" });
+    expect(JSON.parse(String(conversion?.init?.body))).toEqual({ projectId: PROJECT_ID, sourceArtifactId: MODEL_ARTIFACT_ID, targetParts: 300, algorithmVersion: "surface-grid-v4", upAxis: "y" });
     expect(idempotencyKey(conversion?.init)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Convert again" }));

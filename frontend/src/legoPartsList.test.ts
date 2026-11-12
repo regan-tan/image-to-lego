@@ -194,6 +194,18 @@ describe("purchase-ready algorithm compatibility", () => {
     expect(serializePartsListCsv(parts)).toContain("3001,Brick 2 x 4,Red,ldraw:4,Verified,2");
   });
 
+  it.each([
+    "surface-grid-v4",
+    "surface-grid-v5-reliable",
+    "surface-grid-v6-shape-aware",
+    "surface-grid-v7-connectivity-aware",
+  ])("accepts verified manufactured parts from %s", (version) => {
+    const result = createPurchaseReadyPartsList([verifiedPart()], version, verificationVersion);
+
+    expect(result.unresolvedParts).toEqual([]);
+    expect(result.parts).toHaveLength(1);
+  });
+
   it.each([undefined, "surface-grid-v5", "unknown"])("rejects unsupported algorithm version %s", (version) => {
     const result = createPurchaseReadyPartsList([verifiedPart()], version, verificationVersion);
 

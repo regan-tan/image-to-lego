@@ -14,6 +14,42 @@ export const BUILD_COMPLEXITY_PRESETS: readonly BuildComplexityPreset[] = [
 ];
 
 export const DEFAULT_BUILD_COMPLEXITY: BuildComplexity = "balanced";
+export const MAX_CONVERSION_PARTS = 10_000;
+
+export type ConversionAlgorithmVersion =
+  | "surface-grid-v4"
+  | "surface-grid-v6-shape-aware"
+  | "surface-grid-v7-connectivity-aware";
+
+export interface ConversionMode {
+  algorithmVersion: ConversionAlgorithmVersion;
+  label: string;
+  description: string;
+  requiresMaxParts: boolean;
+}
+
+export const CONVERSION_MODES: readonly ConversionMode[] = [
+  {
+    algorithmVersion: "surface-grid-v4",
+    label: "Classic — V4",
+    description: "Existing conversion behavior. Detail is a preference, not a maximum-piece guarantee.",
+    requiresMaxParts: false,
+  },
+  {
+    algorithmVersion: "surface-grid-v6-shape-aware",
+    label: "Reliable — V6",
+    description: "Shape-aware conversion with a verified maximum-piece limit and conservative checks.",
+    requiresMaxParts: true,
+  },
+  {
+    algorithmVersion: "surface-grid-v7-connectivity-aware",
+    label: "Experimental connectivity — V7",
+    description: "May improve stud-connected components, takes longer, and can return a V6-equivalent result.",
+    requiresMaxParts: true,
+  },
+];
+
+export const DEFAULT_CONVERSION_ALGORITHM: ConversionAlgorithmVersion = "surface-grid-v4";
 
 export function targetPartsForBuildComplexity(complexity: BuildComplexity): number {
   const preset = BUILD_COMPLEXITY_PRESETS.find((candidate) => candidate.id === complexity);

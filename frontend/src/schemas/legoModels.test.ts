@@ -43,6 +43,21 @@ describe("legoModelSchema", () => {
     }
   });
 
+  it("accepts newer verified part shapes without rejecting a V6/V7 artifact", () => {
+    const model = {
+      ...legacyModel,
+      metadata: {
+        ...legacyModel.metadata,
+        algorithmVersion: "surface-grid-v6-shape-aware",
+        maxParts: 100,
+        shapeAware: { physicalCollisionPairs: 0, fallbackReason: null },
+      },
+      placements: [{ ...legacyModel.placements[0], shape: "curved_slope_2x2" }],
+    };
+
+    expect(legoModelSchema.parse(model).placements[0]?.shape).toBe("curved_slope_2x2");
+  });
+
   it("accepts explicit placement-index instruction steps", () => {
     const model = {
       ...legacyModel,

@@ -9,11 +9,13 @@ import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
 import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import {
   BUILD_COMPLEXITY_PRESETS,
-  DEFAULT_BUILD_COMPLEXITY,
-  buildComplexityForTargetParts,
+  CONVERSION_MODES,
+  DEFAULT_CONVERSION_ALGORITHM,
+  MAX_CONVERSION_PARTS,
   buildComplexityLabel,
   targetPartsForBuildComplexity,
   type BuildComplexity,
+  type ConversionAlgorithmVersion,
 } from "../legoBuildComplexity";
 import type { LegoPartsListResult } from "../legoPartsList";
 import type { Conversion, ConversionStatus } from "../schemas/conversions";
@@ -63,6 +65,9 @@ interface GenerationRequest {
 
 interface ConversionAttempt extends GenerationRequest {
   targetParts: number;
+  maxParts?: number;
+  algorithmVersion: ConversionAlgorithmVersion;
+  upAxis: "y";
 }
 
 /** The project page's side panel: explains the current state and offers the one next action. */
@@ -87,6 +92,10 @@ export function ProjectStatusPanel({
   const generationAttempt = useRef<{ scope: string; key: string } | null>(null);
   const conversionAttempt = useRef<ConversionAttempt | null>(null);
   const [conversionJob, setConversionJob] = useState<Conversion | null>(null);
+  const [algorithmVersion, setAlgorithmVersion] = useState<ConversionAlgorithmVersion>(
+    DEFAULT_CONVERSION_ALGORITHM,
+  );
+  const [maxParts, setMaxParts] = useState(targetPartsForBuildComplexity(buildComplexity));
   const complexityHelpId = useId();
 
   async function refreshProject() {
@@ -122,9 +131,16 @@ export function ProjectStatusPanel({
     onConversionStatusChange(activeConversion?.status ?? null);
   }, [activeConversion?.status, onConversionStatusChange]);
   const conversion = useMutation({
-    mutationFn: ({ sourceArtifactId, targetParts, idempotencyKey }: ConversionAttempt) => startConversion(
+    mutationFn: ({ sourceArtifactId, targetParts, maxParts, algorithmVersion, upAxis, idempotencyKey }: ConversionAttempt) => startConversion(
       accessToken,
-      { projectId: project.id, sourceArtifactId, targetParts, upAxis: "y" },
+      {
+        projectId: project.id,
+        sourceArtifactId,
+        targetParts,
+        ...(maxParts === undefined ? {} : { maxParts }),
+        algorithmVersion,
+        upAxis,
+      },
       idempotencyKey,
     ),
     onSuccess: setConversionJob,
@@ -165,8 +181,20 @@ export function ProjectStatusPanel({
   function handleConvert() {
     const sourceArtifactId = project.latestReconstruction?.outputArtifactId;
     if (!sourceArtifactId || conversion.isPending) return;
+    const targetParts = targetPartsForBuildComplexity(buildComplexity);
+    const selectedMode = CONVERSION_MODES.find((mode) => mode.algorithmVersion === algorithmVersion);
+    if (!selectedMode) return;
+    const requestedMaxParts = selectedMode.requiresMaxParts ? maxParts : undefined;
+    const requestedAttempt = {
+      sourceArtifactId,
+      targetParts,
+      ...(requestedMaxParts === undefined ? {} : { maxParts: requestedMaxParts }),
+      algorithmVersion,
+      upAxis: "y" as const,
+    };
     const isRetryingSameRequest = conversion.isError
-      && conversionAttempt.current?.sourceArtifactId === sourceArtifactId;
+      && conversionAttempt.current !== null
+      && sameConversionRequest(conversionAttempt.current, requestedAttempt);
     if (!isRetryingSameRequest && (
       activeConversion?.status === "failed"
       || activeConversion?.status === "canceled"
@@ -175,18 +203,28 @@ export function ProjectStatusPanel({
       conversionAttempt.current = null;
       setConversionJob(null);
     }
-    if (conversionAttempt.current?.sourceArtifactId !== sourceArtifactId) {
+    if (!isRetryingSameRequest) {
       conversionAttempt.current = {
-        sourceArtifactId,
-        targetParts: targetPartsForBuildComplexity(buildComplexity),
+        ...requestedAttempt,
         idempotencyKey: crypto.randomUUID(),
       };
-    } else if (isRetryingSameRequest) {
-      onBuildComplexityChange(
-        buildComplexityForTargetParts(conversionAttempt.current.targetParts) ?? DEFAULT_BUILD_COMPLEXITY,
-      );
     }
-    conversion.mutate(conversionAttempt.current);
+    const attempt = conversionAttempt.current;
+    if (attempt) conversion.mutate(attempt);
+  }
+
+  function handleBuildComplexityChange(nextBuildComplexity: BuildComplexity) {
+    onBuildComplexityChange(nextBuildComplexity);
+    if (algorithmVersion !== "surface-grid-v4") {
+      setMaxParts(targetPartsForBuildComplexity(nextBuildComplexity));
+    }
+  }
+
+  function handleAlgorithmChange(nextAlgorithmVersion: ConversionAlgorithmVersion) {
+    setAlgorithmVersion(nextAlgorithmVersion);
+    if (nextAlgorithmVersion !== "surface-grid-v4") {
+      setMaxParts(targetPartsForBuildComplexity(buildComplexity));
+    }
   }
 
   if (project.status === "needs_photo" || isReplacingPhoto) {
@@ -307,10 +345,17 @@ export function ProjectStatusPanel({
           ) : null}
           <BuildComplexitySelector
             value={buildComplexity}
-            onChange={onBuildComplexityChange}
+            onChange={handleBuildComplexityChange}
             disabled={conversionIsRunning || isRehydratingLegoModel}
             helpId={complexityHelpId}
             compact={legoModel !== null}
+          />
+          <ConversionModeSelector
+            algorithmVersion={algorithmVersion}
+            maxParts={maxParts}
+            onAlgorithmChange={handleAlgorithmChange}
+            onMaxPartsChange={setMaxParts}
+            disabled={conversionIsRunning || isRehydratingLegoModel}
           />
           <div className="side-panel__actions">
             <button
@@ -449,6 +494,7 @@ function LegoMetrics({
 }) {
   const { dimensions } = model;
   const complexityLabel = buildComplexityLabel(model.metadata.targetParts) ?? "Custom";
+  const buildability = model.metadata.buildability;
   return (
     <section className="lego-result" aria-labelledby="lego-result-title">
       <h2 id="lego-result-title" className="side-panel__title visually-hidden">Build summary</h2>
@@ -458,8 +504,33 @@ function LegoMetrics({
         <div><strong>{partsList?.valid ? partsList.uniquePartTypeCount : "—"}</strong><span>Part types</span></div>
         <div><strong>{heightInPlates(dimensions)}</strong><span>Plates tall</span></div>
       </div>
+      <p className="side-panel__hint">
+        {algorithmLabel(model.metadata.algorithmVersion)} · {complexityLabel} detail target
+        {model.metadata.maxParts ? ` · maximum ${model.metadata.maxParts} parts` : ""}
+      </p>
+      {buildability ? (
+        <p className="side-panel__hint">
+          Stud-connected components: {buildability.connectedComponents} · Unsupported placements: {buildability.unsupportedPlacements}
+        </p>
+      ) : null}
+      {model.metadata.shapeAware ? (
+        <p className="side-panel__hint">
+          Shape-aware collision pairs: {model.metadata.shapeAware.physicalCollisionPairs}
+          {model.metadata.shapeAware.fallbackReason ? ` · ${model.metadata.shapeAware.fallbackReason}` : ""}
+        </p>
+      ) : null}
+      {model.metadata.connectivityAware ? (
+        <p className="side-panel__hint">
+          Connectivity optimization {model.metadata.connectivityAware.accepted ? "was applied" : "fell back to V6-equivalent output"}.
+        </p>
+      ) : null}
     </section>
   );
+}
+
+function algorithmLabel(algorithmVersion: string): string {
+  return CONVERSION_MODES.find((mode) => mode.algorithmVersion === algorithmVersion)?.label
+    ?? algorithmVersion;
 }
 
 function ProjectInspectorSummary({
@@ -530,6 +601,73 @@ function BuildComplexitySelector({
       <p id={helpId}>{compact ? "Changes apply when you convert again. Final part count may vary." : "Choose how detailed you want the LEGO build to be. Final part count may vary."}</p>
     </fieldset>
   );
+}
+
+function ConversionModeSelector({
+  algorithmVersion,
+  maxParts,
+  onAlgorithmChange,
+  onMaxPartsChange,
+  disabled,
+}: {
+  algorithmVersion: ConversionAlgorithmVersion;
+  maxParts: number;
+  onAlgorithmChange: (algorithmVersion: ConversionAlgorithmVersion) => void;
+  onMaxPartsChange: (maxParts: number) => void;
+  disabled: boolean;
+}) {
+  const selectedMode = CONVERSION_MODES.find((mode) => mode.algorithmVersion === algorithmVersion);
+  if (!selectedMode) return null;
+
+  return (
+    <fieldset className="complexity-selector" disabled={disabled}>
+      <legend>Conversion mode</legend>
+      <div className="complexity-selector__options">
+        {CONVERSION_MODES.map((mode) => (
+          <label key={mode.algorithmVersion} className="complexity-option">
+            <input
+              type="radio"
+              name="conversion-mode"
+              value={mode.algorithmVersion}
+              checked={algorithmVersion === mode.algorithmVersion}
+              onChange={() => onAlgorithmChange(mode.algorithmVersion)}
+            />
+            <span>
+              <strong>{mode.label}</strong>
+              <small>{mode.description}</small>
+            </span>
+          </label>
+        ))}
+      </div>
+      {selectedMode.requiresMaxParts ? (
+        <div className="form-field">
+          <label htmlFor="conversion-max-parts">Maximum parts</label>
+          <input
+            id="conversion-max-parts"
+            type="number"
+            min={1}
+            max={MAX_CONVERSION_PARTS}
+            value={maxParts}
+            onChange={(event) => onMaxPartsChange(Number(event.target.value))}
+          />
+          <small>This is enforced. Your detail target is still a preference, not an exact piece count.</small>
+        </div>
+      ) : (
+        <p>Build complexity is a preferred detail target. Classic mode does not enforce a maximum-piece limit.</p>
+      )}
+    </fieldset>
+  );
+}
+
+function sameConversionRequest(
+  attempt: ConversionAttempt,
+  request: Omit<ConversionAttempt, "idempotencyKey">,
+): boolean {
+  return attempt.sourceArtifactId === request.sourceArtifactId
+    && attempt.targetParts === request.targetParts
+    && attempt.maxParts === request.maxParts
+    && attempt.algorithmVersion === request.algorithmVersion
+    && attempt.upAxis === request.upAxis;
 }
 
 function PanelIntro({ title, text }: { title: string; text: string }) {

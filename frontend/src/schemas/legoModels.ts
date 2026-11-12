@@ -48,17 +48,32 @@ export const legoModelSchema = z.object({
     algorithmVersion: z.string(),
     sourceSha256: z.string(),
     targetParts: z.number().optional(),
+    maxParts: z.number().int().positive().optional(),
     occupiedCellCount: z.number(),
     gridSize: dimensionsSchema,
     candidateCount: z.number(),
     occupancyMode: z.string(),
     partColorVerificationVersion: z.string().optional(),
+    buildability: z.object({
+      version: z.string(),
+      connectedComponents: z.number().int().nonnegative(),
+      unsupportedPlacements: z.number().int().nonnegative(),
+    }).passthrough().optional(),
+    shapeAware: z.object({
+      physicalCollisionPairs: z.number().int().nonnegative(),
+      fallbackReason: z.string().nullable(),
+    }).passthrough().optional(),
+    connectivityAware: z.object({
+      attempted: z.boolean(),
+      accepted: z.boolean(),
+      fallbackReason: z.string().nullable(),
+    }).passthrough().optional(),
   }),
   placements: z.array(z.object({
     brickType: z.string(),
     partId: z.string().optional(),
     partName: z.string().optional(),
-    shape: z.enum(["rectangular", "slope_33_3x1"]).optional(),
+    shape: z.string().optional(),
     // The worker writes null for parts without a bespoke geometry asset.
     geometryAsset: z.string().nullish().transform((asset) => asset ?? undefined).optional(),
     dimensions: partDimensionsSchema,

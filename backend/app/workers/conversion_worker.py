@@ -364,6 +364,9 @@ def serialize_lego_model(model: LegoModel) -> bytes:
     }
     if catalogue_geometry_verified:
         metadata["partColorVerificationVersion"] = PART_COLOR_VERIFICATION_VERSION
+    diagnostics = model.metadata.diagnostics
+    if diagnostics is not None and diagnostics.requested_max_parts is not None:
+        metadata["maxParts"] = diagnostics.requested_max_parts
     if model.metadata.algorithm_version == SURFACE_GRID_V6_SHAPE_AWARE:
         diagnostics = model.metadata.diagnostics
         if diagnostics is None:
