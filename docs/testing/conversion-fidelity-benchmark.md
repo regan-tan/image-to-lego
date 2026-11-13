@@ -189,3 +189,11 @@ top-view opening is covered by output. Expected qualitative weaknesses are
 coarse silhouettes for curved fixtures, lost thin detail, projection-hull
 distortion of concave shapes, and filled openings. The benchmark is designed to
 quantify rather than conceal those limitations.
+
+## Real-world follow-up
+
+Milestone 7A adds a separate, manifest-driven V4/V6/V7 comparison runner;
+historical `conversion-benchmark-v1` records and their metric meanings remain
+unchanged. See [the Milestone 7A report](milestone-7a-real-world-fidelity.md)
+for its source-provenance rules, scale-confounding classification, and current
+corpus status.

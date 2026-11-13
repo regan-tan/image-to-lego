@@ -12,6 +12,15 @@ from app.conversion.opening_diagnostics import (
     placement_projected_opening_overlap,
     projected_opening_microcells,
 )
+from app.conversion.real_world_benchmark import (
+    MANIFEST_SCHEMA_VERSION,
+    ManifestError,
+    WorkloadError,
+    aggregate_results,
+    load_manifest,
+    validate_workloads,
+    verify_case_source,
+)
 
 
 def _matching_box() -> tuple[list[benchmark.Point3D], list[benchmark.Face], core.BrickPlacement]:
@@ -223,12 +232,18 @@ def test_projected_opening_microcells_reject_a_rectangle_over_a_ring_aperture() 
     )
 
     assert opening
-    assert placement_projected_opening_overlap(
-        core.BrickPlacement(plate, core.GridPosition(3, 3, 0), 0), opening
-    ) > 0
-    assert placement_projected_opening_overlap(
-        core.BrickPlacement(plate, core.GridPosition(0, 0, 0), 0), opening
-    ) == 0
+    assert (
+        placement_projected_opening_overlap(
+            core.BrickPlacement(plate, core.GridPosition(3, 3, 0), 0), opening
+        )
+        > 0
+    )
+    assert (
+        placement_projected_opening_overlap(
+            core.BrickPlacement(plate, core.GridPosition(0, 0, 0), 0), opening
+        )
+        == 0
+    )
 
 
 def test_overlay_uses_distinct_missing_and_extra_colors() -> None:
@@ -382,3 +397,263 @@ def test_cli_records_invalid_glb_without_reporting_success(tmp_path: Path) -> No
     assert result.returncode == 1
     assert summary["cases"][0]["status"] == "failed"
     assert "readable GLB" in summary["cases"][0]["failureReason"]
+
+
+def test_real_world_manifest_validates_identity_and_pinned_source(tmp_path: Path) -> None:
+    source = tmp_path / "approved.glb"
+    source_bytes = benchmark.glb_bytes(benchmark.synthetic_cases()[0].mesh)
+    source.write_bytes(source_bytes)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "available",
+                "corpusNote": "Approved local test fixture.",
+                "cases": [
+                    {
+                        "id": "approved-box",
+                        "path": "approved.glb",
+                        "sha256": sha256(source_bytes).hexdigest(),
+                        "provenance": "test fixture",
+                        "usageRestrictions": "test only",
+                        "characteristics": ["synthetic regression fixture"],
+                        "upAxis": "y",
+                        "targetParts": 12,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_manifest(manifest_path)
+
+    assert manifest.cases[0].case_id == "approved-box"
+    assert verify_case_source(manifest.cases[0]) == source_bytes
+    source.write_bytes(b"changed")
+    with pytest.raises(ManifestError, match="SHA-256 mismatch"):
+        verify_case_source(manifest.cases[0])
+
+
+@pytest.mark.parametrize(
+    "case_patch, message",
+    [
+        ({"id": "Not stable"}, "Case id"),
+        ({"path": "../private.glb"}, "remain under"),
+        ({"sha256": "bad"}, "sha256"),
+    ],
+)
+def test_real_world_manifest_rejects_malformed_case(
+    tmp_path: Path, case_patch: dict[str, str], message: str
+) -> None:
+    case = {
+        "id": "valid-case",
+        "path": "source.glb",
+        "sha256": "a" * 64,
+        "provenance": "approved",
+        "usageRestrictions": "local only",
+        "characteristics": [],
+        "upAxis": "y",
+        "targetParts": 12,
+    }
+    case.update(case_patch)
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "available",
+                "corpusNote": "test",
+                "cases": [case],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match=message):
+        load_manifest(path)
+
+
+def test_real_world_aggregation_counts_failures_and_marks_scale_confounds() -> None:
+    base = {
+        "caseId": "case",
+        "status": "completed",
+        "upAxis": "y",
+        "converterSettings": {"targetParts": 20, "maxParts": 20},
+    }
+    v6 = {
+        **base,
+        "algorithmVersion": core.SURFACE_GRID_V6_SHAPE_AWARE,
+        "physicalDimensions": {"outputMm": {"width": 80.0, "depth": 80.0, "height": 32.0}},
+    }
+    v7 = {
+        **base,
+        "algorithmVersion": core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+        "physicalDimensions": {"outputMm": {"width": 96.0, "depth": 80.0, "height": 32.0}},
+    }
+    failed = {"caseId": "case", "status": "failed", "algorithmVersion": core.SURFACE_GRID_V4}
+
+    aggregation = aggregate_results([v6, v7, failed])
+
+    assert aggregation["algorithms"][core.SURFACE_GRID_V4] == {
+        "total": 1,
+        "completed": 0,
+        "failed": 1,
+    }
+    comparisons = aggregation["comparisons"]
+    assert comparisons == [
+        {
+            "caseId": "case",
+            "algorithms": [
+                core.SURFACE_GRID_V6_SHAPE_AWARE,
+                core.SURFACE_GRID_V7_CONNECTIVITY_AWARE,
+            ],
+            "status": "scale-confounded",
+            "reason": "converter settings or physical output dimensions differ",
+        }
+    ]
+
+
+def test_real_world_workload_preflight_rejects_excessive_v4_detail(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "available",
+                "corpusNote": "test",
+                "cases": [
+                    {
+                        "id": "too-detailed",
+                        "path": "source.glb",
+                        "sha256": "a" * 64,
+                        "provenance": "test",
+                        "usageRestrictions": "test only",
+                        "characteristics": [],
+                        "upAxis": "y",
+                        "targetParts": 301,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkloadError) as error:
+        validate_workloads(load_manifest(manifest_path), max_parts=120)
+
+    assert error.value.diagnostics == [
+        {
+            "code": "v4_target_parts_exceeds_benchmark_limit",
+            "caseId": "too-detailed",
+            "algorithmVersion": core.SURFACE_GRID_V4,
+            "targetParts": 301,
+            "maximumTargetParts": 300,
+            "message": (
+                "V4 targetParts exceeds this benchmark runner's safe workload limit; "
+                "targetParts is requested detail, not a hard part cap."
+            ),
+        }
+    ]
+
+
+def test_real_world_workload_preflight_accepts_small_v4_v6_v7_requests(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "available",
+                "corpusNote": "test",
+                "cases": [
+                    {
+                        "id": "small-box",
+                        "path": "source.glb",
+                        "sha256": "a" * 64,
+                        "provenance": "test fixture",
+                        "usageRestrictions": "test only",
+                        "characteristics": ["synthetic regression fixture"],
+                        "upAxis": "y",
+                        "targetParts": 12,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    validate_workloads(load_manifest(manifest), max_parts=120)
+
+
+def test_real_world_runner_rejects_invalid_cap_with_json_diagnostics(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "benchmark_real_world_fidelity.py"
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "unavailable",
+                "corpusNote": "test",
+                "cases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--manifest",
+            str(manifest),
+            "--max-parts",
+            "0",
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "Benchmark workload validation failed." in result.stderr
+    diagnostics = json.loads(result.stderr.splitlines()[-1])
+    assert diagnostics["diagnostics"][0]["code"] == "invalid_hard_part_cap"
+
+
+def test_real_world_runner_writes_empty_manifest_summary(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "scripts" / "benchmark_real_world_fidelity.py"
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": MANIFEST_SCHEMA_VERSION,
+                "corpusStatus": "unavailable",
+                "corpusNote": "test",
+                "cases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "output"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--manifest",
+            str(manifest),
+            "--output-dir",
+            str(output),
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    assert summary["records"] == []
+    assert summary["aggregation"] == {"caseCount": 0, "algorithms": {}, "comparisons": []}
