@@ -513,6 +513,7 @@ def _convert_surface_grid_v5_reliable(glb_bytes: bytes, settings: ConversionSett
         locked_placements=locked_slopes,
         max_parts=settings.max_parts,
         reliable_repair=True,
+        avoid_locked_physical_collisions=True,
     )
     colored_rectangles = _color_placements(
         packing.placements,
@@ -535,6 +536,10 @@ def _convert_surface_grid_v5_reliable(glb_bytes: bytes, settings: ConversionSett
         raise ConversionError(
             "surface-grid-v5-reliable produced an unsupported evaluated placement."
         )
+    from app.conversion.physical_geometry import colliding_placement_pairs
+
+    if colliding_placement_pairs(placements):
+        raise ConversionError("surface-grid-v5-reliable detected physical body collisions.")
     scaled_vertices = _scale_vertices_to_grid(normalized_vertices, baseline.metadata.grid_size)
     occupied_cell_count = len(
         {cell for placement in colored_rectangles for cell in _placement_cells(placement)}

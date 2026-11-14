@@ -17,6 +17,7 @@ from app.conversion.mechanical_connectors import (
     transform_connector_to_world,
 )
 from app.conversion.part_catalogue import PART_BY_ID
+from app.conversion.physical_geometry import colliding_placement_pairs
 from app.conversion.surface_grid_v4 import (
     SolverStage,
     V4SolveFailure,
@@ -322,6 +323,7 @@ def test_reliable_version_is_explicit_and_preserves_a_hard_cap() -> None:
     assert model.metadata.algorithm_version == core.SURFACE_GRID_V5_RELIABLE
     assert model.part_count <= 8
     assert analyze_buildability(model.placements).unsupported_placement_count == 0
+    assert colliding_placement_pairs(model.placements) == ()
 
 
 def test_shape_aware_version_is_explicit_and_uses_the_reliable_fallback() -> None:
@@ -343,6 +345,7 @@ def test_shape_aware_version_is_explicit_and_uses_the_reliable_fallback() -> Non
     assert model.metadata.diagnostics.physical_collision_pair_count == 0
     assert model.metadata.diagnostics.unsupported_evaluated_placement_count == 0
     assert model.metadata.diagnostics.shape_aware_rejection_reason is not None
+    assert colliding_placement_pairs(model.placements) == ()
     serialized = serialize_lego_model(model)
     assert b'"shapeAware"' in serialized
     assert b'"physicalCollisionPairs":0' in serialized

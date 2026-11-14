@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.conversion import core, surface_grid_v4
 from app.conversion.core import BrickPlacement, GridPosition
 from app.conversion.part_catalogue import PART_BY_ID
 from app.conversion.physical_geometry import (
@@ -66,3 +67,19 @@ def test_physical_geometry_fingerprint_is_cached_and_deterministic() -> None:
     assert first is second
     assert len(first.fingerprint) == 64
     assert first.fingerprint == second.fingerprint
+
+
+def test_4286_body_collision_not_represented_by_its_coarse_source_profile() -> None:
+    slope = _placement("4286", y=5, z=4)
+    plate = _placement("3710", y=2, z=5, rotation=90)
+    candidate = surface_grid_v4._Candidate(plate, core._placement_cells(plate))
+
+    assert core._placement_source_cells(slope).isdisjoint(core._placement_source_cells(plate))
+    assert physical_microcells(slope) & physical_microcells(plate) == {
+        (3, 20, 20),
+        (3, 21, 20),
+        (3, 22, 20),
+        (3, 23, 20),
+    }
+    assert placements_overlap(slope, plate)
+    assert surface_grid_v4._exclude_locked_body_collisions((candidate,), (slope,)) == ()
