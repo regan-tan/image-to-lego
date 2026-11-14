@@ -24,6 +24,7 @@ from app.conversion.core import (
     convert_glb,
 )
 from app.conversion.part_catalogue import PART_BY_ID
+from app.conversion.physical_geometry import colliding_placement_pairs
 
 
 def _plate(x: int, y: int, z: int) -> BrickPlacement:
@@ -268,6 +269,7 @@ def test_v7_cylinder_improvement_survives_the_production_conversion_entry_point(
     assert model.part_count == 4
     assert buildability.connected_component_count == 1
     assert buildability.unsupported_placement_count == 0
+    assert colliding_placement_pairs(model.placements) == ()
     assert diagnostics is not None
     assert diagnostics.connectivity_accepted
     assert diagnostics.connectivity_eligibility_reason is None

@@ -124,6 +124,7 @@ def solve_surface_grid_v4(
     locked_placements: Collection[BrickPlacement] = (),
     max_parts: int | None = None,
     reliable_repair: bool = False,
+    avoid_locked_physical_collisions: bool = False,
 ) -> V4PackingResult:
     """Select non-overlapping, direct-support-connected rectangles inside A.
 
@@ -147,7 +148,10 @@ def solve_surface_grid_v4(
             return _empty_packing_result(required, fixed_pixels, candidate_count=0)
         raise V4SolveFailure("surface-grid-v4 has no rectangular candidate volume.")
 
-    candidates = _support_reachable_candidates(_enumerate_candidates(target, catalogue), target)
+    candidates = _enumerate_candidates(target, catalogue)
+    if avoid_locked_physical_collisions:
+        candidates = _exclude_locked_body_collisions(candidates, locked)
+    candidates = _support_reachable_candidates(candidates, target)
 
     if not candidates:
         _validate_fixed_placements(locked)
@@ -304,6 +308,32 @@ def _enumerate_candidates(
                 if cells.issubset(target):
                     candidates.append(_Candidate(placement, cells))
     return tuple(candidates)
+
+
+def _exclude_locked_body_collisions(
+    candidates: tuple[_Candidate, ...], locked_placements: Collection[BrickPlacement]
+) -> tuple[_Candidate, ...]:
+    """Remove candidates whose body proxy intersects a fixed placement.
+
+    Source-grid occupancy is deliberately coarse and can leave a cell available
+    below the sloped body of a locked 4286.  Reliable packing must use the same
+    body representation as its final collision gate before the solver can
+    select such a rectangle.  Keeping this opt-in preserves the frozen V4
+    baseline while making the V5/V6 path safe.
+    """
+    from app.conversion.physical_geometry import placements_overlap
+
+    locked = tuple(locked_placements)
+    if not locked:
+        return candidates
+    return tuple(
+        candidate
+        for candidate in candidates
+        if all(
+            not placements_overlap(candidate.placement, locked_placement)
+            for locked_placement in locked
+        )
+    )
 
 
 def _support_reachable_candidates(
