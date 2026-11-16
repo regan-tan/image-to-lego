@@ -42,6 +42,7 @@ def convert_fixed_grid(
     up_axis: core.Axis,
     source_evidence_resolution: int = 1,
     shape_aware: bool = False,
+    source_aware: bool = False,
 ) -> FixedGridExperimentResult:
     """Run fixed-lattice diagnostic packing with optional V6 refinement."""
     _validate_request(
@@ -81,6 +82,7 @@ def convert_fixed_grid(
         max_parts=max_parts,
         reliable_repair=True,
         avoid_locked_physical_collisions=True,
+        source_evidence_cells=occupancy.surface_cells if source_aware else None,
     )
     rectangles = core._color_placements(packing.placements, normalized, faces, mesh, grid_size)
     baseline_placements = locked_slopes + rectangles
@@ -151,9 +153,13 @@ def convert_fixed_grid(
         dimensions=core._model_dimensions(placements),
         metadata=core.AlgorithmMetadata(
             algorithm_version=(
-                "surface-grid-v6-fixed-lattice-diagnostic"
-                if shape_aware
-                else "surface-grid-v5-fixed-grid-diagnostic"
+                "surface-grid-v8-source-aware-fixed-lattice-diagnostic"
+                if source_aware
+                else (
+                    "surface-grid-v6-fixed-lattice-diagnostic"
+                    if shape_aware
+                    else "surface-grid-v5-fixed-grid-diagnostic"
+                )
             ),
             source_sha256=sha256(glb_bytes).hexdigest(),
             target_parts=solver_target_parts,
