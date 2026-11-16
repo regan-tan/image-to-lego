@@ -29,6 +29,8 @@ class FixedGridExperimentResult:
     projection_hull_cells: frozenset[core.GridPosition]
     protected_empty_cells: frozenset[core.GridPosition]
     required_projection_pixel_count: int
+    source_subcell_count: int
+    source_evidence_resolution: int
 
 
 def convert_fixed_grid(
@@ -38,14 +40,20 @@ def convert_fixed_grid(
     solver_target_parts: int,
     max_parts: int,
     up_axis: core.Axis,
+    source_evidence_resolution: int = 1,
+    shape_aware: bool = False,
 ) -> FixedGridExperimentResult:
-    """Run reliable V5 packing at an exact grid without changing production routing."""
-    _validate_request(glb_bytes, grid_size, solver_target_parts, max_parts)
+    """Run fixed-lattice diagnostic packing with optional V6 refinement."""
+    _validate_request(
+        glb_bytes, grid_size, solver_target_parts, max_parts, source_evidence_resolution
+    )
     mesh = core._load_mesh(glb_bytes)
     vertices = [(float(vertex[0]), float(vertex[1]), float(vertex[2])) for vertex in mesh.vertices]
     faces = [(int(face[0]), int(face[1]), int(face[2])) for face in mesh.faces]
     normalized = core._normalize_vertices(vertices, up_axis)
-    occupancy = core._source_occupancy(normalized, faces, grid_size)
+    occupancy, subcell_count = _source_occupancy_for_evidence(
+        normalized, faces, grid_size, source_evidence_resolution
+    )
     locked_slopes, locked_slope_cells = core._place_supported_slopes(occupancy.surface_cells)
     locked_occupied = frozenset(
         cell for placement in locked_slopes for cell in core._placement_source_cells(placement)
@@ -75,9 +83,26 @@ def convert_fixed_grid(
         avoid_locked_physical_collisions=True,
     )
     rectangles = core._color_placements(packing.placements, normalized, faces, mesh, grid_size)
-    placements = locked_slopes + rectangles
-    _validate_output(placements, protected, max_parts)
+    baseline_placements = locked_slopes + rectangles
     scaled_vertices = core._scale_vertices_to_grid(normalized, grid_size)
+    if shape_aware:
+        placements, shape_candidates, shape_accepted, shape_rejected = (
+            core._shape_aware_4286_refinement(
+                baseline_placements,
+                scaled_vertices,
+                faces,
+                grid_size,
+                solver_target_parts,
+                protected,
+                max_parts,
+            )
+        )
+    else:
+        placements = baseline_placements
+        shape_candidates = 0
+        shape_accepted = 0
+        shape_rejected = 0
+    _validate_output(placements, protected, max_parts)
     diagnostics = core.ConversionDiagnostics(
         requested_max_parts=max_parts,
         source_is_watertight=occupancy.mesh_is_watertight,
@@ -105,15 +130,31 @@ def convert_fixed_grid(
         repair_final_placement_count=sum(
             item.selected_repair_count for item in packing.repair_diagnostics.components
         ),
-        physical_collision_pair_count=0,
-        unsupported_evaluated_placement_count=0,
+        shape_aware_candidate_count=shape_candidates,
+        shape_aware_accepted_refinement_count=shape_accepted,
+        shape_aware_rejected_refinement_count=shape_rejected,
+        shape_aware_rejection_reason=(
+            None
+            if placements != baseline_placements
+            else "No legal V6 shape refinement was accepted."
+        )
+        if shape_aware
+        else None,
+        physical_collision_pair_count=len(colliding_placement_pairs(placements)),
+        unsupported_evaluated_placement_count=analyze_buildability(
+            placements
+        ).unsupported_placement_count,
     )
     model = core.LegoModel(
         placements=placements,
         part_count=len(placements),
         dimensions=core._model_dimensions(placements),
         metadata=core.AlgorithmMetadata(
-            algorithm_version="surface-grid-v5-fixed-grid-diagnostic",
+            algorithm_version=(
+                "surface-grid-v6-fixed-lattice-diagnostic"
+                if shape_aware
+                else "surface-grid-v5-fixed-grid-diagnostic"
+            ),
             source_sha256=sha256(glb_bytes).hexdigest(),
             target_parts=solver_target_parts,
             occupied_cell_count=len(
@@ -129,12 +170,22 @@ def convert_fixed_grid(
         ),
     )
     return FixedGridExperimentResult(
-        model, occupancy.surface_cells, target_cells, protected, len(required_pixels)
+        model,
+        occupancy.surface_cells,
+        target_cells,
+        protected,
+        len(required_pixels),
+        subcell_count,
+        source_evidence_resolution,
     )
 
 
 def _validate_request(
-    glb_bytes: bytes, grid_size: core.GridSize, solver_target_parts: int, max_parts: int
+    glb_bytes: bytes,
+    grid_size: core.GridSize,
+    solver_target_parts: int,
+    max_parts: int,
+    source_evidence_resolution: int,
 ) -> None:
     if len(glb_bytes) > core.MAX_INPUT_BYTES:
         raise core.ConversionError("GLB input exceeds the configured size limit.")
@@ -146,6 +197,37 @@ def _validate_request(
         raise core.ConversionError("Diagnostic solver target is outside converter limits.")
     if not 0 < max_parts <= core.MAX_TARGET_PARTS:
         raise core.ConversionError("Diagnostic hard part cap is outside converter limits.")
+    if source_evidence_resolution not in (1, 2):
+        raise core.ConversionError("Diagnostic source evidence resolution must be 1 or 2.")
+
+
+def _source_occupancy_for_evidence(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int]],
+    grid_size: core.GridSize,
+    resolution: int,
+) -> tuple[core.SourceOccupancy, int]:
+    if resolution == 1:
+        occupancy = core._source_occupancy(vertices, faces, grid_size)
+        return occupancy, len(occupancy.surface_cells)
+    subcell_grid = core.GridSize(
+        grid_size.width_studs * resolution,
+        grid_size.depth_studs * resolution,
+        grid_size.height_plates * resolution,
+    )
+    subcell_occupancy = core._source_occupancy(vertices, faces, subcell_grid)
+    reduced = frozenset(
+        core.GridPosition(cell.x // resolution, cell.y // resolution, cell.z // resolution)
+        for cell in subcell_occupancy.surface_cells
+    )
+    occupancy = core.SourceOccupancy(
+        reduced,
+        core._safe_interior_cells(
+            reduced, grid_size, mesh_is_watertight=subcell_occupancy.mesh_is_watertight
+        ),
+        subcell_occupancy.mesh_is_watertight,
+    )
+    return occupancy, len(subcell_occupancy.surface_cells)
 
 
 def _validate_output(
