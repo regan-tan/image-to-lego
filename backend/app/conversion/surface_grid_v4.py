@@ -125,6 +125,7 @@ def solve_surface_grid_v4(
     max_parts: int | None = None,
     reliable_repair: bool = False,
     avoid_locked_physical_collisions: bool = False,
+    source_evidence_cells: Collection[GridPosition] | None = None,
 ) -> V4PackingResult:
     """Select non-overlapping, direct-support-connected rectangles inside A.
 
@@ -193,7 +194,14 @@ def solve_surface_grid_v4(
     )
     _add_part_limit(stage_two_model.model, stage_two_model.selected, max_parts, len(locked))
     stage_two_model.model.add(sum(stage_two_model.coverage) == achieved_coverage)
-    stage_two_model.model.minimize(sum(stage_two_model.selected))
+    if source_evidence_cells is None:
+        stage_two_model.model.minimize(sum(stage_two_model.selected))
+    else:
+        stage_two_model.model.minimize(
+            _source_aware_objective(
+                stage_two_model.selected, candidates, frozenset(source_evidence_cells) & target
+            )
+        )
     _add_hint(stage_two_model, stage_one_ids)
     stage_two_solver, stage_two = _solve(stage_two_model.model, STAGE_TWO_MAX_DETERMINISTIC_TIME)
 
@@ -221,6 +229,29 @@ def solve_surface_grid_v4(
         achieved_coverage=achieved_coverage + len(required & fixed_pixels),
         candidate_count=len(candidates),
         repair_diagnostics=repair_diagnostics,
+    )
+
+
+def _source_aware_objective(
+    selected: tuple[cp_model.IntVar, ...],
+    candidates: tuple[_Candidate, ...],
+    source_evidence_cells: frozenset[GridPosition],
+) -> cp_model.LinearExpr | int:
+    """Return a lexicographic part/excess/source objective for the offline seam.
+
+    Stage one still fixes projection coverage. This objective first keeps the
+    usual minimum part count, then minimizes cells outside source evidence and
+    finally maximizes source-evidence cells. The weights are derived from this
+    bounded candidate set, so no arbitrary scoring constants are introduced.
+    """
+    excess_weights = tuple(len(candidate.cells - source_evidence_cells) for candidate in candidates)
+    source_weights = tuple(len(candidate.cells & source_evidence_cells) for candidate in candidates)
+    maximum_source = sum(source_weights)
+    source_weight = maximum_source + 1
+    part_weight = sum(excess_weights) * source_weight + maximum_source + 1
+    return sum(
+        variable * (part_weight + excess * source_weight - source)
+        for variable, excess, source in zip(selected, excess_weights, source_weights, strict=True)
     )
 
 

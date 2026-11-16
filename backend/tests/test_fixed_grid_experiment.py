@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from ortools.sat.python import cp_model
 
 from app.conversion import benchmark, core
+from app.conversion import surface_grid_v4 as surface_grid
 from app.conversion.fixed_grid_experiment import convert_fixed_grid
 from app.conversion.surface_metric_v2 import evaluate_surface_metric_v2
 
@@ -184,3 +186,85 @@ def test_v6_smoke_keeps_the_existing_mechanical_gates() -> None:
     assert result.model.part_count <= 16
     assert result.model.metadata.diagnostics is not None
     assert result.model.metadata.diagnostics.physical_collision_pair_count == 0
+
+
+def test_source_aware_diagnostic_is_deterministic_and_preserves_reliable_gates() -> None:
+    source = _box_source()
+    first = convert_fixed_grid(
+        source,
+        grid_size=core.GridSize(3, 3, 3),
+        solver_target_parts=4,
+        max_parts=16,
+        up_axis=core.Axis.Y,
+        source_aware=True,
+    )
+    second = convert_fixed_grid(
+        source,
+        grid_size=core.GridSize(3, 3, 3),
+        solver_target_parts=4,
+        max_parts=16,
+        up_axis=core.Axis.Y,
+        source_aware=True,
+    )
+
+    assert first.model.metadata.algorithm_version == (
+        "surface-grid-v8-source-aware-fixed-lattice-diagnostic"
+    )
+    assert first.model.placements == second.model.placements
+    assert first.model.part_count <= 16
+    assert all(
+        not (core._placement_source_cells(placement) & first.protected_empty_cells)
+        for placement in first.model.placements
+    )
+    assert first.model.metadata.diagnostics is not None
+    assert first.model.metadata.diagnostics.physical_collision_pair_count == 0
+
+
+def test_source_aware_objective_prefers_source_cells_when_part_count_is_tied() -> None:
+    source_cell = core.GridPosition(0, 0, 0)
+    excess_cell = core.GridPosition(1, 0, 0)
+    candidates = _objective_candidates(source_cell, excess_cell)
+    model = cp_model.CpModel()
+    selected = tuple(model.new_bool_var(f"candidate_{index}") for index in range(2))
+    model.add(sum(selected) == 1)
+    model.minimize(
+        surface_grid._source_aware_objective(selected, candidates, frozenset({source_cell}))
+    )
+    solver = cp_model.CpSolver()
+    assert solver.solve(model) == cp_model.OPTIMAL
+
+    assert solver.boolean_value(selected[0])
+    assert not solver.boolean_value(selected[1])
+
+
+def test_source_aware_objective_keeps_part_count_before_source_occupancy() -> None:
+    source_cell = core.GridPosition(0, 0, 0)
+    excess_cell = core.GridPosition(1, 0, 0)
+    candidates = _objective_candidates(excess_cell, source_cell, source_cell)
+    model = cp_model.CpModel()
+    selected = tuple(model.new_bool_var(f"candidate_{index}") for index in range(3))
+    # Either select one excess candidate, or select both source candidates.
+    model.add(selected[0] + selected[1] == 1)
+    model.add(selected[0] + selected[2] == 1)
+    model.minimize(
+        surface_grid._source_aware_objective(selected, candidates, frozenset({source_cell}))
+    )
+    solver = cp_model.CpSolver()
+    assert solver.solve(model) == cp_model.OPTIMAL
+
+    assert solver.boolean_value(selected[0])
+    assert not solver.boolean_value(selected[1])
+    assert not solver.boolean_value(selected[2])
+
+
+def _objective_candidates(
+    *cells: core.GridPosition,
+) -> tuple[surface_grid._Candidate, ...]:
+    brick = next(part for part in core.BRICK_CATALOGUE if part.shape == "rectangular")
+    return tuple(
+        surface_grid._Candidate(
+            core.BrickPlacement(brick, cell, 0),
+            frozenset({cell}),
+        )
+        for cell in cells
+    )
