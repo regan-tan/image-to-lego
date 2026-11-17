@@ -14,6 +14,7 @@ from app.conversion import core
 from app.conversion.buildability import analyze_buildability
 from app.conversion.physical_geometry import colliding_placement_pairs
 from app.conversion.surface_grid_v4 import (
+    SolverStage,
     _enumerate_candidates,
     projection_hull_target,
     solve_surface_grid_v4,
@@ -31,6 +32,8 @@ class FixedGridExperimentResult:
     required_projection_pixel_count: int
     source_subcell_count: int
     source_evidence_resolution: int
+    stage_one: SolverStage
+    stage_two: SolverStage
 
 
 def convert_fixed_grid(
@@ -183,6 +186,8 @@ def convert_fixed_grid(
         len(required_pixels),
         subcell_count,
         source_evidence_resolution,
+        packing.stage_one,
+        packing.stage_two,
     )
 
 
