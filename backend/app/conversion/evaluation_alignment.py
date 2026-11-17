@@ -70,6 +70,7 @@ class BaselineFeasibility:
     collision_pairs: int
     unsupported_placements: int
     part_cap_satisfied: bool
+    fixed_geometry_coverage_pixel_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +115,7 @@ def evaluate_completed_assembly(
         slope_vertices=core._slope_vertices(placement_tuple),
         wedge_vertices=core._wedge_vertices(placement_tuple),
     )
-    comparisons = {
-        view: _compare_masks(source, output) for view, (source, output) in masks.items()
-    }
+    comparisons = {view: _compare_masks(source, output) for view, (source, output) in masks.items()}
     front = comparisons["front"]
     side = comparisons["side"]
     top = comparisons["top"]
@@ -152,6 +151,8 @@ def compare_frozen_evaluator_parity(
         views["top"],
         all(view.exact_pixel_match for view in views.values()),
     )
+
+
 def fixed_frame_surrogate_score(
     source_vertices: Sequence[tuple[float, float, float]],
     faces: Sequence[tuple[int, int, int]],
@@ -166,20 +167,13 @@ def fixed_frame_surrogate_score(
     target = tuple(target_cells)
     if not target:
         raise ValueError("The fixed-frame surrogate requires at least one target cell.")
-    maximum = (
-        max(
-            [vertex[0] for vertex in source_vertices]
-            + [float(max(cell.x for cell in target) + 1)]
-        ),
-        max(
-            [vertex[1] for vertex in source_vertices]
-            + [float(max(cell.y for cell in target) + 1)]
-        ),
-        max(
-            [vertex[2] for vertex in source_vertices]
-            + [float(max(cell.z for cell in target) + 1)]
-        ),
+    source_maximum = tuple(max(vertex[axis] for vertex in source_vertices) for axis in range(3))
+    grid_maximum = (
+        float(max(cell.x for cell in target) + 1),
+        float(max(cell.y for cell in target) + 1),
+        float(max(cell.z for cell in target) + 1),
     )
+    maximum = tuple(max(source_maximum[axis], grid_maximum[axis]) for axis in range(3))
     bounds = {
         "front": (0.0, maximum[0], 0.0, maximum[2]),
         "side": (0.0, maximum[1], 0.0, maximum[2]),
@@ -197,6 +191,49 @@ def fixed_frame_surrogate_score(
     return len(source & output) - len(output - source)
 
 
+def fixed_frame_iou(
+    source_vertices: Sequence[tuple[float, float, float]],
+    faces: Sequence[tuple[int, int, int]],
+    placements: Collection[core.BrickPlacement],
+    target_cells: Collection[core.GridPosition],
+) -> float:
+    """Return exact union IoU in M8C's fixed frame, not silhouette-v1.
+
+    This is useful for bounded M9A reporting. It remains a surrogate because
+    frozen silhouette-v1 recomputes its padded bounds from the final assembly.
+    """
+    target = tuple(target_cells)
+    if not target:
+        raise ValueError("The fixed-frame surrogate requires at least one target cell.")
+    maximum = (
+        max(
+            [vertex[0] for vertex in source_vertices] + [float(max(cell.x for cell in target) + 1)]
+        ),
+        max(
+            [vertex[1] for vertex in source_vertices] + [float(max(cell.y for cell in target) + 1)]
+        ),
+        max(
+            [vertex[2] for vertex in source_vertices] + [float(max(cell.z for cell in target) + 1)]
+        ),
+    )
+    bounds = {
+        "front": (0.0, maximum[0], 0.0, maximum[2]),
+        "side": (0.0, maximum[1], 0.0, maximum[2]),
+        "top": (0.0, maximum[0], 0.0, maximum[1]),
+    }
+    source = _pixels_for_geometry(source_vertices, faces, (), (), bounds)
+    placement_tuple = tuple(placements)
+    output = _pixels_for_geometry(
+        (),
+        (),
+        core._placement_boxes(placement_tuple),
+        core._slope_vertices(placement_tuple),
+        bounds,
+    )
+    union = source | output
+    return 1.0 if not union else round(len(source & output) / len(union), 6)
+
+
 def verify_baseline_feasibility(
     *,
     target_cells: Collection[core.GridPosition],
@@ -204,6 +241,7 @@ def verify_baseline_feasibility(
     protected_empty_cells: Collection[core.GridPosition],
     baseline_placements: Collection[core.BrickPlacement],
     locked_projection_cells: Collection[core.GridPosition] | None = None,
+    fixed_coverage_pixels: Collection[ProjectionPixel] = (),
     max_parts: int,
 ) -> BaselineFeasibility:
     """Check whether a reconstructed V6 build is selectable by the M8C model.
@@ -254,14 +292,22 @@ def verify_baseline_feasibility(
         for index, candidate in enumerate(candidates)
         if stable_placement_id(candidate.placement) in selected_ids
     )
+    fixed_coverage = frozenset(fixed_coverage_pixels)
+    # This remains empty for the historical M8D model. M9A supplies only
+    # witnesses derived from locked source-profile geometry.
     model_status = _fixed_selection_status(
-        candidates, target, required, selected_candidate_ids, len(locked), max_parts
+        candidates,
+        target,
+        required - fixed_coverage,
+        selected_candidate_ids,
+        len(locked),
+        max_parts,
     )
     selected_candidate_cells = {
         cell for index in selected_candidate_ids for cell in candidates[index].cells
     }
     model_coverage = _projection_pixels(selected_candidate_cells)
-    missing_pixels = tuple(sorted(required - model_coverage))
+    missing_pixels = tuple(sorted(required - model_coverage - fixed_coverage))
     coverage_satisfied = model_status in {"OPTIMAL", "FEASIBLE"}
     status = (
         "FEASIBLE"
@@ -286,6 +332,7 @@ def verify_baseline_feasibility(
         collisions,
         buildability.unsupported_placement_count,
         part_cap,
+        len(required & fixed_coverage),
     )
 
 
