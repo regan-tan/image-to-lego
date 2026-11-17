@@ -58,6 +58,7 @@ def optimise_catalogue_silhouette(
     target_cells: Collection[core.GridPosition],
     required_pixels: Collection[tuple[str, int, int]],
     locked_placements: Collection[core.BrickPlacement],
+    fixed_coverage_pixels: Collection[tuple[str, int, int]] = (),
     max_parts: int,
     target_parts: int,
 ) -> CatalogueSilhouetteSolve:
@@ -94,10 +95,14 @@ def optimise_catalogue_silhouette(
     # mandatory source-projection coverage constraints.  The occupancy coverage
     # variables are not the silhouette objective; their only role is the V6
     # feasible-set contract.
+    # M8C intentionally leaves this empty. M9A supplies only witnesses proved
+    # by fixed locked slope source profiles; arbitrary source occupancy never
+    # satisfies a hard coverage witness.
+    remaining_required = tuple(sorted(set(required_pixels) - set(fixed_coverage_pixels)))
     model_data = _build_model(
         candidates,
         target,
-        tuple(sorted(set(required_pixels))),
+        remaining_required,
         _candidate_ids_by_cell(target, candidates),
         _cells_by_pixel(target),
     )
@@ -152,7 +157,7 @@ def optimise_catalogue_silhouette(
         selected,
         locked,
         min(cell.z for cell in target),
-        tuple(sorted(set(required_pixels))),
+        remaining_required,
         _cells_by_pixel(target),
         max_parts=max_parts,
         reliable_repair=True,

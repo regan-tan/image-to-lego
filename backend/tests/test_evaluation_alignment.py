@@ -4,11 +4,13 @@ from app.conversion import benchmark, core
 from app.conversion.evaluation_alignment import (
     compare_frozen_evaluator_parity,
     evaluate_completed_assembly,
+    fixed_frame_iou,
     stable_placement_id,
     verify_baseline_feasibility,
 )
 from app.conversion.fidelity import render_silhouette_masks
 from app.conversion.fixed_grid_experiment import convert_fixed_grid
+from app.conversion.m9a_experimental_feasibility import locked_source_profile_coverage
 from app.conversion.surface_grid_v4 import _enumerate_candidates
 
 
@@ -65,9 +67,7 @@ def test_candidate_feasibility_requires_exact_part_position_and_orientation() ->
         target_cells=target,
         required_pixels=(),
         protected_empty_cells=(),
-        baseline_placements=(
-            core.BrickPlacement(brick, core.GridPosition(20, 0, 0), 0),
-        ),
+        baseline_placements=(core.BrickPlacement(brick, core.GridPosition(20, 0, 0), 0),),
         max_parts=1,
     )
 
@@ -136,6 +136,45 @@ def test_fixed_m8c_selection_rejects_the_three_historical_duck_witnesses() -> No
     assert result.missing_mandatory_pixels == tuple(sorted(required))
 
 
+def test_m9a_locked_slope_profile_supplies_only_its_own_mandatory_witnesses() -> None:
+    slope = next(part for part in core.BRICK_CATALOGUE if part.family == core.SLOPE_33_FAMILY)
+    placement = core.BrickPlacement(slope, core.GridPosition(0, 0, 0), 0)
+    target = core._placement_source_cells(placement)
+    supplied = locked_source_profile_coverage((placement,))
+    required = (("front", 1, 1),)
+
+    original = verify_baseline_feasibility(
+        target_cells=target,
+        required_pixels=required,
+        protected_empty_cells=(),
+        baseline_placements=(placement,),
+        max_parts=1,
+    )
+    corrected = verify_baseline_feasibility(
+        target_cells=target,
+        required_pixels=required,
+        protected_empty_cells=(),
+        baseline_placements=(placement,),
+        fixed_coverage_pixels=supplied,
+        max_parts=1,
+    )
+    unrelated = verify_baseline_feasibility(
+        target_cells=target,
+        required_pixels=(("front", 99, 99),),
+        protected_empty_cells=(),
+        baseline_placements=(placement,),
+        fixed_coverage_pixels=supplied,
+        max_parts=1,
+    )
+
+    assert required[0] in supplied
+    assert original.status == "INFEASIBLE"
+    assert corrected.status == "FEASIBLE"
+    assert corrected.fixed_geometry_coverage_pixel_count == 1
+    assert unrelated.status == "INFEASIBLE"
+    assert unrelated.missing_mandatory_pixels == (("front", 99, 99),)
+
+
 def test_slope_projection_uses_the_frozen_prism_geometry() -> None:
     slope = next(part for part in core.BRICK_CATALOGUE if part.family == core.SLOPE_33_FAMILY)
     placement = core.BrickPlacement(slope, core.GridPosition(0, 0, 0), 90)
@@ -179,6 +218,19 @@ def test_tp_minus_fp_can_rank_arrangements_oppositely_to_iou() -> None:
 
     assert sparse_surrogate > complete_surrogate
     assert sparse_iou < complete_iou
+
+
+def test_fixed_frame_iou_is_not_tp_minus_fp() -> None:
+    brick = _rectangular_part()
+    placement = core.BrickPlacement(brick, core.GridPosition(0, 0, 0), 0)
+    score = fixed_frame_iou(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 1.0)),
+        ((0, 1, 2),),
+        (placement,),
+        core._placement_cells(placement),
+    )
+
+    assert 0.0 <= score <= 1.0
 
 
 def _rectangular_part() -> core.BrickType:
