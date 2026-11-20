@@ -1,5 +1,15 @@
 # Milestone 13A: Objective-to-Evaluation Alignment Audit
 
+> **M13B erratum (2026-11-20):** The original one-view claim in the
+> “Mathematical finding” section below was false. For fixed source foreground
+> pixels `P`, `IoU = TP / (P + FP)`; increasing `TP-FP` does not by itself
+> force IoU upward when both TP and FP decrease. With `P=100`, arrangement A
+> `(TP, FP, FN) = (90, 50, 10)` has `TP-FP=40` and `IoU=.600000`, while B
+> `(80, 39, 20)` has `TP-FP=41` and `IoU=80/139≈.575540`. The historical M13A
+> measurements and conclusions are otherwise frozen. M13B adds a regression
+> test and investigates per-view TP/FP trade-offs as well as unequal view
+> weighting.
+
 ## Decision
 
 **GO for a bounded M13B design experiment; NO-GO for a production change or a claim that a particular new objective improves fidelity.** M12C demonstrates a measurable mismatch: CP-SAT sums pixel-level `TP - FP` across views, while the official result equally averages three IoUs. The fixed solver frame and silhouette-v1's per-arrangement frame are another measurable source of disagreement. This does not attribute Mansion's pixel-level regression without private placement/mask records.
@@ -18,7 +28,10 @@ The CP-SAT objective is exactly `(TP - FP) * (candidate_count + 1) - selected_co
 
 ## Mathematical finding
 
-For one unchanged-source view, `P = TP + FN` and `IoU = TP / (P + FP)`. A strictly higher `TP-FP` cannot lower that view's IoU: `dTP > dFP`, while `TP <= P <= P + FP`; FN falls as TP grows. The algebra alone therefore does not explain a single-view fixed-frame reversal.
+For one unchanged-source view, `P = TP + FN` and `IoU = TP / (P + FP)`. See
+the M13B erratum above: the original claim that a higher `TP-FP` cannot lower
+this IoU was incorrect. A loss of TP can be smaller than a simultaneous loss
+of FP while still lowering the ratio.
 
 It can reverse the three-view result because the solver sums raw pixels while the evaluator weights each view equally after dividing by its own union. This independent, implementation-free counterexample proves the claim and view imbalance:
 

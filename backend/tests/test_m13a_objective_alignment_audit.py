@@ -21,6 +21,15 @@ def test_summed_tp_minus_fp_can_rise_while_mean_iou_falls() -> None:
     assert sum(view.iou for view in current) / 3 < sum(view.iou for view in previous) / 3
 
 
+def test_one_view_tp_minus_fp_can_rise_while_fixed_frame_iou_falls() -> None:
+    # M13A's original algebra incorrectly excluded this case.  FP falls by 11
+    # but TP falls by 10, increasing TP-FP while worsening IoU.
+    previous = score_counts(90, 50, 10)
+    current = score_counts(80, 39, 20)
+    assert current.tp_minus_fp > previous.tp_minus_fp
+    assert current.iou < previous.iou
+
+
 def test_native_bounds_change_when_completed_lego_extent_changes() -> None:
     source = _cube_vertices(0.0, 1.0)
     near = (BrickPlacement(PART_BY_ID["3024"], GridPosition(0, 0, 0), 0),)
