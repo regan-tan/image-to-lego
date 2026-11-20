@@ -9,7 +9,7 @@ candidate type for a bounded experiment only.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
@@ -153,6 +153,7 @@ def optimise_with_wedge(
     fixed_coverage_pixels: Collection[Pixel] = (),
     max_parts: int,
     include_wedges: bool = True,
+    view_objective_weights: Mapping[str, tuple[int, int]] | None = None,
 ) -> WedgeSolve:
     """Run the same TP-minus-FP experiment with safely modelled 41769a.
 
@@ -193,19 +194,41 @@ def optimise_with_wedge(
     for candidate_id, candidate_pixels in enumerate(pixels):
         for pixel in candidate_pixels:
             by_pixel[pixel].append(candidate_id)
-    groups: dict[tuple[tuple[int, ...], bool], int] = defaultdict(int)
-    for pixel in all_pixels - fixed_pixels:
-        groups[(tuple(by_pixel[pixel]), pixel in source_pixels)] += 1
-    true_positive: cp_model.LinearExpr | int = len(source_pixels & fixed_pixels)
-    false_positive: cp_model.LinearExpr | int = len(fixed_pixels - source_pixels)
-    for group_id, ((candidate_ids, is_source), count) in enumerate(sorted(groups.items())):
-        covered = model.new_bool_var(f"silhouette_group_{group_id}")
-        model.add_max_equality(covered, [selected[index] for index in candidate_ids])
-        if is_source:
-            true_positive += count * covered
-        else:
-            false_positive += count * covered
-    model.maximize((true_positive - false_positive) * (len(candidates) + 1) - sum(selected))
+    if view_objective_weights is None:
+        # This is M12C's historical objective. Keep it as the default so its
+        # existing no-wedge control remains unchanged.
+        groups: dict[tuple[tuple[int, ...], bool], int] = defaultdict(int)
+        for pixel in all_pixels - fixed_pixels:
+            groups[(tuple(by_pixel[pixel]), pixel in source_pixels)] += 1
+        true_positive: cp_model.LinearExpr | int = len(source_pixels & fixed_pixels)
+        false_positive: cp_model.LinearExpr | int = len(fixed_pixels - source_pixels)
+        for group_id, ((candidate_ids, is_source), count) in enumerate(sorted(groups.items())):
+            covered = model.new_bool_var(f"silhouette_group_{group_id}")
+            model.add_max_equality(covered, [selected[index] for index in candidate_ids])
+            if is_source:
+                true_positive += count * covered
+            else:
+                false_positive += count * covered
+        primary_score = true_positive - false_positive
+    else:
+        _validate_view_objective_weights(view_objective_weights)
+        groups_by_view: dict[tuple[tuple[int, ...], bool, str], int] = defaultdict(int)
+        for pixel in all_pixels - fixed_pixels:
+            groups_by_view[(tuple(by_pixel[pixel]), pixel in source_pixels, pixel[0])] += 1
+        primary_score = sum(
+            view_objective_weights[pixel[0]][0 if pixel in source_pixels else 1]
+            * (1 if pixel in source_pixels else -1)
+            for pixel in fixed_pixels
+        )
+        for group_id, ((candidate_ids, is_source, view), count) in enumerate(
+            sorted(groups_by_view.items())
+        ):
+            covered = model.new_bool_var(f"silhouette_group_{group_id}")
+            model.add_max_equality(covered, [selected[index] for index in candidate_ids])
+            true_positive_weight, false_positive_weight = view_objective_weights[view]
+            pixel_weight = true_positive_weight if is_source else -false_positive_weight
+            primary_score += count * pixel_weight * covered
+    model.maximize(primary_score * (len(candidates) + 1) - sum(selected))
     solver = cp_model.CpSolver()
     solver.parameters.max_deterministic_time = MAX_DETERMINISTIC_TIME
     solver.parameters.num_search_workers = SOLVER_WORKERS
@@ -705,3 +728,11 @@ def _not_run(
     preflight: WedgePreflight, reason: str, status: str = "NOT_RUN", runtime: float = 0.0
 ) -> WedgeSolve:
     return WedgeSolve((), preflight, status, None, None, None, runtime, reason)
+
+
+def _validate_view_objective_weights(weights: Mapping[str, tuple[int, int]]) -> None:
+    if set(weights) != {"front", "side", "top"}:
+        raise ValueError("View objective weights must contain front, side, and top.")
+    for view, (true_positive_weight, false_positive_weight) in weights.items():
+        if true_positive_weight < 0 or false_positive_weight < 0:
+            raise ValueError(f"View objective weights for {view} must not be negative.")
