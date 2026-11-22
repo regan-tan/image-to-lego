@@ -1,9 +1,16 @@
-# Intended architecture
+# System architecture and implementation boundaries
 
-Status: **Authenticated profile, project metadata, direct source-image upload, queued image-to-3D
-reconstruction, browser photo/3D-model viewing through short-lived read-only SAS links, and a pure
-deterministic GLB-to-LEGO converter core are implemented. Conversion API/queue/worker/frontend
-integration and production deployment are not.**
+**Current scope:** Authenticated project and artifact workflows, direct Azure Blob upload,
+queued fal.ai/TRELLIS reconstruction, conversion API/worker/frontend integration, and the
+versioned GLB-to-LEGO converter are implemented in this repository. The development Azure
+resources are inventoried, but deployment readiness, release-gate activation and heavy-load
+performance must be verified separately from repository code.
+
+See [**as-built design choices and trade-offs**](design-choices.md) for concise rationales,
+alternatives, and limitations. Some historical ADRs retain earlier proposed cloud topologies.
+
+The diagram below emphasizes application data flow; the actual Azure hosting topology is shown
+in the [root README](../../README.md#3-system-architecture).
 
 ```mermaid
 flowchart LR
@@ -50,7 +57,7 @@ API route -> application service -> repository/provider protocol -> infrastructu
 - Purpose-specific repositories isolate PostgreSQL persistence. There is no generic repository base class.
 - The reconstruction protocol owns provider-neutral request/status models. The fal.ai adapter translates TRELLIS queue responses at this boundary.
 - Binary content belongs in Azure Blob Storage; PostgreSQL stores artifact metadata and blob names only.
-- The pure converter core is independent of application infrastructure. Future CPU-intensive mesh
+- The pure converter core is independent of application infrastructure. CPU-intensive mesh
   conversion runs in an independently deployed worker image, never in a request handler or FastAPI
   `BackgroundTasks`.
 
@@ -103,7 +110,7 @@ sequenceDiagram
     participant Blob as Azure Blob Storage
 
     Browser->>API: DELETE /api/v1/projects/{projectId}
-    API->>DB: Lock owned project row; reject with 409 if a job is queued/running
+    API->>DB: Lock owned project row, then reject with 409 if a job is queued/running
     API->>DB: Delete project (cascades to jobs, runs, artifacts)
     API-->>Browser: 204 No Content
     Note over Blob: Files remain but no read URL can be issued for them
@@ -126,7 +133,7 @@ sequenceDiagram
     participant Blob as Azure Blob Storage
 
     Browser->>API: Upload metadata, size, MIME type, SHA-256, project ID
-    API->>DB: Validate owner + rolling quota; insert pending artifact
+    API->>DB: Validate owner and rolling quota, then insert pending artifact
     API-->>Browser: Single-blob create-only SAS (10 minutes)
     Browser->>Blob: PUT bytes directly with MIME and SHA-256 metadata
     Browser->>API: Complete upload
