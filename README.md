@@ -1,12 +1,12 @@
 # Image to LEGO
 
-**CS464 Capstone Project: Image-to-3D reconstruction and geometry-aware LEGO conversion**
+**CS464 G1T5 Capstone Project: Image-to-3D reconstruction and geometry-aware LEGO conversion**
 
 **Ing Reiwen & Regan Tan**
 
 **Under the guidance and mentorship of Professor Lim Yi Sheng**
 
-[**Open the deployed development application**](https://ca-frontend-image-to-lego-dev.livelywave-453957bf.malaysiawest.azurecontainerapps.io/) · [Demo Video](https://www.youtube.com/watch?v=k3dd4IueMNk) · [Architecture](#system-architecture) · [Run locally](#local-development) · [Conversion algorithms](#how-3d-to-lego-conversion-works) · [Evaluation](#evaluation-and-experiments) · [Testing](#testing-and-reproducibility)
+[**Open the deployed development application**](https://ca-frontend-image-to-lego-dev.livelywave-453957bf.malaysiawest.azurecontainerapps.io/) · [Demo Video](https://www.youtube.com/watch?v=k3dd4IueMNk) · [Architecture](#3-system-architecture) · [Run locally](#9-local-development) · [Conversion algorithms](#4-how-3d-to-lego-conversion-works) · [Evaluation](#11-evaluation-and-experiments) · [Testing](#10-testing-and-reproducibility)
 
 ## 1. Project overview
 
@@ -32,6 +32,18 @@ The main technical challenge is **not merely converting mesh vertices into cubes
 | Engineering evidence | Backend/frontend unit tests, isolated PostgreSQL release tests, synthetic benchmarks, documented controlled offline investigations, CI and Terraform |
 
 **Implementation versus deployment:** the code and committed migrations establish the implemented feature set. The Azure inventory supplied for this capstone establishes the named development resources, not an independent end-to-end uptime or load-test result. Likewise, a GitHub Actions workflow being present does not mean its deployment gate is currently enabled.
+
+### Team contributions
+
+The project was developed collaboratively. The following **indicative workstream split** is a draft for both team members to verify before submission; it is not an attribution of individual commits:
+
+| Contributor | Primary focus |
+| --- | --- |
+| **Ing Reiwen** | Frontend experience and integration: React/TypeScript workflows, authentication and project interactions, image-upload UX, 3D/LEGO viewers, build-guide presentation, and frontend validation. |
+| **Regan Tan** | Conversion engine and backend/platform engineering: GLB-to-LEGO algorithms and experiments, FastAPI job orchestration, PostgreSQL/Supabase security, Azure services, deployment workflows, and backend validation. |
+| **Both team members** | Architecture and design decisions, API/frontend integration, troubleshooting, testing, evaluation, documentation, and project demonstration. |
+
+**GitHub attribution note:** Git commit author names do not fully represent the division of work. Due to intermittent issues with Ing Reiwen's GitHub account, she sometimes used Regan Tan's account to contribute code. As a result, some commits attributed to Regan Tan also contain work by Ing Reiwen; commit counts alone should **not** be used to assess individual contributions. The workstream summary above is intended to describe responsibilities rather than assign authorship to every commit.
 
 ## 2. User journey
 
@@ -87,6 +99,8 @@ flowchart TB
 | Async delivery | PostgreSQL outbox + Azure Service Bus | Durable job-intent commit and decoupled generation/conversion work | [`backend/app/outbox/`](backend/app/outbox/) |
 | Conversion engine | trimesh, OR-Tools CP-SAT, verified part catalogue | Source-mesh analysis, deterministic bounded part fitting and diagnostics | [`backend/app/conversion/`](backend/app/conversion/) |
 | Cloud and release | Azure Container Apps, App Service, ACI, ACR, Key Vault, Terraform, GitHub Actions | Separated web/API/workers, managed resource access and controlled updates | [`infra/terraform/`](infra/terraform/), [`.github/workflows/`](.github/workflows/) |
+
+For the concise rationale, alternatives and limitations behind these technology choices, see [**Architecture design choices and trade-offs**](docs/architecture/design-choices.md). This document describes the **as-built** system, not earlier deployment plans.
 
 ### Code organization
 
@@ -232,14 +246,14 @@ sequenceDiagram
     participant W as Worker
     participant Blob as Azure Blob
     UI->>API: POST reconstruction or conversion + Idempotency-Key
-    API->>DB: Transaction: validate ownership; create job/run/outbox intent
+    API->>DB: In one transaction, validate ownership and create job/run/outbox intent
     API-->>UI: 201 Created (or 200 exact replay)
     D->>DB: Claim pending intent with fencing token
     D->>SB: Publish job/owner identifiers only
     D->>DB: Record delivered or failure/uncertainty
     SB-->>W: At-least-once queue delivery
     W->>DB: Claim fenced job attempt / renew lease
-    W->>Blob: Verify input bytes; write canonical output
+    W->>Blob: Verify input bytes and write canonical output
     W->>DB: Complete job and publish output artifact metadata
     UI->>API: GET /api/v1/jobs/{jobId}
     API-->>UI: Owner-scoped status / outputArtifactId
@@ -483,12 +497,12 @@ These are measurable implementation contracts and experimental observations—no
 ## 13. Documentation, provenance and project links
 
 - **Core design:** [architecture overview](docs/architecture/README.md), [fidelity architecture review](docs/architecture/lego-fidelity-architecture-review.md), [part coordinates](docs/architecture/part-coordinate-system.md), [connector contract](docs/architecture/mechanical-connector-metadata.md)
-- **Design decisions:** [ADR-001 through ADR-009](docs/decisions/) cover database, API, cloud, storage, modularity, frontend hosting and controlled release design
+- **Design decisions and trade-offs:** [as-built technology choices](docs/architecture/design-choices.md) summarize alternatives and consequences; [ADR-001 through ADR-009](docs/decisions/) preserve the decisions and earlier planning history
 - **Database:** [ordered Supabase migrations](supabase/migrations/) are the authoritative schema/roles/functions source; do not rely on a diagram alone
 - **Cloud:** [Terraform README](infra/terraform/README.md), [current lifecycle](docs/deployment/azure-terraform-lifecycle.md), [GitHub Actions release guide](docs/deployment/github-actions-azure-cicd.md), [readiness audit](docs/deployment/image_to_lego_azure_readiness_audit.md)
 - **Testing/research:** [testing strategy](docs/testing/README.md), [benchmark contract](docs/testing/conversion-fidelity-benchmark.md), [milestone result reports](docs/testing/), [test code](backend/tests/)
 - **LEGO part data:** [curated catalogue](lego_catalogue/README.md), [LDraw geometry provenance](part_geometry/README.md)
-- **Contribution workflow:** [pull request template](.github/PULL_REQUEST_TEMPLATE.md), CI checks and version-controlled experiment documentation. Individual team contributions should be assessed from the actual repository/PR history rather than inferred from this archive.
+- **Contribution workflow:** [pull request template](.github/PULL_REQUEST_TEMPLATE.md), CI checks and version-controlled experiment documentation. Because a GitHub account was occasionally shared, commit-author counts alone should not be used to evaluate individual work; consider the [team responsibilities](#team-contributions), shared integration and technical evidence.
 
 **Documentation precedence:** source code, committed migrations, tests and current deployment workflows are authoritative for implementation details. Some older architecture and milestone notes preserve earlier status statements for traceability and should not be read as a live deployment inventory.
 
