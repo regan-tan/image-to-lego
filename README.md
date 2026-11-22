@@ -1,522 +1,495 @@
 # Image to LEGO
 
-The browser signs users out after 10 minutes without pointer, keyboard, touch, or
-scroll activity. The activity timestamp survives reloads and is shared across tabs;
-background polling and token refreshes do not extend it. Existing sessions without
-an activity timestamp start their idle clock on their first visit after this change.
-Expiry clears private query data and requests sign-out for the current Supabase
-session. This is a browser convenience/privacy control, not server-enforced session
-revocation: already-issued access tokens remain valid until their expiry. No paid
-Supabase session settings are required.
+**CS464 Capstone Project: Image-to-3D reconstruction and geometry-aware LEGO conversion**
 
-Image to LEGO is a university capstone project for turning a source image into an inspectable, downloadable LEGO model. The intended system combines authenticated project management, AI-assisted image-to-3D reconstruction, asynchronous geometry conversion, artifact storage, and a browser-based 3D experience.
+**Ing Reiwen & Regan Tan**
 
-## Current implementation status
+**Under the guidance and mentorship of Professor Lim Yi Sheng**
 
-This repository currently contains the production-oriented foundation plus the first
-authenticated application slices:
+[**Open the deployed development application**](https://ca-frontend-image-to-lego-dev.livelywave-453957bf.malaysiawest.azurecontainerapps.io/) · [Demo Video](https://www.youtube.com/watch?v=k3dd4IueMNk) · [Architecture](#system-architecture) · [Run locally](#local-development) · [Conversion algorithms](#how-3d-to-lego-conversion-works) · [Evaluation](#evaluation-and-experiments) · [Testing](#testing-and-reproducibility)
 
-- a FastAPI application with root and versioned health endpoints;
-- explicit service, repository, and reconstruction-provider boundaries;
-- a deterministic fake reconstruction provider for tests;
-- Supabase Auth sign-up/sign-in for email/password, Google, and GitHub plus sign-out;
-- a verified `GET /api/v1/profile` profile endpoint;
-- authenticated project creation/listing through PostgreSQL, with a derived status per project;
-- an owner-scoped project overview endpoint with the latest photo and 3D generation job;
-- owner-scoped project deletion, plus a manually run sweep that removes deleted projects' Blob files;
-- pending/ready source-image metadata with owner-scoped RLS;
-- direct browser-to-Azure Blob upload using a short-lived, single-blob SAS;
-- short-lived, read-only, single-blob links for showing a project's photo and 3D model in the browser
-  (photo thumbnails, an interactive GLB viewer, and `.glb` download);
-- server-side confirmation of Blob existence, size, content type, and client-declared SHA-256 metadata;
-- a rolling 30-upload initiation quota over the preceding 24 hours;
-- Supabase PostgreSQL migrations with row-level security enabled;
-- backend and frontend unit tests, linting, type checking, Docker, and CI configuration; and
-- architecture decisions and deployment planning documentation.
+## 1. Project overview
 
-The reconstruction slice is implemented: an owner can start an idempotent image-to-3D job after a
-source image is ready; the API records the job and reconstruction run, publishes an identifier-only
-generation message, and the generation worker submits/polls `fal-ai/trellis`. The worker validates
-the actual source Blob bytes before paid submission, copies the completed GLB into canonical private
-Azure Blob Storage, and records a ready `reconstructed_model` artifact. The browser polls the job
-while it is queued or running.
+Image to LEGO turns a photograph into a **viewable 3D reconstruction** and then into a **discrete, LEGO-part-based model**. Users can manage private projects, upload an image, initiate AI reconstruction, choose a conversion mode and build complexity, explore the resulting LEGO assembly, inspect its parts list, follow an ordered build guide, and download generated artifacts. The frontend is a React web application; the backend coordinates authenticated REST requests, a managed database, private object storage, asynchronous workers, and a third-party image-to-3D model.
 
-The pure deterministic GLB-to-LEGO converter core is implemented. It produces a fixed-palette,
-surface-only brick model using source GLB visual data, a bounded grid-resolution search, fixed
-rectangular bricks/plates, and the real `4286` Slope 33 3 x 1 for simple exposed ramps. The backend
-conversion slice is also implemented: an owner can start an idempotent conversion of a ready
-reconstructed model, and a separate worker stores one canonical JSON LEGO model artifact. The
-frontend conversion journey, LEGO renderer, parts list, and basic build guide are implemented.
-The existing development compute environment is Terraform-managed. The checked-in GitHub Actions
-release workflow still requires its documented one-time OIDC/bootstrap setup before it may deploy;
-no automatic release has been run by this repository change. No Supabase Storage is used; Azure Blob
-Storage is the artifact store.
+The main technical challenge is **not merely converting mesh vertices into cubes**. A useful result must reconcile image-reconstruction uncertainty, coarse LEGO dimensions, a finite catalogue of manufactured parts and colours, geometric fidelity, processing limits, and some mechanically verifiable assembly constraints. The converter and the offline research harness address these problems explicitly rather than treating a visually similar render as proof of physical buildability.
 
-The completed Parts List also provides a deterministic purchase-ready CSV. It contains only
-verified manufactured canonical part/color pairs, quantities, and checked-in external BrickLink
-identities when known. It is a sourcing record, not a marketplace availability, price, seller, or
-checkout integration; no marketplace-native wanted-list import is currently generated.
+**Primary users:** LEGO enthusiasts, hobbyists, students, and makers who want to explore a personalized model from an image. 
 
-## Intended architecture
+**Project scope:** an experimental, deployed capstone application—not an official LEGO design tool, a guaranteed physically stable construction system, or a retail purchasing service.
 
-The application is a pragmatic modular monolith with independently runnable API and worker processes. HTTP routes call services; services coordinate purpose-specific repositories and provider abstractions; only those boundary modules communicate with infrastructure. CPU-intensive or long-running work belongs in the worker and must not run in FastAPI request handlers or `BackgroundTasks`.
+### What is implemented
 
-The future request flow is:
-
-1. React authenticates a user with Supabase Auth and calls the REST API.
-2. FastAPI stores relational metadata in Supabase PostgreSQL and binary artifacts in Azure Blob Storage.
-3. The API creates an idempotent reconstruction job/run and publishes only its job and owner IDs to the generation queue.
-4. A generation worker validates the private source Blob, submits/polls fal.ai/TRELLIS, and copies the returned GLB to canonical Azure Blob Storage.
-5. The API exposes owner-scoped job status for browser polling. A conversion job validates a ready
-   reconstructed GLB, then the conversion worker produces a canonical private JSON LEGO model.
-
-See [Architecture](docs/architecture/README.md) for the component diagram and boundary details.
-
-## Deployment status and plan
-
-The existing development environment uses a small Nginx Azure Container App for the React/Vite
-frontend, a Linux App Service for the FastAPI API, and two `restart_policy = Never` Azure Container
-Instance workers. Azure Service Bus provides the two durable job queues; ACR stores images; Blob
-Storage stores private artifacts; Key Vault supplies runtime secrets; and Azure Monitor collects
-operational logs and metrics. Supabase Free remains the managed PostgreSQL and Auth service.
-
-The API has public managed HTTPS ingress because the browser calls it directly. The workers have no
-ingress. The GitHub Actions release workflow builds SHA-tagged backend and frontend images, updates
-the API, both safely stopped workers, and frontend after CI, then runs health checks. It is
-intentionally blocked until its [OIDC and worker-bootstrap setup](docs/deployment/github-actions-azure-cicd.md)
-has been completed and reviewed.
-
-The shared Terraform root protects durable infrastructure while application compute is in a separate
-state. A second environment, automated external database backups, and paid high-availability services remain intentionally deferred.
-Supabase Free inactivity pauses, temporary downtime, and manual recovery are accepted capstone
-limitations; external logical backups are a documented production-readiness proposal rather than an
-implemented feature.
-
-See the [GitHub Actions Azure release setup](docs/deployment/github-actions-azure-cicd.md) and
-[Azure Terraform lifecycle](docs/deployment/azure-terraform-lifecycle.md) for the executable
-development release and lifecycle safeguards. The [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md)
-is retained as historical Container Apps planning material.
-
-## Implemented source-image upload flow
-
-The API accepts metadata only; image bytes never pass through FastAPI.
-
-```mermaid
-sequenceDiagram
-    participant Browser
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant Blob as Azure Blob Storage
-
-    Browser->>API: POST /api/v1/uploads (metadata + SHA-256)
-    API->>DB: Create pending source_image artifact
-    API-->>Browser: 10-minute single-blob create-only SAS
-    Browser->>Blob: PUT image bytes + content metadata
-    Blob-->>Browser: Upload accepted
-    Browser->>API: POST /api/v1/uploads/{id}/complete
-    API->>Blob: Read Blob properties
-    API->>DB: Mark artifact ready after declared-metadata confirmation
-    API-->>Browser: Ready artifact response
-```
-
-PostgreSQL stores ownership, lifecycle, MIME type, byte size, client-declared SHA-256, and the
-canonical Blob name. Azure Blob Storage stores the private binary image. SAS URLs are returned to
-the browser when needed and are never persisted. `ready` means the direct upload is present with
-the expected declared metadata and is ready for downstream server-side validation; it does not mean
-FastAPI has cryptographically verified the stored bytes. Before any paid fal submission, the
-generation worker validates the actual stored source bytes, including content type, resource bounds,
-and a recomputed SHA-256.
-
-## Implemented reconstruction flow
-
-`POST /api/v1/reconstructions` requires an `Idempotency-Key`, a project ID, and a ready source-image
-artifact ID. It returns a queued reconstruction job; exact replays return the existing job without
-publishing a second message. `GET /api/v1/jobs/{jobId}` is owner-scoped and is safe for status polling.
-
-## Implemented conversion flow
-
-`POST /api/v1/conversions` requires an `Idempotency-Key`, a project ID, a ready
-`reconstructed_model` artifact ID, `targetParts`, and `upAxis`. It may also specify
-`algorithmVersion`; it defaults to `surface-grid-v4`. `surface-grid-v3` and
-`surface-grid-v5-reliable` remain available for explicit API requests. The consumer UI offers
-Classic V4, capped Reliable V6 (`surface-grid-v6-shape-aware`), and opt-in Experimental
-connectivity V7 (`surface-grid-v7-connectivity-aware`). V6 and V7 require `maxParts`; it is a
-hard limit, while `targetParts` remains a preferred detail target. Exact replays return the existing
-conversion job without publishing a second message; a reused key with different input returns 409.
-The conversion worker verifies the private GLB's SHA-256, calls the deterministic converter, and
-stores stable JSON at `projects/{projectId}/conversions/{jobId}/lego-model.json`. It creates one
-ready `lego_model` artifact per conversion job only after the canonical Blob is durable.
-
-## Project status and overview
-
-`GET /api/v1/projects` returns every project with a `status`, and
-`GET /api/v1/projects/{projectId}` returns one project with its `sourceImage` (the latest **ready**
-source image, or `null`) and `latestReconstruction` (the latest reconstruction job started from that
-image, or `null`). Project detail also returns `latestLegoModel` (the artifact ID of the most recently
-created **ready** `lego_model` from a successful conversion, or `null`), so the browser can request a
-separate owner-scoped read URL and rehydrate the persisted result. Both are owner-scoped; another
-user's project returns the same 404 as a missing one. Pending uploads are ignored, and a job for an
-earlier, replaced photo does not count.
-
-| `status` | Meaning |
+| Area | Implementation in this repository |
 | --- | --- |
-| `needs_photo` | No ready source image yet |
-| `photo_ready` | Ready source image, no generation started for it |
-| `generating` | Latest job is `queued` or `running` |
-| `model_ready` | Latest job `succeeded` |
-| `failed` | Latest job `failed` or was `canceled` |
+| Accounts and projects | Supabase Auth (email/password, Google and GitHub), verified FastAPI sessions, private project CRUD, project status and history |
+| Image ingestion | Browser-to-Azure Blob direct upload using scoped, short-lived SAS; server-side metadata confirmation; downstream byte/hash validation |
+| 3D generation | Queued, idempotent `fal-ai/trellis` reconstruction; generation worker polls the provider and stores a canonical private GLB |
+| LEGO conversion | Deterministic GLB conversion with V3–V7 API routing; V4, V6 and opt-in V7 selectable in the browser |
+| Results | Interactive reconstructed-model and LEGO viewers, parts list, verified-pair sourcing CSV, versioned build instructions, GLB/JSON downloads |
+| Platform | FastAPI, PostgreSQL, Azure Blob, Service Bus, ACI workers, App Service API, Container Apps frontend, managed identities and Key Vault |
+| Reliability | Transactional submission outbox, idempotency, worker-attempt leases, publication fencing, release-drain controls and retry/recovery paths |
+| Engineering evidence | Backend/frontend unit tests, isolated PostgreSQL release tests, synthetic benchmarks, documented controlled offline investigations, CI and Terraform |
 
-The status is derived in the backend domain layer from one query per request; the list uses
-`LATERAL` joins so it does not issue one query per project. Each project also carries
-`sourceImageArtifactId` so the browser can request its thumbnail.
+**Implementation versus deployment:** the code and committed migrations establish the implemented feature set. The Azure inventory supplied for this capstone establishes the named development resources, not an independent end-to-end uptime or load-test result. Likewise, a GitHub Actions workflow being present does not mean its deployment gate is currently enabled.
 
-## Deleting a project
+## 2. User journey
 
-`DELETE /api/v1/projects/{projectId}` returns `204 No Content` and removes the project row. Its jobs,
-run rows, and artifact rows go with it through `ON DELETE CASCADE`. Another user's project returns
-the same 404 as a missing one. While any of the project's jobs is `queued` or `running` the request
-returns `409 Conflict`, because a reconstruction may already be billed by fal and deleting the
-project would discard that paid result. The repository locks the project row before checking for
-active jobs, so a job cannot be queued between the check and the delete.
+1. **Sign in.** Authenticate using Supabase Auth. The browser sends a bearer access token to FastAPI, which verifies it independently.
+2. **Create a project and add a photo.** Pick a JPEG, PNG or WebP image. The API creates a pending artifact and returns a create-only SAS URL; the browser uploads the bytes directly to the private Azure Blob container and then completes the upload.
+3. **Generate a 3D model.** A deliberate click submits a reconstruction job. The API commits the job and an outbox publication intent; a dispatcher delivers an identifier-only message to the generation queue. The generation worker verifies source bytes, calls TRELLIS via fal.ai, polls for completion and saves a GLB. The UI polls the owner-scoped job endpoint.
+4. **Convert the GLB to LEGO.** Select the build detail and algorithm. The conversion worker verifies the source GLB, runs the chosen deterministic converter and persists one canonical LEGO-model JSON artifact.
+5. **Inspect and export.** Compare the original image, reconstructed model and LEGO result; examine grouped part quantities, the build guide and available downloads. The purchase-ready CSV identifies *verified manufactured* part/colour pairs; it does **not** check seller stock or prices.
 
-The request does not touch Azure Blob Storage. Once the artifact rows are gone, no read URL can be
-issued for those files, but the bytes stay in the private container until the Blob sweep removes
-them:
+Generation uses a paid external provider and requires valid credentials, provider capacity and running workers. Queued or failed work must not be described as an instant or guaranteed generation result.
 
-```powershell
-Set-Location backend
-uv run python -m app.workers.blob_sweep            # report orphaned project folders
-uv run python -m app.workers.blob_sweep --delete   # delete them
-```
-
-Every application file lives under `projects/{projectId}/`. The sweep lists that prefix, asks
-PostgreSQL which project IDs still exist, and deletes a folder only when its project is gone and
-every blob in it is older than `BLOB_SWEEP_MIN_AGE_MINUTES` (default 60), so it never races an upload
-whose SAS was issued just before the delete. Running it twice is harmless. It is run by hand for
-now; scheduling it is part of the future deployment work. It does not yet remove abandoned pending
-uploads of projects that still exist.
-
-## Viewing private photos and models
-
-Uploaded photos and generated models stay in a private Blob container. To display one, the browser
-calls `GET /api/v1/artifacts/{artifactId}/read-url` and receives `{ "url", "expiresAt" }`: a
-read-only SAS for exactly that blob, valid for `ARTIFACT_READ_URL_LIFETIME_MINUTES` (default 10).
-The browser then loads the file directly from Blob Storage; bytes never pass through FastAPI.
+## 3. System architecture
 
 ```mermaid
-sequenceDiagram
-    participant Browser
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant Blob as Azure Blob Storage
-
-    Browser->>API: GET /api/v1/artifacts/{id}/read-url (Bearer token)
-    API->>DB: Owner-scoped artifact lookup (RLS)
-    API-->>Browser: Read-only single-blob SAS + expiresAt (Cache-Control: no-store)
-    Browser->>Blob: GET photo or model.glb with the SAS
+flowchart TB
+    User["Browser / user"] --> FE["React + TypeScript + Vite<br/>Nginx · Azure Container Apps"]
+    FE -->|"/api/* HTTPS reverse proxy<br/>Bearer JWT"| API["FastAPI REST API<br/>Azure Linux App Service"]
+    FE <-->|"Authentication"| AUTH["Supabase Auth"]
+    API -->|"Verify JWT / JWKS"| AUTH
+    API <-->|"Owner-scoped SQL + transactions"| DB[("Supabase PostgreSQL<br/>RLS + jobs + runs + artifacts + outbox")]
+    API -->|"Scoped SAS issuance / Blob properties"| BLOB[("Private Azure Blob Storage<br/>images · GLB · LEGO JSON")]
+    FE <-->|"Direct PUT / short-lived GET SAS"| BLOB
+    DB -->|"Committed publication intents"| DISP["Fenced outbox dispatcher<br/>scheduled / manual / optional post-commit"]
+    DISP --> BUS["Azure Service Bus<br/>generation and conversion queues"]
+    BUS --> GEN["Generation worker<br/>Azure Container Instances"]
+    BUS --> CONV["Conversion worker<br/>Azure Container Instances"]
+    GEN -->|"TRELLIS submit / poll"| FAL["fal.ai image-to-3D provider"]
+    GEN <-->|"Verified source / canonical GLB"| BLOB
+    CONV <-->|"Verified GLB / canonical LEGO JSON"| BLOB
+    GEN <-->|"Job attempt leases / results"| DB
+    CONV <-->|"Job attempt leases / results"| DB
+    KV["Azure Key Vault + managed identities"] -.-> API
+    KV -.-> GEN
+    KV -.-> CONV
+    ACR["Azure Container Registry"] -.-> FE
+    ACR -.-> API
+    ACR -.-> GEN
+    ACR -.-> CONV
 ```
 
-- Only the owner's `ready` source images and reconstructed models are served. A missing file, another
-  user's file, or any other artifact kind returns the same 404; a pending upload returns 409.
-- `?download=true` adds an `attachment` content disposition (`photo.jpg`, `model.glb`, …) so the
-  browser saves the file instead of opening it.
-- Links are never stored; the frontend requests a new one shortly before the old one expires. The
-  Three.js viewer is loaded lazily, only when a ready model is shown.
+**Figure 1.** Logical data and control flow. The browser uses the frontend's Nginx `/api/` proxy in the deployed topology; Blob transfer is direct. Queue delivery and database state are different reliability boundaries. ACI worker containers have no public ingress.
 
-The generation worker uses Azure Service Bus's at-least-once delivery semantics. It never resubmits a
-job once `jobs.provider_job_id` is persisted. Before submission it downloads the private source Blob
-within the configured byte limit, recomputes SHA-256, and checks the JPEG/PNG/WebP signature against
-the artifact MIME type. On success, the worker bounds the provider result download and stores the
-canonical GLB at `projects/{projectId}/reconstructions/{jobId}/model.glb`; fal-hosted URLs are never
-stored as canonical artifacts.
+### Technologies, responsibilities and rationale
 
-Job creation writes the job and its submission-outbox intent in one database transaction. On a new
-`201 Created` response, the API can optionally start one bounded, best-effort dispatcher pass after
-that transaction commits. The dispatcher uses a separate database login and the existing fenced
-outbox protocol before it publishes identifier-only Service Bus messages. A failed automatic pass
-does not change the successful response or submit work directly; the scheduled/manual GitHub Actions
-dispatcher remains the recovery path. A crash between a paid fal submission and persistence of its
-request ID is treated conservatively: the worker waits while the submission claim is fresh, then fails
-it as unconfirmed rather than risking a duplicate paid request.
+| Layer | Technology | Why it is used | Key source |
+| --- | --- | --- | --- |
+| Web client | React 19, TypeScript, Vite, React Router, TanStack Query | Componentized UI, typed API-facing models and cached job/project data | [`frontend/src/`](frontend/src/) |
+| 3D visualization | Three.js, React Three Fiber, Drei | Browser rendering of GLB and individual LEGO placements | [`frontend/src/components/`](frontend/src/components/) |
+| Authentication | Supabase Auth; backend PyJWT/JWKS verification | Managed sign-in with independent server-side token validation | [`backend/app/core/auth.py`](backend/app/core/auth.py) |
+| Application API | Python 3.12, FastAPI, Pydantic | Explicit REST contracts, validation and dependency boundaries | [`backend/app/api/`](backend/app/api/) |
+| Database | Supabase-hosted PostgreSQL, SQLAlchemy async, asyncpg | Relational integrity, indexed project/job lookups, transactions and RLS | [`supabase/migrations/`](supabase/migrations/) |
+| Object storage | Azure Blob Storage | Private storage of binary images, GLB and result JSON rather than database BLOBs | [`backend/app/providers/blob_storage.py`](backend/app/providers/blob_storage.py) |
+| Async delivery | PostgreSQL outbox + Azure Service Bus | Durable job-intent commit and decoupled generation/conversion work | [`backend/app/outbox/`](backend/app/outbox/) |
+| Conversion engine | trimesh, OR-Tools CP-SAT, verified part catalogue | Source-mesh analysis, deterministic bounded part fitting and diagnostics | [`backend/app/conversion/`](backend/app/conversion/) |
+| Cloud and release | Azure Container Apps, App Service, ACI, ACR, Key Vault, Terraform, GitHub Actions | Separated web/API/workers, managed resource access and controlled updates | [`infra/terraform/`](infra/terraform/), [`.github/workflows/`](.github/workflows/) |
 
-Completed LEGO-model JSON includes engineering-only fidelity metadata. It records binary orthographic
-silhouette IoU for front (XZ), side (YZ), and top (XY) views, plus their mean and the target-versus-
-actual part-count error. Each IoU is in the range 0..1; higher values mean closer projected geometric
-overlap. It also includes optional `metadata.buildability` using `stud-connectivity-v1`. This diagnostic
-evaluates vertical stud-to-underside connections only for rectangular `brick` and `plate` families;
-slopes are reported as unevaluated. A placement is reported unsupported when its bottom is above the
-model's minimum placement z plane and it has no evaluated placement connected directly below it. The
-diagnostic does not assess structural stability, collision, clutch force, center of mass, insertion
-accessibility, color accuracy, or overall perceptual similarity.
+### Code organization
 
-Newly converted models retain top-level `instructionSteps` for compatibility and add a versioned
-top-level `instructionGuide` with `version: "build-guide-v2"`. Each V2 step holds stable
-`placementIndices`, exact per-step part/color quantities, and each added placement's canonical position
-and orientation. The guide also carries explicit diagnostic warnings; the browser derives displayed
-quantities from canonical placements and keeps legacy artifacts accessible through their original steps
-or layer fallback. The worker batches at
-most six placements per step and combines evaluated direct stud-support edges with
-`vertical-insertion-v1` edges: a rectangular piece that would block another piece's straight-down path
-must be placed later. Local presentation regions are inferred from evaluated
-`stud-connectivity-v1` components and direct support forks; they are not a new mechanical analysis.
-Unevaluated slopes are assigned to the nearest evaluated region only for presentation and retain no
-inferred mechanical attachment. If the combined graph contains a cycle, structural precedence remains
-valid while the conflicting insertion edges are reported as unresolved in compact metadata. These steps
-do not guarantee collision-free insertion, rotational access, temporary gravity stability, optimal
-assembly motions, or LEGO-official-quality subassemblies.
-
-Canonical conversion metadata also includes `vertical-insertion-v1` plus a compact combined-precedence
-report. For each rectangular brick or plate, it checks only whether the piece can move straight downward
-into its final pose without crossing previously placed rectangular fit geometry. Direct precedence edges
-must cross instruction-step boundaries, so they cannot share a step. Slopes are unevaluated. This does
-not model hand reach, rotation, sideways insertion, clutch tolerances, stability, or official LEGO
-assembly feasibility.
-
-## Repository layout
+The backend is a **modular monolith with separate worker entry points**, not independent HTTP microservices. Its dependency direction is:
 
 ```text
-backend/              FastAPI application, worker entry point, and Python tests
-frontend/             React, TypeScript, Vite application and tests
-supabase/             Local Supabase configuration and SQL migrations
-docs/architecture/    System architecture documentation
-docs/decisions/       Architecture decision records (ADRs)
-docs/deployment/      Proposed Azure deployment and CI/CD plan
-docs/testing/         Test strategy and isolation rules
-infra/                Reserved documentation boundary for reviewed IaC
-.github/workflows/    Continuous integration
+HTTP route -> application service -> repository / provider contract -> infrastructure adapter
+                          |
+                          +-> pure 3D-to-LEGO conversion domain
 ```
 
-## Prerequisites
+Routes handle request/response contracts; services enforce workflows and ownership; PostgreSQL repositories and external-provider adapters own I/O. CPU-intensive conversion and long-running generation are isolated from the API process. The frontend keeps the user journey and 3D rendering separate from those backend implementations.
 
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
-- Node.js 22 and npm
-- Docker Desktop or another Docker Engine (optional for image validation)
-- Supabase CLI and Docker (optional for local migration validation)
+```text
+.
+├── backend/
+│   ├── app/api/           # FastAPI endpoints, auth dependencies, health
+│   ├── app/services/      # Projects, upload, reconstruction, conversion
+│   ├── app/repositories/  # Protocols and SQLAlchemy adapters
+│   ├── app/providers/     # Blob, Service Bus, fal.ai abstraction/adapter
+│   ├── app/conversion/    # Conversion algorithms, catalogue, metrics, experiments
+│   ├── app/outbox/        # Durable publication and dispatcher
+│   ├── app/workers/       # Generation, conversion, bootstrap, blob sweep
+│   ├── scripts/           # Benchmark and milestone runners
+│   └── tests/             # Python tests
+├── frontend/src/          # React pages, viewers, models, tests and auth
+├── supabase/migrations/   # PostgreSQL schema, RLS, leasing and release functions
+├── infra/terraform/       # Shared persistent resources and application compute
+├── lego_catalogue/       # Curated part metadata and verified colour combinations
+├── part_geometry/         # Licensed/source-attributed geometry assets
+├── docs/                  # ADRs, architecture, deployment and experimental reports
+├── scripts/               # Release safety and catalogue-generation utilities
+└── .github/workflows/     # CI and controlled deployment/dispatch workflows
+```
 
-## Local development
+## 4. How 3D-to-LEGO conversion works
 
-Copy the example environment files, then run the API and frontend in separate terminals. Blank integration values are safe during foundation development because no external provider is invoked.
+The reconstruction service creates a **GLB mesh**, not a brick model. The conversion stage independently interprets its geometry and visual colours. The entry point is [`convert_glb()`](backend/app/conversion/core.py), called by the [conversion worker](backend/app/workers/conversion_worker.py).
+
+```mermaid
+flowchart LR
+    GLB["Verified input GLB"] --> MESH["Load mesh + validate bounds"]
+    MESH --> NORM["Normalize orientation / scale<br/>sample source surface"]
+    NORM --> GRID["Choose LEGO stud/plate grid<br/>build source occupancy"]
+    GRID --> CAND["Part candidates / shape policy<br/>protected space + support rules"]
+    CAND --> SOLVE["Bounded selection / CP-SAT<br/>mode-specific safeguards"]
+    SOLVE --> VALID["Collision / support / part-cap checks<br/>fidelity diagnostics"]
+    VALID --> OUT["Canonical placements + colours<br/>parts + guide + metrics JSON"]
+```
+
+**Figure 2.** Shared conceptual conversion pipeline. Exact fitting, repair and fallback behavior differ by algorithm; this is not one universal solver used identically by all versions.
+
+1. **Validate and interpret the source.** Read GLB via `trimesh`; reject unsupported, oversized or overly complex input; apply the supplied `upAxis`, normalize the mesh and extract geometry/available visual colour evidence.
+2. **Discretize geometry.** Convert continuous coordinates into an integer LEGO lattice (8 mm/stud in the horizontal axes; 3.2 mm/plate vertically). Build a sampled *surface* representation; this is not an exact volumetric reconstruction of the source.
+3. **Fit available part families.** Choose legal rectangular brick/plate placements and supported slope placements, using catalogue identities and verified colour combinations. For bounded modes, distinguish preferred detail (`targetParts`) from the **hard maximum** (`maxParts`).
+4. **Optimize and safeguard.** Candidate selection uses bounded optimization and/or deterministic local refinement, subject to the algorithm's coverage, protected-space, direct-support and collision policies. Some modes can preserve an earlier valid solution instead of accepting a worse experimental result.
+5. **Evaluate the finished assembly.** Record front, side and top binary silhouette overlap, part count and optional geometry/connectivity diagnostics. Export canonical, deterministic placement data with dimensions, colour, part identities and build-guide metadata.
+
+### Supported conversion versions
+
+| Version | Application availability | Main purpose and important qualification |
+| --- | --- | --- |
+| `surface-grid-v3` | Explicit API compatibility mode | Historical surface-grid converter; not equivalent to the current verified physical-part representation |
+| `surface-grid-v4` | **Default** API and **Classic V4** UI | Projection-oriented rectangular fitting with supported 4286 slope handling; a preferred part target, **not** an absolute cap |
+| `surface-grid-v5-reliable` | Explicit API mode | Adds a hard-cap approach, protected-empty-space logic and bounded reliability safeguards |
+| `surface-grid-v6-shape-aware` | **Reliable V6** UI | Builds on V5 and evaluates bounded legal 4286 slope substitutions; otherwise retains the reliable baseline |
+| `surface-grid-v7-connectivity-aware` | **Experimental connectivity V7** UI | Attempts bounded connection-aware optimization and validates the completed proposal; rejects/falls back when its acceptance checks fail |
+
+The UI offers **Simple (100)**, **Balanced (300)** and **Detailed (600)** as *preferred detail targets*. The **UI** requires `maxParts` for V6 and V7; the **API** permits V5/V6 to omit it, while V7 requires it. When supplied, `maxParts` is a hard limit. The internal lattice and solver-budget safeguards can make higher requested detail ineffective or computationally costly; **a request for 600 parts is not a promise that 600 parts will be produced**.
+
+### Real parts, source geometry and physical constraints
+
+The catalogue distinguishes **part identity**, **render/shape geometry**, **allowed orientations**, **manufactured colour combinations**, and **fitter eligibility**. Rectangular bricks/plates and the supported 4286 slope are active in the fitting paths. Geometry research also covers parts **41769/41770** (wedge plates) and **15068** (curved slope), but catalogue membership or rendering support **does not mean** those parts are generally eligible for production fitting. See [catalogue policy](lego_catalogue/README.md), [geometry assets](part_geometry/README.md), and [mechanical connector contract](docs/architecture/mechanical-connector-metadata.md).
+
+`stud-connectivity-v1` measures selected **vertical stud-to-underside contacts** for evaluated rectangular parts. `vertical-insertion-v1` analyzes a restricted straight-down insertion condition; `build-guide-v2` derives ordered steps and reports unresolved cases. These diagnostics do **not** establish clutch strength, gravity stability, collision-free hand assembly, accessibility from every direction, or official LEGO instruction quality. Slopes and other unevaluated shapes must not be silently counted as mechanically verified.
+
+### What the fidelity metrics mean
+
+| Diagnostic | Interpretation | Explicit limitation |
+| --- | --- | --- |
+| Front/side/top silhouette IoU (`silhouette-v1`) | Intersection-over-union of source and assembled LEGO projections, 0–1; higher is better | Three orthographic views cannot prove 3D shape or internal-space fidelity |
+| Mean silhouette IoU | Arithmetic mean of those three IoUs | Not volumetric IoU or perceptual similarity |
+| `placement-surface-proxy-v1` | Deterministically sampled symmetric surface distance, P95 error and normalized distance | Approximate surface proxy, not exact boolean-union geometry |
+| Opening diagnostic | Amount of a source-enclosed **top-view** void covered by the output | Not a general 3D cavity metric |
+| Buildability / collision reports | Verified subset of direct connections, unsupported evaluated placements and proxy body overlaps | Not a complete mechanical or assembly safety guarantee |
+| Part-count error | Actual output count compared with requested target | `targetParts` is not a strict cap; `maxParts` is |
+
+## 5. Database architecture and data security
+
+**PostgreSQL is the source of truth for identity-linked metadata and job state. Azure Blob is the source of truth for file bytes. Supabase Storage is not used.** Tables and functions are defined in the ordered files under [`supabase/migrations/`](supabase/migrations/).
+
+```mermaid
+erDiagram
+    AUTH_USERS ||--o{ PROJECTS : owns
+    PROJECTS ||--o{ JOBS : contains
+    PROJECTS ||--o{ ARTIFACTS : contains
+    JOBS ||--o| RECONSTRUCTION_RUNS : parameters
+    JOBS ||--o| CONVERSION_RUNS : parameters
+    JOBS ||--o| SUBMISSION_OUTBOX : publication_intent
+    JOBS o|--o{ ARTIFACTS : produces
+    ARTIFACTS ||--o{ RECONSTRUCTION_RUNS : input
+    ARTIFACTS ||--o{ CONVERSION_RUNS : source
+    WORKER_RELEASE_STATE ||--o{ WORKER_RELEASE_AUDIT : transitions
+```
+
+**Figure 3.** Conceptual relationships, not a claim that every line is a database foreign key: Supabase owns `auth.users`; `worker_release_audit` is keyed by its release/controller identifiers rather than a conventional FK to a singleton row. `reconstruction_runs` and `conversion_runs` use their `job_id` as their primary key; `submission_outbox.job_id` is unique. Output artifacts optionally reference `jobs` via `producer_job_id`.
+
+| Table | Purpose / notable constraints |
+| --- | --- |
+| `projects` | Owner-linked projects; `owner_id` references `auth.users.id`; indexed by owner and recency |
+| `jobs` | Reconstruction/conversion lifecycle (`queued`, `running`, `succeeded`, `failed`, `canceled`); unique `(project_id, type, idempotency_key)`; provider/error and worker-lease fields |
+| `artifacts` | `source_image`, `reconstructed_model`, and `lego_model` metadata; owner project, canonical blob name, MIME, bytes, SHA-256, status and expiry |
+| `reconstruction_runs` | One reconstruction configuration per job: input artifact, provider, model and JSON settings |
+| `conversion_runs` | One conversion configuration per job: source artifact, target count, up axis, algorithm and JSON settings |
+| `submission_outbox` | At most one durable publication intent per job; claim/send attempts, fencing, delivery and manual-attention status |
+| `worker_release_state` | Singleton, fenced control state for release draining and worker admission |
+| `worker_release_audit` | Durable transitions for the release controller |
+
+**Indexes and integrity:** the initial migration defines project-owner, job-status/recency and artifact-kind/recency indexes; subsequent migrations add lease/outbox indexes, unique output-artifact-per-job indexes and SQL functions for guarded state changes. This is a normalized relational design: multiple job attempts/outputs are not flattened into the `projects` row, and large binaries do not occupy PostgreSQL. A backup or high-availability guarantee must not be inferred from this schema.
+
+### Authentication, authorization and trust boundaries
+
+- **Supabase Auth** issues browser tokens. FastAPI validates the **JWT signature via JWKS**, issuer, audience and expiration, then derives the owner UUID from the verified subject—not from a browser-supplied `ownerId`.
+- **RLS** is enabled on owner-facing tables. Inside owner-scoped PostgreSQL transactions, the API sets `app.current_user_id` transaction-locally; policies on projects, jobs, artifacts and runs check ownership through this setting. The API login must **not** own these tables or have `BYPASSRLS`.
+- **No general browser-table access:** these owner policies are intended for FastAPI's DB role and session context. The browser uses Supabase for authentication, not unrestricted direct access to application tables.
+- **Privileged workers and dispatchers** use separate, reviewed database-function permissions. The outbox and release-control tables are not exposed as ordinary browser-writable resources.
+- **Blob security:** containers are private; create-only upload SAS and read-only download SAS are short-lived and scoped to one object. SAS URLs are not stored as database records, and read-URL responses specify `Cache-Control: no-store`.
+- **Validation stages matter:** upload completion checks declared Blob properties; the generation worker *later recomputes* the actual image SHA-256 before paid submission; the conversion worker verifies the GLB before conversion. Upload `ready` is not a cryptographic certification of image content.
+- **Operational secrets** belong in runtime environment settings/Key Vault, not Git or frontend assets. The frontend publishable Supabase key is intentionally public; provider keys, connection strings and privileged identities are not.
+- **Browser privacy:** a 10-minute user-inactivity timer signs the UI out across tabs. This is **not** server-side invalidation of already-issued access tokens.
+
+Project deletion removes relational records in a transaction only after rejecting active jobs. Azure files can remain after SQL deletion; the manual [Blob sweep](backend/app/workers/blob_sweep.py) detects orphaned project prefixes and deletes only age-eligible files. This is not instantaneous cross-service deletion. Pending-upload cleanup and automated external database backups are not represented as completed features.
+
+## 6. Durable asynchronous processing
+
+```mermaid
+sequenceDiagram
+    participant UI as Browser
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant D as Outbox dispatcher
+    participant SB as Azure Service Bus
+    participant W as Worker
+    participant Blob as Azure Blob
+    UI->>API: POST reconstruction or conversion + Idempotency-Key
+    API->>DB: Transaction: validate ownership; create job/run/outbox intent
+    API-->>UI: 201 Created (or 200 exact replay)
+    D->>DB: Claim pending intent with fencing token
+    D->>SB: Publish job/owner identifiers only
+    D->>DB: Record delivered or failure/uncertainty
+    SB-->>W: At-least-once queue delivery
+    W->>DB: Claim fenced job attempt / renew lease
+    W->>Blob: Verify input bytes; write canonical output
+    W->>DB: Complete job and publish output artifact metadata
+    UI->>API: GET /api/v1/jobs/{jobId}
+    API-->>UI: Owner-scoped status / outputArtifactId
+```
+
+**Figure 4.** Logical job lifecycle. Generation adds fal.ai submission/polling before GLB storage; conversion runs the CPU-bound converter before JSON storage. Real failure and recovery paths have more states than the happy path shown here.
+
+- **API idempotency:** repeated identical `(project, type, Idempotency-Key)` requests return the existing job; conflicting input under the same key yields HTTP 409. PostgreSQL constraints are the final authority.
+- **Durable intent:** job, run and outbox intent are inserted transactionally. This removes the simple database-commit/queue-send gap, but **does not** provide global exactly-once delivery.
+- **Dispatcher:** an optional post-commit API pass (`OUTBOX_AUTO_DISPATCH_ENABLED`) uses its **own private DB login**. A [scheduled/manual GitHub Actions dispatcher](.github/workflows/dispatch-outbox.yml) provides recovery; its schedule is `*/5 * * * *` in the workflow definition, not a five-minute SLA. An optional Terraform Container Apps Job definition is also present but cannot be treated as deployed without inventory evidence.
+- **Uncertain sends:** an outbox send that may have begun is **not blindly retried**. Such records can require explicit operational attention so a retry cannot silently duplicate downstream work.
+- **Worker attempts:** PostgreSQL attempt UUIDs, renewable leases and release-gate fencing reduce duplicate processing and reject stale workers. Both ACI workers receive Service Bus messages and update persisted job status; duplicate transport delivery is expected.
+- **Paid provider safety:** an ambiguous crash after fal submission but before provider-job-ID persistence is handled conservatively rather than automatically making another chargeable submission.
+- **Safe release:** release draining prevents new attempts while in-flight work finishes or is fenced. The controlled workflow verifies prerequisites before stopping/recreating `restart_policy = Never` workers.
+
+## 7. Azure deployment and infrastructure
+
+**Development application:** https://ca-frontend-image-to-lego-dev.livelywave-453957bf.malaysiawest.azurecontainerapps.io/
+
+The supplied Azure resource exports identify the following **Malaysia West** development topology in `rg-image-to-lego-dev`:
+
+| Azure resource | Exported name | Role |
+| --- | --- | --- |
+| Container App | `ca-frontend-image-to-lego-dev` | Public HTTPS entry point; Nginx serves SPA and proxies `/api/` |
+| Container Apps Environment | `cae-image-to-lego-dev` | Frontend hosting/log integration |
+| Linux App Service | `app-image-to-lego-api-dev-2b70703f` | Containerized FastAPI application |
+| App Service Plan | `ASP-rgimagetolegodev-8295` | B1, one worker in the Terraform configuration |
+| ACI container group | `aci-image-to-lego-generation-dev` | Independent image-to-3D generation consumer |
+| ACI container group | `aci-image-to-lego-conversion-dev` | Independent 3D-to-LEGO conversion consumer |
+| Azure Service Bus namespace | `image-to-lego-bus-dev-01` | Durable `generation` and `conversion` queues |
+| Blob storage account | `storageimgtolego` | Private `artifacts` container for image, GLB and LEGO JSON files |
+| Azure Container Registry | `itl2b70703f` | Private backend/frontend container images |
+| Azure Key Vault | `kv-itl-2b70703f` | Runtime secrets and Key Vault references |
+| Log Analytics workspace | `log-image-to-lego-dev` | Collected platform logs |
+| User-assigned managed identities | `id-image-to-lego-*` | Separate API, frontend, generation, conversion, outbox and deployment principals |
+
+The exports also identify the outbox dispatcher **managed identity**, but do not establish that the optional **Container Apps Job** itself was created. The Terraform module has `outbox_dispatcher_enabled` as a separate condition. **Supabase Auth/PostgreSQL** and **fal.ai** are external managed services, not Azure resources in this inventory.
+
+### Resource boundaries, scalability and costs
+
+- `infra/terraform/shared/` protects durable resources such as Blob, Service Bus, ACR, Key Vault, Log Analytics, Container Apps Environment and identities. `infra/terraform/application-compute/` manages the frontend, API and ACI compute separately to reduce accidental durable-resource deletion.
+- Nginx terminates the browser-facing application route and forwards `/api/`; the API has its own managed HTTPS endpoint. Workers have no ingress and communicate through queue, PostgreSQL and Blob.
+- The queue isolates request latency from expensive, variable-duration tasks. The repository provides bounded concurrency and retry/recovery logic; **the current single B1 App Service plan and one-container ACI groups are not evidence of measured horizontal scalability**. ACI `restart_policy = Never` is a deliberately controlled lifecycle, not an autoscaling worker pool.
+- Blob transfers bypass the API to reduce API bandwidth and memory consumption. App settings and managed identities avoid distributing static storage keys; account shared-key access is disabled in Terraform.
+- Cost containment comes from development-size compute, bounded input/grids/workers, separate compute lifecycle and explicit paid fal initiation. No real monthly bill, heavy-load throughput measurement or availability SLA is claimed.
+- Supabase Free and the chosen development tiers are accepted capstone trade-offs. Automated off-platform logical database backups, full disaster-recovery exercises, a second environment and guaranteed high availability are **not implemented** by this repository.
+
+### CI/CD and release gates
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) configures change-scoped Ruff/Mypy/Pytest checks, frontend lint/Vitest/build checks, Docker build checks, local PostgreSQL lease/release tests and Terraform validation. For approved compute deployments, the release path builds immutable SHA-tagged images, uses Azure OIDC, verifies identities/queue safety and worker drain state, then updates resources and checks health. Deployment is **intentionally gated** by `AZURE_DEPLOYMENTS_ENABLED` and `AZURE_COMPUTE_DEPLOYMENTS_ENABLED`; the existence of this code is **not proof that all-compute automatic deployment has been activated**. A separate [manual API-only outbox dispatcher release](.github/workflows/deploy-api-outbox-dispatcher.yml) also exists.
+
+Do not run `terraform apply`, recreate ACI groups or enable release flags just to test the README. Production/change-control procedures are in [release setup](docs/deployment/github-actions-azure-cicd.md) and [Terraform lifecycle](docs/deployment/azure-terraform-lifecycle.md). The older [Azure CI/CD plan](docs/deployment/azure-cicd-plan.md) is historical planning material, **not the deployed topology**.
+
+## 8. REST API overview
+
+Authentication is via `Authorization: Bearer <supabase-access-token>` except public health endpoints. JSON is validated by Pydantic; owner-scoped lookups do not disclose other users' project identifiers.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health`, `/api/v1/health` | Health/status endpoints |
+| `GET` | `/api/v1/profile` | Verified authenticated profile |
+| `POST`, `GET` | `/api/v1/projects` | Create/list owned projects |
+| `GET`, `DELETE` | `/api/v1/projects/{projectId}` | Overview or deletion with active-job protection |
+| `POST` | `/api/v1/uploads` | Start source-image upload; return constrained SAS |
+| `POST` | `/api/v1/uploads/{uploadId}/complete` | Confirm uploaded Blob properties |
+| `POST` | `/api/v1/reconstructions` | Idempotent reconstruction initiation |
+| `POST` | `/api/v1/conversions` | Idempotent conversion initiation |
+| `GET` | `/api/v1/jobs/{jobId}` | Poll job status and ready output ID |
+| `GET` | `/api/v1/artifacts/{artifactId}/read-url` | Owner-scoped temporary read/download SAS (`?download=true`) |
+
+`POST /api/v1/conversions` requires an `Idempotency-Key` request header and a body of the following shape (example UUIDs are illustrative):
+
+```json
+{
+  "projectId": "11111111-1111-4111-8111-111111111111",
+  "sourceArtifactId": "22222222-2222-4222-8222-222222222222",
+  "targetParts": 100,
+  "upAxis": "y",
+  "algorithmVersion": "surface-grid-v6-shape-aware",
+  "maxParts": 100
+}
+```
+
+On an actual deployment those IDs must identify an **owned project** and a **ready reconstructed-model** artifact. V4 is the default algorithm when `algorithmVersion` is omitted. `maxParts` is optional in V5/V6 API requests (and enforced when supplied), but required in V7 API requests; the UI requires it for its V6/V7 modes. Reusing a key with different parameters yields a conflict. OpenAPI is available in local development at `http://127.0.0.1:8000/docs`.
+
+## 9. Local development
+
+### Prerequisites
+
+- Python **3.12** and [`uv`](https://docs.astral.sh/uv/)
+- Node.js **22** and npm
+- A configured Supabase project or isolated local Supabase development stack for authenticated/data features
+- Private Azure Blob/Service Bus resources and appropriately authorized Azure CLI identity for end-to-end cloud-backed workflows
+- A fal.ai API credential for actual generation only
+- Docker for image validation; Supabase CLI/Docker for local Supabase migration testing; Terraform/Azure CLI only for approved infrastructure operations
+
+There are **two useful local modes**: the pure converter and synthetic benchmarks run without cloud credentials; the authenticated end-to-end application requires external configuration. Example `.env` files contain placeholders, not usable production connections.
+
+### Start the API and browser (PowerShell)
+
+From the repository root:
 
 ```powershell
 Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/.env.example frontend/.env
+# Fill in the relevant values; do not commit these .env files.
 ```
 
-### Backend commands
+In terminal 1:
 
 ```powershell
 Set-Location backend
-uv sync
+uv sync --frozen
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-OpenAPI is enabled at `http://localhost:8000/docs`; the schema is available at `/openapi.json`.
-
-### Frontend commands
+In terminal 2:
 
 ```powershell
 Set-Location frontend
-npm install
+npm ci
 npm run dev
 ```
 
-The Vite development server listens at `http://localhost:5173` and calls the URL configured by `VITE_API_BASE_URL`.
+Open **http://localhost:5173**. The local API uses **http://127.0.0.1:8000**. `VITE_API_BASE_URL` defaults to `http://localhost:8000` in the sample frontend configuration; both addresses target the same local service. When using the deployed Nginx proxy, the frontend's API base can be empty so `/api/` is same-origin.
 
-### Supabase authentication setup
+### Required configuration boundaries
 
-Create a Supabase project, then set `SUPABASE_URL` for the API and `VITE_SUPABASE_URL` plus `VITE_SUPABASE_PUBLISHABLE_KEY` for the frontend. Keep the publishable key in the frontend only; never expose a Supabase service-role key.
+| Setting(s) | Where / why |
+| --- | --- |
+| `SUPABASE_URL`, `SUPABASE_JWT_AUDIENCE` | API token verifier; asymmetric Supabase JWKS signing required |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser login; key is explicitly publishable |
+| `DATABASE_URL` | PostgreSQL API/worker connection; use a dedicated non-owner, non-`BYPASSRLS` role |
+| `AZURE_STORAGE_ACCOUNT_URL`, `AZURE_STORAGE_CONTAINER` | Private artifacts, direct-upload and read-SAS workflow |
+| `AZURE_SERVICE_BUS_NAMESPACE`, `AZURE_SERVICE_BUS_GENERATION_QUEUE`, `AZURE_SERVICE_BUS_QUEUE` | Two asynchronous job queues |
+| `FAL_KEY` | Generation worker only; paid TRELLIS integration |
+| `OUTBOX_AUTO_DISPATCH_ENABLED`, `OUTBOX_DISPATCHER_DATABASE_URL` | Optional bounded dispatch; **private dispatcher login distinct from ordinary API role** |
+| `CORS_ORIGINS`, Blob CORS allowlist | Permit exact approved frontend origins and direct Blob `PUT`/`GET` |
+| `JOB_SUBMISSIONS_ENABLED`, lease/renewal settings | Admission, worker retry and safe release behavior |
+| Upload/reconstruction size/time limits | Security and resource-bounded processing; see [`backend/.env.example`](backend/.env.example) |
 
-The frontend provides a public landing page at `/` plus `/login` and `/signup` authentication
-routes. Signed-in users get three protected routes that share one header (an on-demand "How it
-works" dialog and an account menu):
+**Database setup:** apply the SQL migrations **in filename order** using a disposable local Supabase environment or a separately reviewed hosted migration procedure. Migrations assume Supabase's `auth.users` and define RLS, SQL functions, indexes and privileged role boundaries. Grant the API/worker/dispatcher database login only the permissions prescribed by the [architecture](docs/architecture/README.md), [release guide](docs/deployment/github-actions-azure-cicd.md) and migration comments. Do **not** connect with a table-owner/service-role credential to bypass RLS. Enable desired email/OAuth providers and redirect URLs in Supabase Auth. Azure Blob requires a private container, user-delegation-capable identity and exact allowed CORS origins; generated SAS URLs require HTTPS in Azure.
 
-- `/workspace` lists the user's projects with a status badge each, or shows an empty state on first visit;
-- `/projects/:projectId` shows one project's progress (Photo → 3D model → LEGO build) and its next action;
-- `/profile` shows the verified profile returned by `GET /api/v1/profile` and lets users save a display name.
+### Start workers (only with working infrastructure)
 
-Display names are trimmed and limited to 1–80 characters. The browser saves only
-`full_name` through Supabase Auth's `updateUser` API, which persists user metadata;
-no separate profile table is required. It then refreshes the session because the
-profile endpoint reads the name from verified JWT metadata. Successful saves update
-the cached profile and account menu. If session refresh fails after the metadata
-was saved, the UI reports that partial result and asks the user to sign in again.
-Display names are presentation data and are never used for authorization.
-
-Supabase restores the browser session after refresh; unauthenticated requests for protected routes
-redirect to `/login`.
-
-A new project starts from a photo: the user picks a supported JPEG, PNG, or WebP image (the project
-name defaults to the file name), the browser validates and hashes it with Web Crypto, the API creates
-the project, the browser uploads the image directly to Azure, and the API verifies completion. If the
-upload fails, retrying reuses the already-created project. The project page reads
-`GET /api/v1/projects/{projectId}`, starts paid generation only when the user clicks
-**Generate 3D model** (with one idempotency key per attempt), and polls only while a job is queued or
-running.
-
-In Supabase Auth, enable Email and the Google and GitHub providers. Register `https://<project-ref>.supabase.co/auth/v1/callback` as the OAuth callback in the Google and GitHub provider consoles. Configure the frontend URL in Supabase Auth's Site URL and allowed Redirect URLs (for local development, `http://localhost:5173`); add production frontend URLs explicitly when deployed. Email confirmation behavior is controlled by Supabase: when it is enabled, the application asks the user to confirm their address before signing in.
-
-The API independently verifies each browser access token with the project's JWKS, expected issuer, audience, and expiry before serving `GET /api/v1/profile`. This requires Supabase asymmetric signing keys; ES256 is preferred and RS256 is also accepted. The default audience is `authenticated`; set `SUPABASE_JWT_AUDIENCE` if your project uses a different configured audience.
-
-### PostgreSQL API role
-
-Apply all committed migrations, including `20261006010000_upload_lifecycle.sql`. `DATABASE_URL`
-must use a dedicated login role that can select/insert/update the `projects` and `artifacts` tables
-and delete from `projects`,
-is not the table owner, and does not have `BYPASSRLS`. Each repository transaction sets the
-verified JWT subject in the transaction-local `app.current_user_id` setting; the migration's RLS
-policies use that value and pooled connections cannot retain it after the transaction.
-
-After applying the reconstruction and conversion migrations, provision the hosted API role outside the portable
-migrations if it does not already have the required table privileges:
-
-```sql
-grant select, insert, update on public.jobs, public.artifacts, public.reconstruction_runs,
-public.conversion_runs
-to image_to_lego_api;
-```
-
-After applying `20261024000000_project_deletion.sql`, also allow project deletion and the Blob
-sweep's existence check:
-
-```sql
-grant select, update, delete on public.projects to image_to_lego_api;
-grant execute on function public.existing_project_ids(uuid[]) to image_to_lego_api;
-```
-
-Deleting a project requires `SELECT` and `UPDATE` on `projects` for the initial
-`SELECT ... FOR UPDATE` lock, plus `DELETE` for removal. PostgreSQL performs the cascade to child
-tables itself, so child-table `DELETE` grants are unnecessary.
-`existing_project_ids` is a `SECURITY DEFINER` function, because the sweep must see
-projects across all owners while RLS limits the API role to one owner per transaction. It returns
-only which of the given IDs still exist. The migration revokes it from `PUBLIC`, `anon`, and
-`authenticated`, so the browser cannot call it through Supabase's REST API.
-
-The migration never assumes this environment-specific role exists. RLS still applies to these grants.
-
-The durable worker-release migration also creates the `image_to_lego_worker` no-login role. Grant it
-only to the private database login used by the worker runtime; never grant it to Supabase's
-`authenticated` role or browser-facing roles. This reviewed database step is intentionally separate
-from the portable migration because the runtime login name is environment-specific:
-
-```sql
-grant image_to_lego_worker to image_to_lego_api;
-```
-
-### Azure Blob upload setup
-
-Create a private Blob container and set `AZURE_STORAGE_ACCOUNT_URL` and
-`AZURE_STORAGE_CONTAINER`. The API identity must be allowed to request a user-delegation key and
-read Blob properties. The user-delegation-key permission must
-be assigned at storage-account scope or higher. The simplest built-in assignment is Storage Blob
-Data Contributor at the storage-account scope. A narrower split assigns Storage Blob Delegator at
-the account and the required Blob data role at the private container. Do not configure an account
-key in the application.
-
-Blob access through the generated SAS requires HTTPS. Configure Blob service CORS for each exact
-frontend origin: production origins must use HTTPS, while local development may use
-`http://localhost:5173`. Allow only methods `GET`, `PUT`, and `OPTIONS` and headers `content-type`,
-`x-ms-blob-type`, and `x-ms-meta-sha256`. `PUT` is for direct uploads; `GET` is needed because the
-3D viewer fetches the `.glb` with JavaScript (plain `<img>` tags and downloads do not need CORS). The
-upload SAS lasts 10 minutes by default, targets exactly one server-generated blob name, and grants
-create-only permission; read SAS links are read-only and equally blob-scoped.
-
-## Testing and quality commands
-
-Backend:
+From `backend/`, use separate processes/terminals:
 
 ```powershell
-Set-Location backend
+uv run python -m app.workers.generation_worker
+uv run python -m app.workers.conversion_worker
+```
+
+For a reviewed environment, run the outbox dispatcher separately or use the configured scheduled workflow:
+
+```powershell
+uv run python -m app.outbox.run --max-messages 20 --max-runtime-seconds 45
+```
+
+The workers require the relevant private PostgreSQL role, queue receiver/sender access and Blob permissions; generation additionally needs `FAL_KEY`. **Do not** treat an empty `.env` as a functional end-to-end environment or submit production/paid jobs to check installation. For Docker, see [`backend/Dockerfile`](backend/Dockerfile) and [`frontend/Dockerfile`](frontend/Dockerfile); the production worker command may use [`app.workers.aci_bootstrap`](backend/app/workers/aci_bootstrap.py) to obtain Key Vault secrets before starting the worker.
+
+## 10. Testing and reproducibility
+
+### Fast checks
+
+Run these from their respective directories after installing locked dependencies:
+
+```powershell
+# From backend/
 uv run ruff check .
 uv run mypy app
 uv run pytest -q
-```
 
-Frontend:
-
-```powershell
-Set-Location frontend
+# From frontend/
 npm run lint
 npm run test -- --run
 npm run build
 ```
 
-Tests use only local fakes and HTTP mocks. They must never contact fal.ai, Supabase, or Azure.
+Default unit tests use provider/transport/database fakes and must not call real fal.ai, Azure or production Supabase. CI also has a separate PostgreSQL service-container integration check for worker-release fencing (`tests/test_worker_release_postgres.py`); this test deliberately accepts only an isolated local `image_to_lego_test` database because it recreates a schema. **Never point `TEST_DATABASE_URL` at a real Supabase project.**
 
-## Docker commands
+### Reproduce an offline synthetic conversion benchmark
 
-Build and run the API image from the repository root:
-
-```powershell
-docker build -t image-to-lego-api:local backend
-docker run --rm -p 8000:8000 image-to-lego-api:local
-```
-
-The same image can invoke either worker entry point:
+From `backend/` (no database, Azure or fal.ai required):
 
 ```powershell
-docker run --rm image-to-lego-api:local python -m app.workers.generation_worker
-docker run --rm image-to-lego-api:local python -m app.workers.conversion_worker
+uv run python scripts/benchmark_conversion_fidelity.py --suite synthetic --algorithm surface-grid-v4 --target-parts 100 --output-dir ../artifacts/lego-fidelity-benchmark
 ```
 
-The generation worker requires configured PostgreSQL, Blob Storage, Service Bus, and `FAL_KEY` values.
-The conversion worker requires PostgreSQL, Blob Storage, and the existing conversion Service Bus queue.
-The Blob sweep (`python -m app.workers.blob_sweep`) requires PostgreSQL and Blob Storage, and its
-Blob identity needs permission to list and delete blobs (Storage Blob Data Contributor).
+Use `--full` for all synthetic fixtures (box, thin wall, sphere, cylinder, pyramid, L-profile, ring and open box), or `--source path/to/model.glb` with `--target-parts` to evaluate an approved local GLB. Results include `summary.json`, `summary.csv`, per-case metrics and front/side/top overlays. Output stays under ignored `artifacts/`. Details and metric contracts: [conversion fidelity benchmark](docs/testing/conversion-fidelity-benchmark.md).
 
-## Environment variables
+### Further controlled experiments
 
-Never commit real credentials. Root and service-specific `.env.example` files contain safe placeholders.
+Several studies use **SHA-256-pinned private GLBs** and separate offline runners. Their complete private meshes, masks and generated placement artifacts are intentionally not part of this repository. Therefore, source code and committed result reports can be inspected, but **not all reported private-corpus experiments can be reproduced from a fresh public checkout** without authorized access to the original inputs. Do not manufacture missing results or use synthetic fixtures as if they were equivalent to those private sources.
 
-| Variable | Used by | Purpose |
+## 11. Evaluation and experiments
+
+The capstone evaluates not only whether a model can be viewed, but *what properties the algorithm actually improves* and *which properties remain unproven*. The experiment reports distinguish fixed-input controls, frozen evaluation metrics, candidate/solver objectives, mechanical checks and production routing.
+
+### Representative recorded outcomes
+
+| Evidence | Recorded observation | Correct interpretation |
 | --- | --- | --- |
-| `APP_ENV` | API/worker | Runtime environment label |
-| `DATABASE_URL` | API/worker | Async PostgreSQL connection string |
-| `SUPABASE_URL` | API | Supabase project URL for Auth integration |
-| `SUPABASE_JWT_AUDIENCE` | API | Expected Supabase JWT audience |
-| `AZURE_STORAGE_ACCOUNT_URL` | API/worker | Blob Storage account URL |
-| `AZURE_STORAGE_CONTAINER` | API/worker | Artifact container name |
-| `UPLOAD_MAX_IMAGE_SIZE_BYTES` | API | Authoritative maximum source-image size |
-| `UPLOAD_QUOTA_LIMIT` | API | Initiations allowed in the rolling quota window |
-| `UPLOAD_QUOTA_WINDOW_HOURS` | API | Rolling upload quota duration |
-| `UPLOAD_PENDING_LIFETIME_HOURS` | API | Pending upload lifetime before expiry |
-| `UPLOAD_SAS_LIFETIME_MINUTES` | API | Single-blob upload SAS lifetime |
-| `ARTIFACT_READ_URL_LIFETIME_MINUTES` | API | Lifetime of read-only links for showing or downloading a photo or model |
-| `AZURE_SERVICE_BUS_NAMESPACE` | API/worker | Service Bus fully qualified namespace |
-| `AZURE_SERVICE_BUS_QUEUE` | API/worker | Durable conversion queue name |
-| `AZURE_SERVICE_BUS_GENERATION_QUEUE` | API/worker | Durable image-to-3D generation queue name |
-| `OUTBOX_AUTO_DISPATCH_ENABLED` | API | Opt in to one post-commit, bounded dispatcher pass for new jobs (default `false`) |
-| `OUTBOX_DISPATCHER_DATABASE_URL` | API dispatcher pass | Separate private dispatcher-login URL; never use `DATABASE_URL` for this role |
-| `SERVICE_BUS_MAX_LOCK_RENEWAL_SECONDS` | Worker | Maximum processing and message-lock renewal time (default 900; allowed 60-3600) |
-| `WORKER_JOB_LEASE_SECONDS` | Worker | Database attempt-lease duration (default 120; allowed 60-600) |
-| `WORKER_JOB_LEASE_RENEWAL_SECONDS` | Worker | Database attempt-lease renewal interval (default 30; must be less than the lease) |
-| `WORKER_JOB_LEASE_RECOVERY_BUFFER_SECONDS` | Worker | Delay after a lease expiry before its durable recovery message is delivered (default 5; allowed 1-60) |
-| `FAL_KEY` | Worker | fal.ai credential for TRELLIS |
-| `RECONSTRUCTION_POLL_INTERVAL_SECONDS` | Worker | Delay before the next provider status check |
-| `RECONSTRUCTION_MAX_RUNTIME_MINUTES` | Worker | Maximum allowed reconstruction runtime |
-| `RECONSTRUCTION_MAX_MODEL_SIZE_BYTES` | Worker | Maximum accepted generated model size |
-| `RECONSTRUCTION_SOURCE_SAS_LIFETIME_MINUTES` | Worker | Read-only source Blob SAS lifetime; configured for maximum runtime plus a five-minute pickup buffer |
-| `RECONSTRUCTION_HTTP_TIMEOUT_SECONDS` | Worker | fal API and result-download timeout |
-| `BLOB_SWEEP_MIN_AGE_MINUTES` | Sweep | Minimum age of every blob in a deleted project's folder before the sweep removes it |
-| `CORS_ORIGINS` | API | JSON array of allowed browser origins |
-| `VITE_API_BASE_URL` | Web | FastAPI base URL |
-| `VITE_SUPABASE_URL` | Web | Supabase URL for browser authentication |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Web | Supabase browser-safe publishable key |
-| `VITE_UPLOAD_MAX_IMAGE_SIZE_BYTES` | Web | Client-side size check; must match the API value |
-| `VITE_UPLOAD_MAX_PIXEL_COUNT` | Web | Client-side decoded-image pixel limit; UX/defense in depth only |
+| [V4 synthetic benchmark](docs/testing/conversion-fidelity-benchmark.md) | At a **12-part target**, box: **0.613169** mean silhouette IoU; thin wall: **0.662951**; ring: **0.592571**. Ring top-view void-fill diagnostic: **0.764665**. | Small, frozen smoke baseline; ring exposes a hole-preservation failure. Not a general-population accuracy estimate. |
+| [M7B fixed-lattice 2×2 study](docs/testing/milestone-7b-controlled-fidelity-results.md) | **12** controlled runs across Duck, Mansion and Realistic man; doubling evidence sampling produced no improvement in the six matched comparisons; increasing cap 30→60 produced no mean-IoU gain ≥0.01. | More sampling or a larger count cap alone did not solve fidelity at those fixed lattices. |
+| [M8A source-aware fitting](docs/testing/milestone-8a-source-aware-fitting-results.md) | **NO-GO**: the prototype reached a ≥0.01 mean-IoU gain on **zero of three** pinned sources. | Negative results are retained rather than promoted to a production feature. |
+| [M12C wedge fitting](docs/testing/milestone-12c-wedge-fidelity-results.md) | **Zero of three** pinned models met the predeclared +0.01 mean-IoU success threshold. | More part geometry and mechanically verified fixtures do not automatically improve whole-model output. Offline work is not silently deployed. |
+| [M13A–M13B objective alignment](docs/testing/milestone-13a-objective-alignment-audit-results.md) | `TP - FP` does not generally maximize `IoU = TP / (P + FP)`; the [M13B controlled proxy comparison](docs/testing/milestone-13b-iou-objective-results.md) produced **0.000000** frozen-mean-IoU change on all three matched models. | Distinguish a solver surrogate from the final three-view evaluation; an objective change without a measured gain remains **NO-GO**. |
+| [M13F B7.2 offline connectivity checkpoint](docs/testing/milestone-13f-b7-2-checkpoint.md) | On a 50% fixed-frame occupancy-policy research setting, the Mansion experiment found a **30-piece single-component witness** at fixed-frame mean IoU **0.839882** with unchanged projection masks. | A constrained **existence result** on a fixed private source/candidate set—not minimum-part proof, physical stability or a production V8 upgrade. |
 
-## Architecture documentation
+The studies span fidelity baselining; fixed-grid and evidence-sampling controls; source-aware fitting; attribution; catalogue-constrained silhouette selection; evaluator/objective alignment; physical-scale effects; exact-duplicate feasibility; verified wedge mechanics and assembly; and connectivity-constrained reconstruction. Full experimental methods, failure cases and reproduction instructions are in [`docs/testing/`](docs/testing/) and the corresponding [`backend/scripts/`](backend/scripts/). The most recent M13 research paths are **offline-only** and do not alter the V4–V7 application router.
 
-- [Architecture overview](docs/architecture/README.md)
-- [ADR-001: PostgreSQL managed by Supabase](docs/decisions/ADR-001-postgresql-supabase.md)
-- [ADR-002: Python and FastAPI](docs/decisions/ADR-002-python-fastapi.md)
-- [ADR-003: REST API](docs/decisions/ADR-003-rest-api.md)
-- [ADR-004: Azure cloud platform](docs/decisions/ADR-004-azure-cloud.md)
-- [ADR-005: Azure Blob Storage](docs/decisions/ADR-005-azure-blob-storage.md)
-- [ADR-006: Modular monolith](docs/decisions/ADR-006-modular-monolith.md)
-- [Azure deployment and CI/CD plan](docs/deployment/azure-cicd-plan.md)
-- [Testing strategy](docs/testing/README.md)
+### Engineering success measures and boundaries
 
-## License
+| Dimension | Evidence or measurable acceptance condition |
+| --- | --- |
+| Correct authorization | Owner-scoped API/RLS tests; other users' project/artifact lookups must not expose data |
+| Job integrity | One job per `(project,type,key)`, one outbox intent per job, and at most one canonical output artifact per completed run; duplicate messages must not create additional paid generation |
+| Upload safety | Default 10 MiB source-image size; single-blob SAS expires after 10 minutes; rolling default initiation quota 30 per 24 hours; worker verifies actual source hash |
+| Converter bounds | 16 MiB GLB input, 100,000 source triangles, 250,000 grid cells and bounded candidate/solver work; hard `maxParts` respected in capped modes |
+| Geometric fidelity | Versioned front/side/top and mean IoU, paired controls, fixed metric semantics, source SHA-256 provenance; no unsupported volumetric or perceptual-fidelity claim |
+| Mechanical quality | Verified connector/support and collision diagnostics; explicit exclusions for stability and full assembly feasibility |
+| Reliability and deployment | Local/CI test gates, independent queue workers, lease fencing, durable outbox/release checks and documented cloud-resource boundary |
+| Scalability and latency | Architecture supports asynchronous decoupling; **no verified heavy-load benchmark, throughput target attainment or availability SLA is claimed** |
 
-Licensed under the existing [MIT License](LICENSE).
+These are measurable implementation contracts and experimental observations—not a fabricated production load-test report. Any future performance claim should report hardware/tier, concurrency, success/failure definition, sample size and p50/p95 latency alongside its result.
+
+## 12. Known limitations, risks and next steps
+
+| Risk / limitation | Current mitigation and remaining work |
+| --- | --- |
+| Poor detail in curves, thin features, concavities or holes | Fixed/controlled silhouette and surface metrics expose degradation; study verified richer parts and occupancy/scale effects before changing production |
+| Reconstructed meshes may be inaccurate or non-watertight | Verify source bytes, record topology uncertainty, avoid inferring a trusted watertight interior |
+| Incorrect assumptions about buildability | Connector, collision and insertion checks report *limited* evidence; physical assembly, strength and access need separate evaluation |
+| Large candidate sets / solver time and memory | Input/grid caps, V5–V7 hard part limit, bounded CP-SAT stages, deterministic fallbacks and offline feasibility studies |
+| Duplicate or ambiguous asynchronous work | Unique idempotency keys, transactional outbox, fenced dispatcher, worker leases and conservative provider-submission handling; manual attention may still be necessary |
+| External dependency / credit availability | fal.ai, Azure and Supabase are third-party services; use guarded submissions, inspect job errors and distinguish platform outage from code failure |
+| Data retention / recovery | Private Blob plus SQL metadata, delayed manual orphan sweep; add reviewed backup, retention and recovery procedures before broader production use |
+| Limited validation population | Synthetic fixtures plus a small private real-world research set do not establish general performance; obtain a licensed, independently selected benchmark corpus |
+| Scaling/cost | Small dev tiers and independent workers limit spend but not proven high load; collect realistic concurrency, cost and operational evidence before scaling |
+
+## 13. Documentation, provenance and project links
+
+- **Core design:** [architecture overview](docs/architecture/README.md), [fidelity architecture review](docs/architecture/lego-fidelity-architecture-review.md), [part coordinates](docs/architecture/part-coordinate-system.md), [connector contract](docs/architecture/mechanical-connector-metadata.md)
+- **Design decisions:** [ADR-001 through ADR-009](docs/decisions/) cover database, API, cloud, storage, modularity, frontend hosting and controlled release design
+- **Database:** [ordered Supabase migrations](supabase/migrations/) are the authoritative schema/roles/functions source; do not rely on a diagram alone
+- **Cloud:** [Terraform README](infra/terraform/README.md), [current lifecycle](docs/deployment/azure-terraform-lifecycle.md), [GitHub Actions release guide](docs/deployment/github-actions-azure-cicd.md), [readiness audit](docs/deployment/image_to_lego_azure_readiness_audit.md)
+- **Testing/research:** [testing strategy](docs/testing/README.md), [benchmark contract](docs/testing/conversion-fidelity-benchmark.md), [milestone result reports](docs/testing/), [test code](backend/tests/)
+- **LEGO part data:** [curated catalogue](lego_catalogue/README.md), [LDraw geometry provenance](part_geometry/README.md)
+- **Contribution workflow:** [pull request template](.github/PULL_REQUEST_TEMPLATE.md), CI checks and version-controlled experiment documentation. Individual team contributions should be assessed from the actual repository/PR history rather than inferred from this archive.
+
+**Documentation precedence:** source code, committed migrations, tests and current deployment workflows are authoritative for implementation details. Some older architecture and milestone notes preserve earlier status statements for traceability and should not be read as a live deployment inventory.
+
+**License:** [MIT](LICENSE). Third-party geometry and reference catalogues retain their own attribution, licensing and use restrictions as described in their respective directories.
