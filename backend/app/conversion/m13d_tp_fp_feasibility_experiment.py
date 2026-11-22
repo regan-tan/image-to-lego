@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from ortools.sat.python import cp_model
 
@@ -23,6 +24,7 @@ DEFAULT_DETERMINISTIC_TIME_SECONDS = 30.0
 SOLVER_RANDOM_SEED = 0
 SOLVER_WORKERS = 1
 RASTER_PIXELS_PER_VIEW = 128 * 128
+ObjectiveMode = Literal["min_fp", "max_tp"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,7 @@ class FeasibilityResult:
     best_objective_bound: int | None
     selected_ids: tuple[int, ...]
     views: Mapping[str, Mapping[str, int]]
+    deterministic_time_consumed: float | None = None
 
 
 def solve_tp_fp_feasibility(
@@ -49,14 +52,34 @@ def solve_tp_fp_feasibility(
     control_views: Mapping[str, Mapping[str, int]],
     max_parts: int,
     deterministic_time_seconds: float = DEFAULT_DETERMINISTIC_TIME_SECONDS,
+    hint_selected_ids: Collection[int] | None = None,
+    required_selected_ids: Collection[int] | None = None,
+    objective_mode: ObjectiveMode = "min_fp",
+    tp_loss_allowances: Mapping[str, int] | None = None,
 ) -> FeasibilityResult:
-    """Minimize exact fixed-frame FP while retaining each Control view's TP/FP bounds."""
+    """Optimize a retained M13D model under its per-view Control bounds."""
     if deterministic_time_seconds <= 0:
         raise ValueError("The deterministic time budget must be positive.")
+    if objective_mode not in {"min_fp", "max_tp"}:
+        raise ValueError("The objective mode must be 'min_fp' or 'max_tp'.")
     if len(candidates) != len(candidate_rasters):
         raise ValueError("Candidates and raster footprints must have matching lengths.")
+    allowances = _validated_tp_loss_allowances(tp_loss_allowances, control_views)
     model = cp_model.CpModel()
     selected = tuple(model.new_bool_var(f"x_{index}") for index in range(len(candidates)))
+    required_id_set = _validated_selection_ids(
+        required_selected_ids, len(selected), "required candidate selection"
+    )
+    if required_id_set is not None:
+        for index, variable in enumerate(selected):
+            model.add(variable == int(index in required_id_set))
+    if hint_selected_ids is not None:
+        hinted_id_set = _validated_selection_ids(
+            hint_selected_ids, len(selected), "candidate selection hint"
+        )
+        assert hinted_id_set is not None
+        for index, variable in enumerate(selected):
+            model.add_hint(variable, int(index in hinted_id_set))
     candidate_tuple = tuple(candidates)
     target = frozenset(target_cells)
     locked = tuple(locked_placements)
@@ -102,13 +125,17 @@ def solve_tp_fp_feasibility(
         tp = cp_model.LinearExpr.Sum(tp_terms)
         fp = cp_model.LinearExpr.Sum(fp_terms)
         baseline = control_views[view]
-        model.add(tp >= baseline["truePositives"])
+        model.add(tp >= baseline["truePositives"] - allowances[view])
         model.add(fp <= baseline["falsePositives"])
         tp_by_view[view] = tp
         fp_by_view[view] = fp
         source_foreground_by_view[view] = len(source_view)
     total_fp = cp_model.LinearExpr.Sum(list(fp_by_view.values()))
-    model.minimize(total_fp)
+    total_tp = cp_model.LinearExpr.Sum(list(tp_by_view.values()))
+    if objective_mode == "min_fp":
+        model.minimize(total_fp)
+    else:
+        model.maximize(total_tp)
     solver = cp_model.CpSolver()
     solver.parameters.max_deterministic_time = deterministic_time_seconds
     solver.parameters.num_search_workers = SOLVER_WORKERS
@@ -116,7 +143,14 @@ def solve_tp_fp_feasibility(
     status = solver.status_name(solver.solve(model))
     if status not in {"OPTIMAL", "FEASIBLE"}:
         return FeasibilityResult(
-            status, deterministic_time_seconds, solver.wall_time, None, None, (), {}
+            status,
+            deterministic_time_seconds,
+            solver.wall_time,
+            None,
+            None,
+            (),
+            {},
+            _deterministic_time_consumed(solver),
         )
     values = {
         view: {
@@ -127,7 +161,10 @@ def solve_tp_fp_feasibility(
         for view in VIEWS
     }
     objective_value = int(round(solver.objective_value))
-    validate_view_metrics(values, source_foreground_by_view, total_fp=objective_value)
+    if objective_mode == "min_fp":
+        validate_view_metrics(values, source_foreground_by_view, total_fp=objective_value)
+    else:
+        validate_view_metrics(values, source_foreground_by_view, total_tp=objective_value)
     return FeasibilityResult(
         status,
         deterministic_time_seconds,
@@ -136,7 +173,52 @@ def solve_tp_fp_feasibility(
         int(round(solver.best_objective_bound)),
         tuple(index for index, variable in enumerate(selected) if solver.boolean_value(variable)),
         values,
+        _deterministic_time_consumed(solver),
     )
+
+
+def _deterministic_time_consumed(solver: cp_model.CpSolver) -> float | None:
+    """Return OR-Tools' measured deterministic time when the installed version exposes it."""
+    value = getattr(solver.response_proto, "deterministic_time", None)
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _validated_selection_ids(
+    selected_ids: Collection[int] | None, candidate_count: int, name: str
+) -> frozenset[int] | None:
+    if selected_ids is None:
+        return None
+    values = tuple(selected_ids)
+    if len(set(values)) != len(values):
+        raise ValueError(f"The {name} contains duplicate indices.")
+    if any(not isinstance(index, int) or isinstance(index, bool) for index in values):
+        raise ValueError(f"The {name} indices must be integers.")
+    if any(index < 0 or index >= candidate_count for index in values):
+        raise ValueError(f"The {name} contains an out-of-range index.")
+    return frozenset(values)
+
+
+def _validated_tp_loss_allowances(
+    allowances: Mapping[str, int] | None, control_views: Mapping[str, Mapping[str, int]]
+) -> dict[str, int]:
+    """Return per-view TP loss allowances without changing the historical default."""
+    if allowances is None:
+        return {view: 0 for view in VIEWS}
+    if set(allowances) != set(VIEWS):
+        raise ValueError("TP-loss allowances must contain exactly the fixed-frame views.")
+    result: dict[str, int] = {}
+    for view in VIEWS:
+        allowance = allowances[view]
+        baseline_tp = control_views[view]["truePositives"]
+        if (
+            not isinstance(allowance, int)
+            or isinstance(allowance, bool)
+            or allowance < 0
+            or allowance > baseline_tp
+        ):
+            raise ValueError(f"Invalid TP-loss allowance for {view}.")
+        result[view] = allowance
+    return result
 
 
 def validate_view_metrics(
@@ -144,6 +226,7 @@ def validate_view_metrics(
     source_foreground_by_view: Mapping[str, int],
     *,
     total_fp: int | None = None,
+    total_tp: int | None = None,
 ) -> None:
     """Reject invalid fixed-frame metrics before they can be reported as evidence."""
     for view in VIEWS:
@@ -177,12 +260,35 @@ def validate_view_metrics(
             raise ValueError(
                 f"Fixed-frame TP/FN accounting does not match source foreground for {view}."
             )
-    if total_fp is not None:
-        if not isinstance(total_fp, int) or isinstance(total_fp, bool) or total_fp < 0:
-            raise ValueError("Aggregate FP must be a nonnegative integer.")
-        extracted_total = sum(views[view]["falsePositives"] for view in VIEWS)
-        if total_fp != extracted_total:
-            raise ValueError("Solver aggregate FP does not equal the per-view FP sum.")
+    _validate_aggregate_metric(
+        views,
+        total_fp,
+        "falsePositives",
+        "FP",
+        "Solver aggregate FP does not equal the per-view FP sum.",
+    )
+    _validate_aggregate_metric(
+        views,
+        total_tp,
+        "truePositives",
+        "TP",
+        "Solver aggregate TP does not equal the per-view TP sum.",
+    )
+
+
+def _validate_aggregate_metric(
+    views: Mapping[str, Mapping[str, int]],
+    expected: int | None,
+    field: str,
+    name: str,
+    mismatch_message: str,
+) -> None:
+    if expected is None:
+        return
+    if not isinstance(expected, int) or isinstance(expected, bool) or expected < 0:
+        raise ValueError(f"Aggregate {name} must be a nonnegative integer.")
+    if expected != sum(views[view][field] for view in VIEWS):
+        raise ValueError(mismatch_message)
 
 
 def classify_result(
