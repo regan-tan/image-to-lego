@@ -39,9 +39,9 @@ The project was developed collaboratively. The following **indicative workstream
 
 | Contributor | Primary focus |
 | --- | --- |
-| **Ing Reiwen** | Frontend experience and integration: React/TypeScript workflows, authentication and project interactions, image-upload UX, 3D/LEGO viewers, build-guide presentation, and frontend validation. |
-| **Regan Tan** | Conversion engine and backend/platform engineering: GLB-to-LEGO algorithms and experiments, FastAPI job orchestration, PostgreSQL/Supabase security, Azure services, deployment workflows, and backend validation. |
-| **Both team members** | Architecture and design decisions, API/frontend integration, troubleshooting, testing, evaluation, documentation, and project demonstration. |
+| **Ing Reiwen** | Frontend and application backend: React/TypeScript user workflows, authentication and project interactions, image-upload UX, 3D/LEGO viewers and build-guide presentation; contributions to FastAPI project/upload/job-status workflows, API request/response integration, and frontend/backend validation. |
+| **Regan Tan** | Conversion and platform backend: GLB-to-LEGO algorithms and controlled experiments, asynchronous job orchestration and workers, PostgreSQL/Supabase security, Azure infrastructure and deployment, reliability controls, and backend/conversion testing. |
+| **Both team members** | System architecture and design decisions, end-to-end frontend/backend integration, troubleshooting, testing, evaluation, documentation, and project demonstration. |
 
 **GitHub attribution note:** Git commit author names do not fully represent the division of work. Due to intermittent issues with Ing Reiwen's GitHub account, she sometimes used Regan Tan's account to contribute code. As a result, some commits attributed to Regan Tan also contain work by Ing Reiwen; commit counts alone should **not** be used to assess individual contributions. The workstream summary above is intended to describe responsibilities rather than assign authorship to every commit.
 
@@ -53,7 +53,7 @@ The project was developed collaboratively. The following **indicative workstream
 4. **Convert the GLB to LEGO.** Select the build detail and algorithm. The conversion worker verifies the source GLB, runs the chosen deterministic converter and persists one canonical LEGO-model JSON artifact.
 5. **Inspect and export.** Compare the original image, reconstructed model and LEGO result; examine grouped part quantities, the build guide and available downloads. The purchase-ready CSV identifies *verified manufactured* part/colour pairs; it does **not** check seller stock or prices.
 
-Generation uses a paid external provider and requires valid credentials, provider capacity and running workers. Queued or failed work must not be described as an instant or guaranteed generation result.
+Generation uses a paid external provider and requires valid credentials, provider capacity and running workers.
 
 ## 3. System architecture
 
@@ -100,7 +100,7 @@ flowchart TB
 | Conversion engine | trimesh, OR-Tools CP-SAT, verified part catalogue | Source-mesh analysis, deterministic bounded part fitting and diagnostics | [`backend/app/conversion/`](backend/app/conversion/) |
 | Cloud and release | Azure Container Apps, App Service, ACI, ACR, Key Vault, Terraform, GitHub Actions | Separated web/API/workers, managed resource access and controlled updates | [`infra/terraform/`](infra/terraform/), [`.github/workflows/`](.github/workflows/) |
 
-For the concise rationale, alternatives and limitations behind these technology choices, see [**Architecture design choices and trade-offs**](docs/architecture/design-choices.md). This document describes the **as-built** system, not earlier deployment plans.
+For the concise rationale, alternatives and limitations behind these technology choices, see [**Architecture design choices and trade-offs**](docs/architecture/design-choices.md).
 
 ### Code organization
 
