@@ -76,7 +76,7 @@ az container create `
   --environment-variables `
     "AZURE_CLIENT_ID=$($conversionIdentity.clientId)" `
     "AZURE_KEY_VAULT_URL=https://$keyVaultName.vault.azure.net/" `
-    "DATABASE_URL_SECRET_NAME=database-url"
+    "DATABASE_URL_SECRET_NAME=conversion-worker-database-url"
 
 az container wait `
   --resource-group $resourceGroup `
@@ -164,7 +164,7 @@ terraform import azurerm_user_assigned_identity.frontend "/subscriptions/<SUBSCR
 
 ## Safe compute lifecycle
 
-An image update is an application release, not a generic Terraform refresh. Before any change, build and verify the backend/frontend images exist in ACR, verify the API has access to its Key Vault reference and managed identity can pull the image, and check Supabase migrations separately. All five migrations, including `20261029000000_worker_job_leases.sql`, are already synchronized; Terraform must not run or repair migrations.
+An image update is an application release, not a generic Terraform refresh. Before any change, build and verify the backend/frontend images exist in ACR, verify the API has access to its Key Vault reference and managed identity can pull the image, and check Supabase migrations separately. Before any migration deployment, use `supabase migration list --linked` to prove the local `20261105130000_dispatcher_login` file matches the version recorded in production. Terraform must not run or repair migrations.
 
 ### Image identity and immutability gate
 

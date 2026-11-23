@@ -27,9 +27,9 @@ resource "azurerm_container_app_job" "outbox_dispatcher" {
     identity = data.azurerm_user_assigned_identity.outbox_dispatcher[0].id
   }
   secret {
-    name                = "database-url"
+    name                = "dispatcher-database-url"
     identity            = data.azurerm_user_assigned_identity.outbox_dispatcher[0].id
-    key_vault_secret_id = "${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.database_url_secret_name}"
+    key_vault_secret_id = "${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.outbox_dispatcher_database_url_secret_name}"
   }
   schedule_trigger_config {
     cron_expression          = var.outbox_dispatcher_schedule
@@ -45,7 +45,7 @@ resource "azurerm_container_app_job" "outbox_dispatcher" {
       command = ["python", "-m", "app.outbox.run", "--max-messages", "20", "--max-runtime-seconds", "45"]
       env {
         name        = "DATABASE_URL"
-        secret_name = "database-url"
+        secret_name = "dispatcher-database-url"
       }
       env {
         name  = "APP_ENV"
@@ -114,7 +114,7 @@ resource "azurerm_linux_web_app" "api" {
     local.common_worker_environment,
     {
       AZURE_CLIENT_ID                = data.azurerm_user_assigned_identity.api.client_id
-      DATABASE_URL                   = "@Microsoft.KeyVault(SecretUri=${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.database_url_secret_name})"
+      DATABASE_URL                   = "@Microsoft.KeyVault(SecretUri=${data.azurerm_key_vault.runtime.vault_uri}secrets/${var.api_database_url_secret_name})"
       JOB_SUBMISSIONS_ENABLED        = tostring(var.job_submissions_enabled)
       WEBSITES_PORT                  = "8000"
       WEBSITE_SKIP_RUNNING_KUDUAGENT = "true"
@@ -160,7 +160,7 @@ resource "azurerm_container_group" "generation_worker" {
     environment_variables = merge(local.common_worker_environment, {
       AZURE_CLIENT_ID          = data.azurerm_user_assigned_identity.generation_worker.client_id
       AZURE_KEY_VAULT_URL      = data.azurerm_key_vault.runtime.vault_uri
-      DATABASE_URL_SECRET_NAME = var.database_url_secret_name
+      DATABASE_URL_SECRET_NAME = var.generation_worker_database_url_secret_name
       FAL_KEY_SECRET_NAME      = var.fal_key_secret_name
     })
   }
@@ -214,7 +214,7 @@ resource "azurerm_container_group" "conversion_worker" {
       AZURE_CLIENT_ID          = data.azurerm_user_assigned_identity.conversion_worker.client_id
       AZURE_KEY_VAULT_URL      = data.azurerm_key_vault.runtime.vault_uri
       AZURE_TOKEN_CREDENTIALS  = "ManagedIdentityCredential"
-      DATABASE_URL_SECRET_NAME = var.database_url_secret_name
+      DATABASE_URL_SECRET_NAME = var.conversion_worker_database_url_secret_name
     })
   }
   lifecycle {

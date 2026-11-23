@@ -14,6 +14,9 @@ class ConversionInitiationRejection(StrEnum):
     WRONG_ARTIFACT_KIND = "wrong_artifact_kind"
     SOURCE_NOT_READY = "source_not_ready"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    INSUFFICIENT_CREDITS = "insufficient_credits"
+    CONCURRENT_LIMIT = "concurrent_limit"
+    ROLLING_LIMIT = "rolling_limit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +56,10 @@ class ConversionRepository(Protocol):
     ) -> AttemptAcquisition: ...
 
     async def is_release_draining(self) -> bool: ...
+
+    async def reconcile_expired_jobs(self) -> int: ...
+
+    async def mark_dead_lettered(self, *, job_id: UUID, owner_id: UUID) -> bool: ...
 
     async def recovery_time(
         self,

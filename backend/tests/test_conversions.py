@@ -443,6 +443,9 @@ async def test_legacy_conversion_rejects_a_hard_cap(
         (ConversionInitiationRejection.WRONG_ARTIFACT_KIND, 422),
         (ConversionInitiationRejection.SOURCE_NOT_READY, 409),
         (ConversionInitiationRejection.IDEMPOTENCY_CONFLICT, 409),
+        (ConversionInitiationRejection.INSUFFICIENT_CREDITS, 402),
+        (ConversionInitiationRejection.CONCURRENT_LIMIT, 429),
+        (ConversionInitiationRejection.ROLLING_LIMIT, 429),
     ],
 )
 async def test_conversion_rejects_other_owner_invalid_or_not_ready_source(

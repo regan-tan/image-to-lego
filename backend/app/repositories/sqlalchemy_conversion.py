@@ -131,6 +131,25 @@ class SqlAlchemyConversionRepository:
                     )
                 return ConversionInitiation(conversion=existing)
 
+            credit_status = await self._session.scalar(
+                text(
+                    """
+                    select public.credit_admit_job(:owner_id, :job_id)
+                    """
+                ),
+                {
+                    "owner_id": owner_id,
+                    "job_id": job_id,
+                },
+            )
+            if credit_status != "admitted":
+                await self._session.execute(
+                    text("delete from public.jobs where id = :job_id"), {"job_id": job_id}
+                )
+                return ConversionInitiation(
+                    rejection=ConversionInitiationRejection(str(credit_status))
+                )
+
             await self._session.execute(
                 text(
                     """
@@ -223,10 +242,26 @@ class SqlAlchemyConversionRepository:
 
     async def is_release_draining(self) -> bool:
         async with self._session.begin():
-            result = await self._session.execute(
-                text("select public.worker_release_is_draining()")
-            )
+            result = await self._session.execute(text("select public.worker_release_is_draining()"))
         return bool(result.scalar_one())
+
+    async def reconcile_expired_jobs(self) -> int:
+        async with self._session.begin():
+            result = await self._session.scalar(
+                text("select public.credit_reconcile_expired_jobs('conversion')")
+            )
+        return int(result)
+
+    async def mark_dead_lettered(self, *, job_id: UUID, owner_id: UUID) -> bool:
+        async with self._session.begin():
+            result = await self._session.scalar(
+                text(
+                    "select public.credit_fail_dead_lettered_job("
+                    ":job_id, :owner_id, 'conversion')"
+                ),
+                {"job_id": job_id, "owner_id": owner_id},
+            )
+        return bool(result)
 
     async def renew_attempt(
         self,
@@ -335,7 +370,13 @@ class SqlAlchemyConversionRepository:
                     "error_message": error_message,
                 },
             )
-        return result.scalar_one_or_none() is not None
+            if result.scalar_one_or_none() is not None:
+                await self._session.execute(
+                    text("select public.credit_refund_failed_job(:job_id, :owner_id)"),
+                    {"job_id": job_id, "owner_id": owner_id},
+                )
+                return True
+        return False
 
     async def finalize_success(
         self,

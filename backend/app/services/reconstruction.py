@@ -69,8 +69,7 @@ class ReconstructionInitiationService:
             raise ApplicationError(
                 code="release_draining",
                 message=(
-                    "Job submissions are temporarily paused for maintenance. "
-                    "Please retry later."
+                    "Job submissions are temporarily paused for maintenance. Please retry later."
                 ),
             )
         if created.rejection is ReconstructionInitiationRejection.WRONG_ARTIFACT_KIND:
@@ -87,6 +86,21 @@ class ReconstructionInitiationService:
             raise ApplicationError(
                 code="idempotency_conflict",
                 message="Idempotency-Key was already used for another reconstruction request.",
+            )
+        if created.rejection is ReconstructionInitiationRejection.INSUFFICIENT_CREDITS:
+            raise ApplicationError(
+                code="insufficient_credits",
+                message="You do not have enough credits for reconstruction.",
+            )
+        if created.rejection is ReconstructionInitiationRejection.CONCURRENT_LIMIT:
+            raise ApplicationError(
+                code="concurrent_limit",
+                message="You already have the maximum number of active reconstruction jobs.",
+            )
+        if created.rejection is ReconstructionInitiationRejection.ROLLING_LIMIT:
+            raise ApplicationError(
+                code="rolling_limit",
+                message="You have reached the reconstruction limit for the last 24 hours.",
             )
         if created.reconstruction is None:
             raise RuntimeError("Reconstruction repository returned no result.")

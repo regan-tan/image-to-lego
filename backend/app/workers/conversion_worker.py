@@ -8,8 +8,9 @@ from typing import TypeVar, cast
 from uuid import UUID, uuid4
 
 from azure.identity.aio import DefaultAzureCredential
+from azure.servicebus import ServiceBusSubQueue
 from azure.servicebus.aio import ServiceBusClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.conversion import (
     BUILDABILITY_ANALYSIS_VERSION,
@@ -578,9 +579,19 @@ async def run_worker(settings: Settings) -> None:
                 if not messages:
                     async with session_factory() as session:
                         repository = SqlAlchemyConversionRepository(session)
+                        reconciled = await repository.reconcile_expired_jobs()
+                        if reconciled:
+                            logger.warning(
+                                "Reconciled %s expired conversion job lease(s).", reconciled
+                            )
                         if await repository.is_release_draining():
                             logger.info("Conversion worker is draining while idle.")
                             return
+                    await _reconcile_dead_letters(
+                        service_bus,
+                        settings.azure_service_bus_queue,
+                        session_factory,
+                    )
                 for message in messages:
                     parsed = _parse_message(message.body)
                     if parsed is None:
@@ -725,6 +736,33 @@ async def run_worker(settings: Settings) -> None:
         await service_bus.close()
         await blob_storage.close()
         await engine.dispose()
+
+
+async def _reconcile_dead_letters(
+    service_bus: ServiceBusClient,
+    queue_name: str,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with service_bus.get_queue_receiver(
+        queue_name=queue_name,
+        sub_queue=ServiceBusSubQueue.DEAD_LETTER,
+        max_wait_time=1,
+    ) as receiver:
+        messages = await receiver.receive_messages(max_message_count=1, max_wait_time=1)
+        for message in messages:
+            parsed = _parse_message(message.body)
+            if parsed is None:
+                await receiver.complete_message(message)
+                continue
+            job_id, owner_id = parsed
+            async with session_factory() as session:
+                changed = await SqlAlchemyConversionRepository(session).mark_dead_lettered(
+                    job_id=job_id,
+                    owner_id=owner_id,
+                )
+            if changed:
+                logger.warning("Marked dead-lettered conversion job %s as failed.", job_id)
+            await receiver.complete_message(message)
 
 
 def _parse_message(body: Iterable[bytes]) -> tuple[UUID, UUID] | None:

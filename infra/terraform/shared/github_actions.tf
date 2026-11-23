@@ -2,7 +2,7 @@
 # separate so a CI credential cannot read application data or runtime secrets.
 resource "azurerm_user_assigned_identity" "github_deployment" {
   name                = "id-image-to-lego-github-deployment-dev"
-  location            = var.resource_group_location
+  location            = var.servicebus_location
   resource_group_name = azurerm_resource_group.dev.name
 
   lifecycle { prevent_destroy = true }
@@ -52,23 +52,7 @@ resource "azurerm_role_assignment" "github_deployment_frontend" {
   lifecycle { prevent_destroy = true }
 }
 
-resource "azurerm_role_assignment" "github_deployment_generation_worker" {
-  scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-generation-dev"
-  role_definition_name = "Azure Container Instances Contributor Role"
-  principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
-
-  lifecycle { prevent_destroy = true }
-}
-
-resource "azurerm_role_assignment" "github_deployment_conversion_worker" {
-  scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-conversion-dev"
-  role_definition_name = "Azure Container Instances Contributor Role"
-  principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
-
-  lifecycle { prevent_destroy = true }
-}
-
-# Recreating an ACI group requires attaching its existing runtime identity. The
+# Updating an ACI group requires attaching its existing runtime identity. The
 # deployment identity can operate only these two identities, not arbitrary ones.
 resource "azurerm_role_assignment" "github_deployment_generation_identity_operator" {
   scope                = azurerm_user_assigned_identity.generation_worker.id
@@ -81,6 +65,25 @@ resource "azurerm_role_assignment" "github_deployment_generation_identity_operat
 resource "azurerm_role_assignment" "github_deployment_conversion_identity_operator" {
   scope                = azurerm_user_assigned_identity.conversion_worker.id
   role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
+
+  lifecycle { prevent_destroy = true }
+}
+
+# ACI updates are limited to the two named worker groups. This provider role
+# complements Managed Identity Operator without granting resource-group
+# contributor access or access to application data and secrets.
+resource "azurerm_role_assignment" "github_deployment_generation_worker" {
+  scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-generation-dev"
+  role_definition_name = "Azure Container Instances Contributor Role"
+  principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
+
+  lifecycle { prevent_destroy = true }
+}
+
+resource "azurerm_role_assignment" "github_deployment_conversion_worker" {
+  scope                = "${azurerm_resource_group.dev.id}/providers/Microsoft.ContainerInstance/containerGroups/aci-image-to-lego-conversion-dev"
+  role_definition_name = "Azure Container Instances Contributor Role"
   principal_id         = azurerm_user_assigned_identity.github_deployment.principal_id
 
   lifecycle { prevent_destroy = true }

@@ -82,6 +82,31 @@ provider submission but before persisting its ID, later delivery treats the runn
 ambiguous: it waits while the claim is fresh and then fails it unconfirmed rather than risking duplicate
 paid work. The design does not claim distributed exactly-once delivery.
 
+## Credit admission
+
+Credit balances and immutable transactions are PostgreSQL records, not browser state. A job
+creation transaction lazily initializes an account once with its protected 10-credit starter balance, locks that
+account, checks per-type active and rolling 24-hour limits, charges the protected policy cost, and writes
+the job ledger entry before the run/outbox intent is committed. The unique charge-per-job key makes
+an idempotent request replay free. Worker terminal transitions to `failed` or `canceled` call the
+same-database refund function; a unique refund-per-job key makes duplicate delivery harmless.
+
+The API exposes only the authenticated owner’s balance and paginated ledger entries at `GET
+/api/v1/credits`. Browser roles have no table access. The application login needs the reviewed
+`image_to_lego_credits_api` role, workers need `image_to_lego_credits_worker`, and manual grants
+are restricted to the separate `image_to_lego_credits_admin` role; these memberships are deployment
+operations, not application endpoints. The API, generation worker, conversion worker, and outbox
+dispatcher use distinct Key Vault database secrets and database logins; the exact cutover and
+least-privilege role matrix are documented in
+[database credential separation](../deployment/database-credential-separation.md).
+
+Ledger entries retain the immutable job ID, project ID, and job type without foreign-keying the job
+row. A completed project may therefore be deleted without losing credit history or rolling-limit
+evidence. Existing workers reconcile expired worker leases and inspect their dead-letter subqueue on
+their idle loop; either terminally fails the eligible job and invokes the same idempotent refund
+function used by normal failure/cancellation paths.
+The required role-grant and safe-release procedure is in [credit system operations](../deployment/credit-system-operations.md).
+
 ## Trust boundaries
 
 Supabase Auth issues browser identities. The SPA uses the Supabase client for email/password and OAuth flows, including browser session persistence and token refresh. FastAPI independently verifies the access token's JWKS signature, issuer, audience, and expiry, and treats the verified `sub` as the current user ID for `GET /api/v1/profile`. Authentication does not differ by sign-in provider. This verification requires Supabase asymmetric signing keys; ES256 is preferred and RS256 is also accepted. All application tables have RLS enabled and intentionally have no permissive browser policies. Production credentials will be supplied at runtime through managed configuration/Key Vault; they must never be embedded in images or frontend bundles.

@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { supabase } from "../lib/supabase";
 import { AccountMenu } from "./AccountMenu";
+import { CreditBadge } from "./CreditBadge";
 import type { AppLayoutContext } from "./appLayoutContext";
 import { HowItWorksDialog } from "./HowItWorksDialog";
 import { LogoMark, PlusIcon } from "./Icons";
@@ -67,17 +68,19 @@ export function AppLayout({ session, onSignedOut }: AppLayoutProps) {
             <Link to="/workspace" className={location.pathname === "/workspace" ? "is-active" : ""} aria-current={location.pathname === "/workspace" ? "page" : undefined}>All projects</Link>
             <button type="button" aria-label="Create a new project" onClick={layoutContext.openNewProject}><PlusIcon size={16} /> New project</button>
           </nav>
-          <AccountMenu
-            email={session.user.email}
-            name={typeof displayName === "string" ? displayName : undefined}
-            onAbout={layoutContext.openHowItWorks}
-            onSignOut={() => {
-              setSignOutError(null);
-              setIsSignOutOpen(true);
-            }}
-          />
         </aside>
-        <main className="page"><Outlet context={layoutContext} /></main>
+        <main className="app-main">
+          <header className="app-topbar">
+            <div className="app-account-controls">
+              <CreditBadge accessToken={session.access_token} userId={session.user.id} />
+              <AccountMenu email={session.user.email} name={typeof displayName === "string" ? displayName : undefined} onAbout={layoutContext.openHowItWorks} onSignOut={() => {
+                setSignOutError(null);
+                setIsSignOutOpen(true);
+              }} />
+            </div>
+          </header>
+          <div className="page"><Outlet context={layoutContext} /></div>
+        </main>
       </div>
       <Dialog isOpen={isSignOutOpen} onClose={() => {
         if (!isSigningOut) setIsSignOutOpen(false);

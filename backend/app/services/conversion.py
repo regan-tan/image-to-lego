@@ -103,8 +103,7 @@ class ConversionInitiationService:
             raise ApplicationError(
                 code="release_draining",
                 message=(
-                    "Job submissions are temporarily paused for maintenance. "
-                    "Please retry later."
+                    "Job submissions are temporarily paused for maintenance. Please retry later."
                 ),
             )
         if created.rejection is ConversionInitiationRejection.WRONG_ARTIFACT_KIND:
@@ -121,6 +120,21 @@ class ConversionInitiationService:
             raise ApplicationError(
                 code="idempotency_conflict",
                 message="Idempotency-Key was already used for another conversion request.",
+            )
+        if created.rejection is ConversionInitiationRejection.INSUFFICIENT_CREDITS:
+            raise ApplicationError(
+                code="insufficient_credits",
+                message="You do not have enough credits for conversion.",
+            )
+        if created.rejection is ConversionInitiationRejection.CONCURRENT_LIMIT:
+            raise ApplicationError(
+                code="concurrent_limit",
+                message="You already have the maximum number of active conversion jobs.",
+            )
+        if created.rejection is ConversionInitiationRejection.ROLLING_LIMIT:
+            raise ApplicationError(
+                code="rolling_limit",
+                message="You have reached the conversion limit for the last 24 hours.",
             )
         if created.conversion is None:
             raise RuntimeError("Conversion repository returned no result.")

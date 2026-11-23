@@ -1,0 +1,101 @@
+name: Prepare credit initial release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Tested full 40-character commit SHA reachable from main.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: prepare-credit-initial-release
+  cancel-in-progress: false
+
+jobs:
+  prepare-images:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      AZURE_ACR_NAME: itl2b70703f
+      AZURE_DEPLOYMENT_CLIENT_ID: ${{ vars.AZURE_DEPLOYMENT_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Check out approved commit
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify immutable release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "release_sha must be a lowercase full commit SHA." >&2; exit 1; }
+          git cat-file -e "$RELEASE_SHA^{commit}"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "release_sha is not reachable from main." >&2; exit 1; }
+          git checkout --detach "$RELEASE_SHA"
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          version: "0.12.18"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Validate backend
+        working-directory: backend
+        run: |
+          uv sync --frozen
+          uv run ruff check .
+          uv run mypy app
+          uv run pytest -q
+      - name: Validate frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run test -- --run
+          npm run build
+      - name: Log in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_DEPLOYMENT_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish or verify immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry_server="$(az acr show --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+          az acr login --name "$AZURE_ACR_NAME"
+          for repository in image-to-lego-backend image-to-lego-frontend; do
+            if az acr repository show --name "$AZURE_ACR_NAME" --image "$repository:$RELEASE_SHA" --only-show-errors >/dev/null 2>&1; then
+              echo "Refusing to reuse $repository:$RELEASE_SHA; a SHA tag alone does not prove image provenance." >&2
+              exit 1
+            elif [[ "$repository" == "image-to-lego-backend" ]]; then
+              docker build --tag "$registry_server/$repository:$RELEASE_SHA" backend
+              docker push "$registry_server/$repository:$RELEASE_SHA"
+            else
+              docker build --file frontend/Dockerfile --tag "$registry_server/$repository:$RELEASE_SHA" .
+              docker push "$registry_server/$repository:$RELEASE_SHA"
+            fi
+            digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "$repository:$RELEASE_SHA" --query digest --output tsv)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid digest for $repository." >&2; exit 1; }
+            echo "$repository@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Record closed-gate handoff
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Credit initial-release images prepared
+          - Commit: \`$RELEASE_SHA\`
+          - The SHA tags were newly built after this workflow's checks; deploy only the recorded image digests.
+          - No App Service, ACI worker, Container App, Key Vault, Service Bus, or database resource was changed.
+          - \`JOB_SUBMISSIONS_ENABLED\` was not read or changed; the separate initial-release procedure must keep it false.
+          EOF

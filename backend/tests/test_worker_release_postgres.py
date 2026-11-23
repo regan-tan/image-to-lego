@@ -19,9 +19,39 @@ MIGRATIONS = (
     "20261103000000_worker_release_drain_status.sql",
     "20261104000000_submission_release_admission.sql",
     "20261105000000_submission_outbox.sql",
+    "20261122000000_security_definer_function_permissions.sql",
+    "20261123000000_credits.sql",
 )
 TEST_DATABASE_NAME = "image_to_lego_test"
 LOCAL_TEST_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+INTERNAL_SECURITY_DEFINER_FUNCTIONS = (
+    "public.worker_release_active_attempt_count()",
+    "public.worker_release_try_acquire_attempt(uuid,uuid,text,uuid,integer)",
+    "public.worker_release_begin(uuid,uuid,integer)",
+    "public.worker_release_transition(uuid,uuid,bigint,text,text)",
+    "public.worker_release_recover(uuid,integer,text)",
+    "public.worker_release_heartbeat(uuid,uuid,bigint,integer)",
+    "public.worker_release_is_draining()",
+    "public.worker_release_admit_submission()",
+    "public.submission_outbox_create(uuid,uuid,integer)",
+    "public.submission_outbox_claim(uuid,integer)",
+    "public.submission_outbox_begin_send(uuid,uuid,bigint)",
+    "public.submission_outbox_record_delivered(uuid,uuid,bigint)",
+    "public.submission_outbox_record_known_failure(uuid,uuid,bigint,text,text,timestamptz)",
+    "public.submission_outbox_record_uncertain(uuid,uuid,bigint,text)",
+    "public.submission_outbox_release_unstarted_claim(uuid,uuid,bigint)",
+    "public.submission_outbox_mark_expired_sends_attention()",
+    "public.submission_outbox_publication_counts()",
+)
+
+PRIVATE_CAPABILITY_ROLES = (
+    "image_to_lego_submission",
+    "image_to_lego_worker",
+    "image_to_lego_outbox_dispatcher",
+    "github_release_gate",
+    "github_release_coordinator",
+)
 
 
 def _read_migration_sql(path: Path) -> str:
@@ -53,19 +83,29 @@ async def postgres_database() -> str:
     connection = await asyncpg.connect(database_url)
     with suppress(asyncpg.exceptions.DuplicateObjectError):
         await connection.execute("create role authenticated nologin")
+    with suppress(asyncpg.exceptions.DuplicateObjectError):
+        await connection.execute("create role anon nologin")
+    with suppress(asyncpg.exceptions.DuplicateObjectError):
+        await connection.execute("create role service_role nologin")
     await connection.execute(
         """
         drop schema public cascade;
         create schema public;
+        create schema if not exists auth;
+        create table if not exists auth.users (id uuid primary key);
         create extension if not exists pgcrypto;
         create table public.projects (id uuid primary key, owner_id uuid not null);
         create table public.jobs (
             id uuid primary key,
-            project_id uuid not null references public.projects(id),
+            project_id uuid not null references public.projects(id) on delete cascade,
             type text not null,
             status text not null,
             idempotency_key text,
             provider_job_id text,
+            error_code text,
+            error_message text,
+            created_at timestamptz not null default statement_timestamp(),
+            updated_at timestamptz not null default statement_timestamp(),
             unique (project_id, type, idempotency_key)
         );
         create function public.set_updated_at()
@@ -82,7 +122,25 @@ async def postgres_database() -> str:
     )
     migration_directory = Path(__file__).parents[2] / "supabase" / "migrations"
     for migration in MIGRATIONS:
+        if migration == "20261122000000_security_definer_function_permissions.sql":
+            # Reproduce the audited production exposure before applying the
+            # remediation, including a direct service_role grant.
+            for function_signature in INTERNAL_SECURITY_DEFINER_FUNCTIONS:
+                await connection.execute(
+                    f"grant execute on function {function_signature} "
+                    "to anon, authenticated, service_role"
+                )
         await connection.execute(_read_migration_sql(migration_directory / migration))
+    await connection.execute(
+        """
+        drop role if exists credit_test_api_login;
+        drop role if exists credit_test_worker_login;
+        create role credit_test_api_login login inherit password 'local-credit-test-password';
+        create role credit_test_worker_login login inherit password 'local-credit-test-password';
+        grant image_to_lego_credits_api to credit_test_api_login;
+        grant image_to_lego_credits_worker to credit_test_worker_login;
+        """
+    )
     yield database_url
     await connection.close()
 
@@ -92,7 +150,8 @@ async def database(postgres_database: str) -> str:
     connection = await asyncpg.connect(postgres_database)
     await connection.execute(
         """
-        truncate public.submission_outbox, public.jobs, public.projects,
+        truncate public.credit_transactions, public.credit_accounts,
+                 public.submission_outbox, public.jobs, public.projects,
                  public.worker_release_audit;
         insert into public.worker_release_state (singleton, state)
         values (true, 'open')
@@ -104,6 +163,337 @@ async def database(postgres_database: str) -> str:
     )
     await connection.close()
     return postgres_database
+
+
+async def _create_credit_job(database_url: str, job_type: str) -> tuple[UUID, UUID, UUID]:
+    owner_id, project_id, job_id = uuid4(), uuid4(), uuid4()
+    connection = await asyncpg.connect(database_url)
+    try:
+        await connection.execute("insert into auth.users (id) values ($1)", owner_id)
+        await connection.execute(
+            "insert into public.projects (id, owner_id) values ($1, $2)", project_id, owner_id
+        )
+        await connection.execute(
+            """
+            insert into public.jobs (id, project_id, type, status, idempotency_key)
+            values ($1, $2, $3, 'queued', $4)
+            """,
+            job_id,
+            project_id,
+            job_type,
+            str(uuid4()),
+        )
+    finally:
+        await connection.close()
+    return owner_id, project_id, job_id
+
+
+@pytest.mark.asyncio
+async def test_credit_grant_admission_refund_and_project_deletion_keep_history(
+    database: str,
+) -> None:
+    owner_id, project_id, job_id = await _create_credit_job(database, "reconstruction")
+    connection = await asyncpg.connect(database)
+    try:
+        assert await connection.fetchval("select public.credit_admin_grant($1, 3)", owner_id) == 13
+        assert (
+            await connection.fetchval("select public.credit_admit_job($1, $2)", owner_id, job_id)
+            == "admitted"
+        )
+        await connection.execute("update public.jobs set status = 'failed' where id = $1", job_id)
+        assert await connection.fetchval(
+            "select public.credit_refund_failed_job($1, $2)", job_id, owner_id
+        ) is True
+        await connection.execute("delete from public.projects where id = $1", project_id)
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions where job_id = $1", job_id
+        ) == 2
+        assert await connection.fetchval(
+            "select balance from public.credit_accounts where owner_id = $1", owner_id
+        ) == 13
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_policy_prevents_parallel_overcharging(database: str) -> None:
+    owner_id, _, first_job = await _create_credit_job(database, "reconstruction")
+    _, second_project, second_job = await _create_credit_job(database, "reconstruction")
+    connection = await asyncpg.connect(database)
+    second_connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "update public.projects set owner_id = $1 where id = $2", owner_id, second_project
+        )
+        first, second = await asyncio.gather(
+            connection.fetchval("select public.credit_admit_job($1, $2)", owner_id, first_job),
+            second_connection.fetchval(
+                "select public.credit_admit_job($1, $2)", owner_id, second_job
+            ),
+        )
+        assert first == second == "admitted"
+        assert await connection.fetchval(
+            "select balance from public.credit_accounts where owner_id = $1", owner_id
+        ) == 6
+    finally:
+        await connection.close()
+        await second_connection.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_account_grant_is_exactly_once_under_concurrent_access(database: str) -> None:
+    owner_id = uuid4()
+    setup = await asyncpg.connect(database)
+    first = await asyncpg.connect(database)
+    second = await asyncpg.connect(database)
+    try:
+        await setup.execute("insert into auth.users (id) values ($1)", owner_id)
+        balances = await asyncio.gather(
+            first.fetchval("select public.credit_ensure_account($1)", owner_id),
+            second.fetchval("select public.credit_ensure_account($1)", owner_id),
+        )
+        assert balances == [10, 10]
+        assert await setup.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where owner_id = $1 and kind = 'starter_grant'",
+            owner_id,
+        ) == 1
+    finally:
+        await setup.close()
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_admission_charges_each_job_type_once_and_is_idempotent(database: str) -> None:
+    owner_id, _, reconstruction_job = await _create_credit_job(database, "reconstruction")
+    _, conversion_project, conversion_job = await _create_credit_job(database, "conversion")
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "update public.projects set owner_id = $1 where id = $2", owner_id, conversion_project
+        )
+        assert await connection.fetchval(
+            "select public.credit_admit_job($1, $2)", owner_id, reconstruction_job
+        ) == "admitted"
+        assert await connection.fetchval(
+            "select public.credit_admit_job($1, $2)", owner_id, reconstruction_job
+        ) == "admitted"
+        assert await connection.fetchval(
+            "select public.credit_admit_job($1, $2)", owner_id, conversion_job
+        ) == "admitted"
+        assert await connection.fetchval(
+            "select balance from public.credit_accounts where owner_id = $1", owner_id
+        ) == 7
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where owner_id = $1 and kind = 'job_charge' and job_type = 'reconstruction'",
+            owner_id,
+        ) == 1
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where owner_id = $1 and kind = 'job_charge' and job_type = 'conversion'",
+            owner_id,
+        ) == 1
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_charge_rolls_back_with_failed_run_or_outbox_creation(database: str) -> None:
+    owner_id, _, job_id = await _create_credit_job(database, "reconstruction")
+    connection = await asyncpg.connect(database)
+    try:
+        transaction = connection.transaction()
+        await transaction.start()
+        try:
+            assert await connection.fetchval(
+                "select public.credit_admit_job($1, $2)", owner_id, job_id
+            ) == "admitted"
+            # The outbox function rejects this invalid schema version.  It
+            # stands in for any later run/outbox failure in the repository
+            # transaction and must roll back the preceding charge as well.
+            await connection.fetchval(
+                "select public.submission_outbox_create($1, $2, 0)", job_id, owner_id
+            )
+        except asyncpg.PostgresError:
+            await transaction.rollback()
+        else:
+            raise AssertionError("invalid outbox creation unexpectedly succeeded")
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions where job_id = $1", job_id
+        ) == 0
+        assert await connection.fetchval(
+            "select count(*) from public.credit_accounts where owner_id = $1", owner_id
+        ) == 0
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_refund_is_exactly_once_for_concurrent_duplicate_delivery(
+    database: str,
+) -> None:
+    owner_id, _, job_id = await _create_credit_job(database, "reconstruction")
+    setup = await asyncpg.connect(database)
+    first = await asyncpg.connect(database)
+    second = await asyncpg.connect(database)
+    try:
+        assert (
+            await setup.fetchval("select public.credit_admit_job($1, $2)", owner_id, job_id)
+            == "admitted"
+        )
+        await setup.execute("update public.jobs set status = 'failed' where id = $1", job_id)
+        results = await asyncio.gather(
+            first.fetchval("select public.credit_refund_failed_job($1, $2)", job_id, owner_id),
+            second.fetchval("select public.credit_refund_failed_job($1, $2)", job_id, owner_id),
+        )
+        assert sorted(results) == [False, True]
+        assert await setup.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where job_id = $1 and kind = 'job_refund'",
+            job_id,
+        ) == 1
+        assert await setup.fetchval(
+            "select balance from public.credit_accounts where owner_id = $1", owner_id
+        ) == 10
+    finally:
+        await setup.close()
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_reconciles_expired_leases_and_dead_letters_once(database: str) -> None:
+    owner_id, _, expired_job = await _create_credit_job(database, "reconstruction")
+    _, conversion_project, dead_letter_job = await _create_credit_job(database, "conversion")
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "update public.projects set owner_id = $1 where id = $2", owner_id, conversion_project
+        )
+        for job_id in (expired_job, dead_letter_job):
+            assert await connection.fetchval(
+                "select public.credit_admit_job($1, $2)", owner_id, job_id
+            ) == "admitted"
+        await connection.execute(
+            "update public.jobs set worker_attempt_id = $2, "
+            "worker_lease_expires_at = now() - interval '1 second' where id = $1",
+            expired_job,
+            uuid4(),
+        )
+        assert await connection.fetchval(
+            "select public.credit_reconcile_expired_jobs('reconstruction')"
+        ) == 1
+        assert await connection.fetchval(
+            "select public.credit_fail_dead_lettered_job($1, $2, 'conversion')",
+            dead_letter_job,
+            owner_id,
+        ) is True
+        assert await connection.fetchval(
+            "select public.credit_fail_dead_lettered_job($1, $2, 'conversion')",
+            dead_letter_job,
+            owner_id,
+        ) is False
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where owner_id = $1 and kind = 'job_refund'",
+            owner_id,
+        ) == 2
+        assert await connection.fetchval(
+            "select balance from public.credit_accounts where owner_id = $1", owner_id
+        ) == 10
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_credit_policy_allows_at_most_two_active_jobs_per_type(database: str) -> None:
+    owner_id, _, first_job = await _create_credit_job(database, "reconstruction")
+    _, second_project, second_job = await _create_credit_job(database, "reconstruction")
+    connection = await asyncpg.connect(database)
+    try:
+        await connection.execute(
+            "update public.projects set owner_id = $1 where id = $2",
+            owner_id,
+            second_project,
+        )
+        assert (
+            await connection.fetchval("select public.credit_admit_job($1, $2)", owner_id, first_job)
+            == "admitted"
+        )
+        assert (
+            await connection.fetchval(
+                "select public.credit_admit_job($1, $2)", owner_id, second_job
+            )
+            == "admitted"
+        )
+        _, third_project, third_job = await _create_credit_job(database, "reconstruction")
+        await connection.execute(
+            "update public.projects set owner_id = $1 where id = $2", owner_id, third_project
+        )
+        assert (
+            await connection.fetchval("select public.credit_admit_job($1, $2)", owner_id, third_job)
+            == "concurrent_limit"
+        )
+        assert await connection.fetchval(
+            "select count(*) from public.credit_transactions "
+            "where owner_id = $1 and kind = 'job_charge'", owner_id
+        ) == 2
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_restricted_credit_roles_and_browser_access_boundaries(database: str) -> None:
+    owner_id, _, job_id = await _create_credit_job(database, "reconstruction")
+    other_owner_id = uuid4()
+    admin = await asyncpg.connect(database)
+    api = await asyncpg.connect(
+        database, user="credit_test_api_login", password="local-credit-test-password"
+    )
+    worker = await asyncpg.connect(
+        database, user="credit_test_worker_login", password="local-credit-test-password"
+    )
+    browser = await asyncpg.connect(database)
+    try:
+        await admin.execute("insert into auth.users (id) values ($1)", other_owner_id)
+        assert await api.fetchval("select public.credit_ensure_account($1)", owner_id) == 10
+        assert await api.fetchval("select public.credit_ensure_account($1)", other_owner_id) == 10
+        assert (
+            await api.fetchval("select public.credit_admit_job($1, $2)", owner_id, job_id)
+            == "admitted"
+        )
+        await api.execute("select set_config('app.current_user_id', $1, false)", str(owner_id))
+        assert await api.fetchval("select balance from public.credit_accounts") == 8
+        assert await api.fetchval("select count(*) from public.credit_accounts") == 1
+        await api.execute(
+            "select set_config('app.current_user_id', $1, false)", str(other_owner_id)
+        )
+        assert await api.fetchval("select balance from public.credit_accounts") == 10
+        assert await api.fetchval("select count(*) from public.credit_accounts") == 1
+        await admin.execute("update public.jobs set status = 'failed' where id = $1", job_id)
+        assert await worker.fetchval(
+            "select public.credit_refund_failed_job($1, $2)", job_id, owner_id
+        ) is True
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await worker.fetchval("select balance from public.credit_accounts")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await worker.fetchval("select public.credit_admit_job($1, $2)", owner_id, job_id)
+        await browser.execute("set role authenticated")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await browser.fetchval("select balance from public.credit_accounts")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await browser.fetchval("select public.credit_ensure_account($1)", owner_id)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await browser.fetchval(
+                "select public.credit_refund_failed_job($1, $2)", job_id, owner_id
+            )
+    finally:
+        await admin.close()
+        await api.close()
+        await worker.close()
+        await browser.close()
 
 
 async def _create_job(database_url: str, job_type: str = "reconstruction") -> tuple[UUID, UUID]:
@@ -207,6 +597,33 @@ def test_read_migration_sql_accepts_utf8_with_and_without_bom() -> None:
 
     assert _read_migration_sql(bom_prefixed).startswith("-- Worker lease tracking")
     assert _read_migration_sql(normal).startswith("-- Durable worker release coordination")
+
+
+def test_security_definer_permission_migration_precedes_credits() -> None:
+    assert MIGRATIONS.index("20261122000000_security_definer_function_permissions.sql") == (
+        MIGRATIONS.index("20261123000000_credits.sql") - 1
+    )
+
+
+def test_security_definer_permission_migration_revokes_every_audited_signature() -> None:
+    migration_directory = Path(__file__).parents[2] / "supabase" / "migrations"
+    content = _read_migration_sql(
+        migration_directory / "20261122000000_security_definer_function_permissions.sql"
+    )
+    compact_content = "".join(content.split())
+    for function_signature in INTERNAL_SECURITY_DEFINER_FUNCTIONS:
+        expected_revoke = (
+            f"REVOKE EXECUTE ON FUNCTION {function_signature} "
+            "FROM PUBLIC, anon, authenticated, service_role;"
+        )
+        assert "".join(expected_revoke.split()) in compact_content
+
+    assert "ALTER DEFAULT PRIVILEGES" not in content
+    assert (
+        "REVOKEimage_to_lego_submission,image_to_lego_worker,"
+        "image_to_lego_outbox_dispatcher,github_release_gate,github_release_coordinator"
+        "FROManon,authenticated,service_role;"
+    ) in compact_content
 
 
 @pytest.mark.parametrize(
@@ -711,6 +1128,90 @@ async def test_authenticated_role_cannot_read_or_dispatch_outbox(database: str) 
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await _claim_outbox(connection, uuid4())
         await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_untrusted_roles_cannot_execute_internal_security_definer_functions(
+    database: str,
+) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        for browser_role in ("anon", "authenticated", "service_role"):
+            for function_signature in INTERNAL_SECURITY_DEFINER_FUNCTIONS:
+                assert not await connection.fetchval(
+                    "select has_function_privilege($1, $2::regprocedure, 'execute')",
+                    browser_role,
+                    function_signature,
+                )
+
+        await connection.execute("set role authenticated")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await connection.fetchval("select public.worker_release_admit_submission()")
+        await connection.execute("reset role")
+        await connection.execute("set role service_role")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await connection.fetchval("select public.worker_release_admit_submission()")
+        await connection.execute("reset role")
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_untrusted_roles_do_not_inherit_private_capability_roles(database: str) -> None:
+    connection = await asyncpg.connect(database)
+    try:
+        for browser_role in ("anon", "authenticated", "service_role"):
+            for capability_role in PRIVATE_CAPABILITY_ROLES:
+                assert not await connection.fetchval(
+                    "select pg_has_role($1, $2, 'member')",
+                    browser_role,
+                    capability_role,
+                )
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_private_capability_roles_keep_their_intended_function_access(database: str) -> None:
+    expected_grants = {
+        "image_to_lego_submission": (
+            "public.worker_release_admit_submission()",
+            "public.submission_outbox_create(uuid,uuid,integer)",
+        ),
+        "image_to_lego_worker": (
+            "public.worker_release_try_acquire_attempt(uuid,uuid,text,uuid,integer)",
+            "public.worker_release_is_draining()",
+        ),
+        "image_to_lego_outbox_dispatcher": (
+            "public.submission_outbox_claim(uuid,integer)",
+            "public.submission_outbox_begin_send(uuid,uuid,bigint)",
+            "public.submission_outbox_record_delivered(uuid,uuid,bigint)",
+            "public.submission_outbox_record_known_failure(uuid,uuid,bigint,text,text,timestamptz)",
+            "public.submission_outbox_record_uncertain(uuid,uuid,bigint,text)",
+            "public.submission_outbox_release_unstarted_claim(uuid,uuid,bigint)",
+            "public.submission_outbox_mark_expired_sends_attention()",
+            "public.submission_outbox_publication_counts()",
+        ),
+        "github_release_gate": ("public.worker_release_active_attempt_count()",),
+        "github_release_coordinator": (
+            "public.worker_release_begin(uuid,uuid,integer)",
+            "public.worker_release_transition(uuid,uuid,bigint,text,text)",
+            "public.worker_release_recover(uuid,integer,text)",
+            "public.worker_release_heartbeat(uuid,uuid,bigint,integer)",
+            "public.submission_outbox_publication_counts()",
+        ),
+    }
+    connection = await asyncpg.connect(database)
+    try:
+        for role, function_signatures in expected_grants.items():
+            for function_signature in function_signatures:
+                assert await connection.fetchval(
+                    "select has_function_privilege($1, $2::regprocedure, 'execute')",
+                    role,
+                    function_signature,
+                )
     finally:
         await connection.close()
 

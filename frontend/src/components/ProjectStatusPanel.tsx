@@ -6,6 +6,7 @@ import { getArtifactReadUrl, getJob, getLegoModel, startConversion, startReconst
 import { startBrowserDownload } from "../browserDownload";
 import { conversionPollInterval } from "../conversionPolling";
 import { projectQueryKey, projectsQueryKey } from "../hooks/useProjects";
+import { creditsQueryKey } from "../hooks/useCredits";
 import { useArtifactReadUrl } from "../hooks/useArtifactReadUrl";
 import {
   BUILD_COMPLEXITY_PRESETS,
@@ -102,6 +103,7 @@ export function ProjectStatusPanel({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: projectQueryKey(userId, project.id) }),
       queryClient.invalidateQueries({ queryKey: projectsQueryKey(userId) }),
+      queryClient.invalidateQueries({ queryKey: creditsQueryKey(userId) }),
     ]);
   }
 
@@ -130,6 +132,11 @@ export function ProjectStatusPanel({
   useEffect(() => {
     onConversionStatusChange(activeConversion?.status ?? null);
   }, [activeConversion?.status, onConversionStatusChange]);
+  useEffect(() => {
+    if (activeConversion?.status === "failed" || activeConversion?.status === "canceled") {
+      void queryClient.invalidateQueries({ queryKey: creditsQueryKey(userId) });
+    }
+  }, [activeConversion?.status, queryClient, userId]);
   const conversion = useMutation({
     mutationFn: ({ sourceArtifactId, targetParts, maxParts, algorithmVersion, upAxis, idempotencyKey }: ConversionAttempt) => startConversion(
       accessToken,
@@ -143,7 +150,10 @@ export function ProjectStatusPanel({
       },
       idempotencyKey,
     ),
-    onSuccess: setConversionJob,
+    onSuccess: async (job) => {
+      setConversionJob(job);
+      await queryClient.invalidateQueries({ queryKey: creditsQueryKey(userId) });
+    },
   });
 
   const legoResult = activeConversion?.status === "succeeded" && activeConversion.outputArtifactId ? (

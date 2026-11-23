@@ -415,6 +415,9 @@ async def test_reconstruction_submission_pause_rejects_before_creating_a_job() -
         (ReconstructionInitiationRejection.WRONG_ARTIFACT_KIND, 422),
         (ReconstructionInitiationRejection.SOURCE_NOT_READY, 409),
         (ReconstructionInitiationRejection.IDEMPOTENCY_CONFLICT, 409),
+        (ReconstructionInitiationRejection.INSUFFICIENT_CREDITS, 402),
+        (ReconstructionInitiationRejection.CONCURRENT_LIMIT, 429),
+        (ReconstructionInitiationRejection.ROLLING_LIMIT, 429),
     ],
 )
 async def test_reconstruction_maps_safe_validation_errors(

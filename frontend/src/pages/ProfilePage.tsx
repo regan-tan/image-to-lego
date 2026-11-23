@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAppLayout } from "../components/appLayoutContext";
 import { ArrowLeftIcon } from "../components/Icons";
 import { useProfile } from "../hooks/useProfile";
+import { useCredits } from "../hooks/useCredits";
 import { supabase } from "../lib/supabase";
 import type { ProfileResponse } from "../schemas/profile";
 
@@ -13,6 +14,7 @@ const MAX_DISPLAY_NAME_LENGTH = 80;
 export function ProfilePage() {
   const { session } = useAppLayout();
   const profile = useProfile(session.access_token, session.user.id);
+  const credits = useCredits(session.access_token, session.user.id);
   const queryClient = useQueryClient();
   const [draftName, setDraftName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -63,6 +65,12 @@ export function ProfilePage() {
         <h1>Profile</h1>
         <p>Your personal details, all in one place.</p>
       </header>
+      <section aria-label="Credits" className="profile-credits">
+        <h2>Credits</h2>
+        {credits.isPending ? <p className="status status--pending" role="status">Loading credits…</p> : null}
+        {credits.isError ? <p className="form-error" role="status">We could not load your credits.</p> : null}
+        {credits.data ? <><p><strong>{credits.data.balance}</strong> credits remaining</p><p>Reconstruction costs {credits.data.reconstructionCost} credits; LEGO conversion costs {credits.data.conversionCost} credit.</p><h3>Recent activity</h3><ul>{credits.data.transactions.map((transaction) => <li key={transaction.id}>{transaction.kind.replaceAll("_", " ")}: {transaction.amount > 0 ? "+" : ""}{transaction.amount}</li>)}</ul></> : null}
+      </section>
       <section aria-label="Account details">
         {profile.isPending ? <p className="status status--pending" role="status">Loading your profile…</p> : null}
         {profile.isError ? (
