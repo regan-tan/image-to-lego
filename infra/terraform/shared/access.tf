@@ -138,19 +138,48 @@ resource "azurerm_role_assignment" "outbox_dispatcher_conversion_sender" {
   principal_id         = azurerm_user_assigned_identity.outbox_dispatcher[0].principal_id
 }
 resource "azurerm_role_assignment" "api_key_vault_secrets" {
+  # Retain the legacy vault-wide grant through the credential cutover. A later,
+  # separately reviewed change may remove it only after every runtime is proven
+  # to use its dedicated secret.
   scope                = azurerm_key_vault.runtime.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.api.principal_id
   lifecycle { prevent_destroy = true }
 }
 resource "azurerm_role_assignment" "generation_key_vault_secrets" {
+  # See api_key_vault_secrets: preserve rollback access during cutover.
   scope                = azurerm_key_vault.runtime.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.generation_worker.principal_id
   lifecycle { prevent_destroy = true }
 }
 resource "azurerm_role_assignment" "conversion_key_vault_secrets" {
+  # See api_key_vault_secrets: preserve rollback access during cutover.
   scope                = azurerm_key_vault.runtime.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.conversion_worker.principal_id
+  lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "api_database_secret" {
+  scope                = "${azurerm_key_vault.runtime.id}/secrets/${var.api_database_url_secret_name}"
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.api.principal_id
+  lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "generation_worker_database_secret" {
+  scope                = "${azurerm_key_vault.runtime.id}/secrets/${var.generation_worker_database_url_secret_name}"
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.generation_worker.principal_id
+  lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "generation_worker_fal_secret" {
+  scope                = "${azurerm_key_vault.runtime.id}/secrets/${var.fal_key_secret_name}"
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.generation_worker.principal_id
+  lifecycle { prevent_destroy = true }
+}
+resource "azurerm_role_assignment" "conversion_worker_database_secret" {
+  scope                = "${azurerm_key_vault.runtime.id}/secrets/${var.conversion_worker_database_url_secret_name}"
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.conversion_worker.principal_id
   lifecycle { prevent_destroy = true }

@@ -39,7 +39,31 @@ variable "outbox_dispatcher_enabled" {
 variable "outbox_dispatcher_database_url_secret_name" {
   description = "Existing Key Vault database connection secret the dispatcher may read."
   type        = string
-  default     = "database-url"
+  default     = "dispatcher-database-url"
+}
+
+variable "api_database_url_secret_name" {
+  description = "Key Vault secret containing only the API database login URL."
+  type        = string
+  default     = "api-database-url"
+}
+
+variable "generation_worker_database_url_secret_name" {
+  description = "Key Vault secret containing only the generation worker database login URL."
+  type        = string
+  default     = "generation-worker-database-url"
+}
+
+variable "conversion_worker_database_url_secret_name" {
+  description = "Key Vault secret containing only the conversion worker database login URL."
+  type        = string
+  default     = "conversion-worker-database-url"
+}
+
+variable "fal_key_secret_name" {
+  description = "Key Vault secret containing the generation worker fal.ai key."
+  type        = string
+  default     = "fal-key"
 }
 
 variable "github_oidc_subject" {

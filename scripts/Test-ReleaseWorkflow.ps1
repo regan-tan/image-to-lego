@@ -20,7 +20,7 @@ $requiredFragments = @(
     "group: azure-development-deployment",
     "cancel-in-progress: false",
     "Could not pause new job submissions.",
-    "Deployment completed but could not re-enable job submissions.",
+    "Deployment must leave job submissions disabled.",
     "ACI_WORKER_RELEASES_ENABLED",
     "AZURE_COMPUTE_DEPLOYMENTS_ENABLED",
     'AZURE_DEPLOYMENTS_ENABLED: ${{ vars.AZURE_DEPLOYMENTS_ENABLED }}',
@@ -36,8 +36,7 @@ $requiredFragments = @(
     "does not match the reviewed bootstrap contract",
     "secureEnvironmentVariables[].name",
     "has no recoverable immutable backend image",
-    "stop_and_recreate",
-    "az container stop",
+    "update_in_place",
     "az acr repository show",
     "bootstrap-898adc56df2e",
     "09df7acff2a193c94af7c67a8657da9bd87d2aaa",
@@ -55,6 +54,13 @@ foreach ($fragment in $requiredFragments) {
     if (-not $workflow.Contains($fragment)) {
         throw "Release workflow is missing required safety control: $fragment"
     }
+}
+
+if (-not $workflow.Contains("false &&")) {
+    throw "The ordinary CI deployment job must be disabled until a separately reviewed release mechanism is approved."
+}
+if ($workflow.Contains("JOB_SUBMISSIONS_ENABLED=true")) {
+    throw "The ordinary CI workflow must never reopen job submissions."
 }
 
 if ($workflow.Contains("az role assignment list --all --include-inherited --scope")) {
@@ -148,8 +154,20 @@ if ($aciCreationLines.Count -ne 2) {
     throw "Expected one Azure Container Instances create command per worker."
 }
 foreach ($command in $aciCreationLines) {
-    if ($command.Value -match '--ip-address\s+' -or $command.Value -notmatch '--location malaysiawest') {
-        throw "ACI workers must be created in the original Malaysia West region without an inbound IP argument."
+    foreach ($requiredArgument in @(
+        '--cpu 1', '--memory 2', '--restart-policy Never', '--location malaysiawest',
+        '--assign-identity', '--acr-identity', '--registry-login-server',
+        '"APP_ENV=production"', '"AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net"',
+        '"AZURE_STORAGE_CONTAINER=artifacts"', '"AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net"',
+        '"AZURE_SERVICE_BUS_QUEUE=conversion"', '"AZURE_SERVICE_BUS_GENERATION_QUEUE=generation"',
+        '"AZURE_CLIENT_ID=$'
+    )) {
+        if ($command.Value -notlike "*$requiredArgument*") {
+            throw "ACI update must explicitly preserve its reviewed configuration: $requiredArgument"
+        }
+    }
+    if ($command.Value -match '--ip-address\s+') {
+        throw "ACI workers must not receive an inbound IP argument."
     }
 }
 if ($aciCreationLines[0].Value -notlike '*--command-line "python -m app.workers.aci_bootstrap generation"*' -or
@@ -157,21 +175,20 @@ if ($aciCreationLines[0].Value -notlike '*--command-line "python -m app.workers.
     throw "ACI bootstrap commands must be quoted as one argument to Azure CLI."
 }
 
-# Release must not recreate a just-deleted ACI group until the resource
-# really disappears; otherwise Azure identity operations can fail with 404.
+# Worker replacement is an in-place ARM PUT so the resource-scoped ACI RBAC
+# assignment remains continuously applicable. A delete/recreate cycle would
+# require a wider parent scope or a new role assignment before recreation.
 foreach ($required in @(
-    'delete_worker_and_wait() {',
-    'az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name"',
-    'elif [[ "$response" == *"ResourceNotFound"* ]]; then',
-    'if (( absent_checks >= 3 )); then',
-    'delete_worker_and_wait "$AZURE_GENERATION_WORKER_NAME"',
-    'delete_worker_and_wait "$AZURE_CONVERSION_WORKER_NAME"',
+    'Use ARM''s PUT update through `az container create`; do not delete a',
     'verify_new_worker_image "$AZURE_GENERATION_WORKER_NAME"',
     'verify_new_worker_image "$AZURE_CONVERSION_WORKER_NAME"'
 )) {
     if (-not $workflow.Contains($required)) {
-        throw "ACI replacement must wait for full deletion and verify the new image: $required"
+        throw "ACI replacement must preserve the resource and verify the new image: $required"
     }
+}
+if ($workflow -match 'az container (delete|stop)') {
+    throw "Worker replacement must not stop or delete a resource before an in-place update."
 }
 $aciCreationLines = [regex]::Matches($workflow, '(?m)^\s+az container create[^\r\n]*')
 if ($aciCreationLines.Count -ne 2) {
@@ -179,16 +196,20 @@ if ($aciCreationLines.Count -ne 2) {
 }
 foreach ($command in $aciCreationLines) {
     if ($command.Value -notlike '*"APP_ENV=production"*') {
-        throw "ACI worker recreation must retain the verified production app environment."
+        throw "ACI worker update must retain the verified production app environment."
     }
 }
 
-if ($workflow -match 'az container stop[^\r\n]*--no-wait') {
-    throw "ACI worker stop must wait for Azure CLI before stopped-state polling."
-}
-
-if ($workflow -notmatch '(?s)az container stop --resource-group "\$AZURE_RESOURCE_GROUP" --name "\$worker_name"\s+for attempt in \{1\.\.30\}') {
-    throw "ACI worker stop must retain the stopped-state polling loop."
+foreach ($required in @(
+    '[[ "$action" == "update_in_place" ]]',
+    'DATABASE_URL_SECRET_NAME=generation-worker-database-url',
+    'DATABASE_URL_SECRET_NAME=conversion-worker-database-url',
+    '"FAL_KEY_SECRET_NAME=fal-key"',
+    '"AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential"'
+)) {
+    if (-not $workflow.Contains($required)) {
+        throw "ACI in-place update is missing required credential or state guard: $required"
+    }
 }
 
 $deployJobMatch = [regex]::Match(
@@ -239,27 +260,9 @@ function Test-DeploymentEligibility {
         [string]$ReleaseSafetyResult
     )
 
-    if ($EventName -notin @("push", "workflow_dispatch") -or $Ref -ne "refs/heads/main") {
-        return $false
-    }
-    if ($ChangesResult -ne "success" -or $ApplicationChanged -ne "true") {
-        return $false
-    }
-    if ($ReleaseSafetyResult -ne "success") {
-        return $false
-    }
-    foreach ($result in @($BackendResult, $BackendImageResult, $FrontendResult, $TerraformResult)) {
-        if ($result -notin @("success", "skipped")) {
-            return $false
-        }
-    }
-    if ($BackendPostgresResult -eq "skipped") {
-        return $BackendResult -eq "skipped" -and $BackendImageResult -eq "skipped"
-    }
-    if ($BackendPostgresResult -ne "success") {
-        return $false
-    }
-    return $true
+    # The historical all-components deployment job is intentionally disabled.
+    # A qualified SHA can only be prepared by the separate manual workflow.
+    return $false
 }
 
 function Assert-DeploymentEligibility {
@@ -276,13 +279,13 @@ $eligiblePush = @{
     BackendResult = "success"; BackendImageResult = "success"; BackendPostgresResult = "success"; FrontendResult = "skipped"
     TerraformResult = "skipped"; ReleaseSafetyResult = "success"
 }
-Assert-DeploymentEligibility -Expected $true -Scenario $eligiblePush
+Assert-DeploymentEligibility -Expected $false -Scenario $eligiblePush
 
 $frontendOnlyPush = $eligiblePush.Clone()
 $frontendOnlyPush.BackendResult = "skipped"; $frontendOnlyPush.BackendImageResult = "skipped"
 $frontendOnlyPush.BackendPostgresResult = "skipped"
 $frontendOnlyPush.FrontendResult = "success"
-Assert-DeploymentEligibility -Expected $true -Scenario $frontendOnlyPush
+Assert-DeploymentEligibility -Expected $false -Scenario $frontendOnlyPush
 
 $documentationOnlyPush = $eligiblePush.Clone(); $documentationOnlyPush.ApplicationChanged = "false"
 Assert-DeploymentEligibility -Expected $false -Scenario $documentationOnlyPush
@@ -309,7 +312,7 @@ $cancelledChanges = $eligiblePush.Clone(); $cancelledChanges.ChangesResult = "ca
 Assert-DeploymentEligibility -Expected $false -Scenario $cancelledChanges
 
 $manualRollback = $eligiblePush.Clone(); $manualRollback.EventName = "workflow_dispatch"
-Assert-DeploymentEligibility -Expected $true -Scenario $manualRollback
+Assert-DeploymentEligibility -Expected $false -Scenario $manualRollback
 
 function Get-ReleaseMode {
     param([string]$EventName, [string]$ComputeDeploymentsEnabled, [string]$DeploymentsEnabled = "false")
@@ -366,6 +369,42 @@ if ($workflow -match "terraform\s+apply") {
 
 if ($workflow -match "supabase\s+db\s+push|supabase\s+migration|alembic\s+upgrade") {
     throw "Database migrations must remain separate from automatic image deployment."
+}
+
+$prepareWorkflowPath = Join-Path $PSScriptRoot "..\.github\workflows\prepare-credit-initial-release.yml"
+if (-not (Test-Path -LiteralPath $prepareWorkflowPath -PathType Leaf)) {
+    throw "Initial credit release preparation workflow was not found."
+}
+$prepareWorkflow = Get-Content -LiteralPath $prepareWorkflowPath -Raw
+foreach ($fragment in @(
+    "workflow_dispatch:",
+    "release_sha:",
+    "git merge-base --is-ancestor",
+    "docker push",
+    "No App Service, ACI worker, Container App, Key Vault, Service Bus, or database resource was changed."
+)) {
+    if (-not $prepareWorkflow.Contains($fragment)) {
+        throw "Initial credit release preparation is missing: $fragment"
+    }
+}
+if ($prepareWorkflow -match "JOB_SUBMISSIONS_ENABLED=true|az webapp|az container create|az containerapp update|supabase\s+migration") {
+    throw "The image-preparation workflow must not deploy runtimes, migrate the database, or reopen submissions."
+}
+if (-not $prepareWorkflow.Contains("Refusing to reuse") -or
+    -not $prepareWorkflow.Contains('"$repository@$digest"')) {
+    throw "Image preparation must record digests and refuse unproven existing SHA tags."
+}
+
+$apiReleaseWorkflowPath = Join-Path $PSScriptRoot "..\.github\workflows\deploy-api-outbox-dispatcher.yml"
+$apiReleaseWorkflow = Get-Content -LiteralPath $apiReleaseWorkflowPath -Raw
+foreach ($fragment in @(
+    "expected_backend_digest:",
+    "expected_backend_digest is required when reusing an existing SHA tag.",
+    "Existing SHA tag does not match the approved backend digest."
+)) {
+    if (-not $apiReleaseWorkflow.Contains($fragment)) {
+        throw "API release must pin a reused SHA tag to its approved digest: $fragment"
+    }
 }
 
 $migrationPath = Join-Path $PSScriptRoot "..\supabase\migrations\20261101000000_worker_release_gate.sql"

@@ -27,6 +27,7 @@ The main technical challenge is **not merely converting mesh vertices into cubes
 | 3D generation | Queued, idempotent `fal-ai/trellis` reconstruction; generation worker polls the provider and stores a canonical private GLB |
 | LEGO conversion | Deterministic GLB conversion with V3–V7 API routing; V4, V6 and opt-in V7 selectable in the browser |
 | Results | Interactive reconstructed-model and LEGO viewers, parts list, verified-pair sourcing CSV, versioned build instructions, GLB/JSON downloads |
+| Credits | Server-authoritative starter balance, job charges/refunds, owner-scoped balance/history, and a profile-linked header badge |
 | Platform | FastAPI, PostgreSQL, Azure Blob, Service Bus, ACI workers, App Service API, Container Apps frontend, managed identities and Key Vault |
 | Reliability | Transactional submission outbox, idempotency, worker-attempt leases, publication fencing, release-drain controls and retry/recovery paths |
 | Engineering evidence | Backend/frontend unit tests, isolated PostgreSQL release tests, synthetic benchmarks, documented controlled offline investigations, CI and Terraform |
@@ -54,6 +55,8 @@ The project was developed collaboratively. The following **indicative workstream
 5. **Inspect and export.** Compare the original image, reconstructed model and LEGO result; examine grouped part quantities, the build guide and available downloads. The purchase-ready CSV identifies *verified manufactured* part/colour pairs; it does **not** check seller stock or prices.
 
 Generation uses a paid external provider and requires valid credentials, provider capacity and running workers.
+
+Each account receives one lazy 10-credit starter allocation on its first credit-account access. Reconstruction costs 2 credits and conversion costs 1. These values and job limits are fixed in protected PostgreSQL policy data, not browser or application settings. Charges, quota admission, and job creation share one PostgreSQL transaction; failed, canceled, and expired-worker jobs receive one ledger-backed refund. The profile page and header badge read the owner-scoped, paginated `/api/v1/credits` representation. This is an in-app usage limit, not payment processing.
 
 ## 3. System architecture
 

@@ -52,12 +52,8 @@ if ($BootstrapContractMatches -ne "true") {
     throw "The ACI bootstrap contract does not match the reviewed release configuration."
 }
 
-switch ($WorkerState) {
-    "Stopped" { "recreate" }
-    "Succeeded" { "recreate" }
-    "Failed" { "recreate" }
-    "Terminated" { "recreate" }
-    "Running" {
-        "stop_and_recreate"
-    }
+if ($WorkerState -ne "Running") {
+    throw "ACI worker must remain Running for an in-place update; do not stop or recreate it."
 }
+
+"update_in_place"

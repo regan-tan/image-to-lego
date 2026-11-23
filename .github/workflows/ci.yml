@@ -281,6 +281,7 @@ jobs:
     needs: [changes, backend, backend-image, backend-postgres, frontend, terraform, release-safety]
     if: >-
       always() &&
+      false &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) &&
       needs.changes.result == 'success' && needs.changes.outputs.application == 'true' &&
@@ -387,6 +388,9 @@ jobs:
             exit 1
           fi
 
+          api_database_reference="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='DATABASE_URL'].value | [0]" --output tsv)"
+          [[ "$api_database_reference" == @Microsoft.KeyVault* && "$api_database_reference" == *"api-database-url"* ]] || { echo "DATABASE_URL must reference the dedicated api-database-url Key Vault secret." >&2; exit 1; }
+
           # Close admission before taking the quiescence snapshot.  The setting
           # stays false if a later step fails; only a verified release reopens it.
           az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=false --output none
@@ -457,9 +461,11 @@ jobs:
                 ;;
             esac
             restart_policy="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "restartPolicy" --output tsv)"
+            worker_cpu="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "containers[0].resources.requests.cpu" --output tsv)"
+            worker_memory_gb="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "containers[0].resources.requests.memoryInGB" --output tsv)"
             command="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "join(' ', containers[0].command)" --output tsv)"
             client_id="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "containers[0].environmentVariables[?name=='AZURE_CLIENT_ID'].value | [0]" --output tsv)"
-            if [[ "$restart_policy" != "Never" || "$command" != "python -m app.workers.aci_bootstrap $worker_kind" || -z "$client_id" ]]; then
+            if [[ "$restart_policy" != "Never" || "$worker_cpu" != "1" || "$worker_memory_gb" != "2" || "$command" != "python -m app.workers.aci_bootstrap $worker_kind" || -z "$client_id" ]]; then
               echo "$worker_name does not match the reviewed bootstrap contract; refusing to replace it." >&2
               exit 1
             fi
@@ -477,26 +483,18 @@ jobs:
             worker_image="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query 'containers[0].image' --output tsv)"
             worker_image_tag="${worker_image##*:}"
             if [[ "$worker_image_tag" == "bootstrap-898adc56df2e" && "$RELEASE_SHA" != "$initial_worker_handoff_sha" ]] || [[ "$worker_image_tag" != "bootstrap-898adc56df2e" && ! "$worker_image_tag" =~ ^[0-9a-f]{40}$ ]] || [[ "$worker_image" != "$registry_server/image-to-lego-backend:"* ]] || ! az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$worker_image_tag" --only-show-errors >/dev/null 2>&1; then
-              echo "$worker_name has no recoverable immutable backend image; refusing to delete it." >&2
+              echo "$worker_name has no recoverable immutable backend image; refusing to update it." >&2
               exit 1
             fi
             if [[ "$actual_environment_names" != "$required_environment_names" || -n "$secure_environment_names" ]] || ! az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json | jq -e --arg identity "$identity_id" '(.identity.userAssignedIdentities | keys | map(ascii_downcase) == [$identity | ascii_downcase]) and (.imageRegistryCredentials | length == 1) and ((.imageRegistryCredentials[0].identity | ascii_downcase) == ($identity | ascii_downcase))' >/dev/null; then
               echo "$worker_name is missing part of the reviewed identity, ACR, or environment bootstrap contract." >&2
               exit 1
             fi
+            database_secret_name="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "containers[0].environmentVariables[?name=='DATABASE_URL_SECRET_NAME'].value | [0]" --output tsv)"
+            [[ -n "$database_secret_name" ]] || { echo "$worker_name is missing DATABASE_URL_SECRET_NAME." >&2; exit 1; }
             bootstrap_contract_matches=true
             action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -NonterminalJobs "$nonterminal_jobs" -UnresolvedProviderSubmissions "$unresolved_provider_submissions" -OutstandingOutboxPublications "$outstanding_outbox_publications" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches "$bootstrap_contract_matches")"
-            if [[ "$action" == "stop_and_recreate" ]]; then
-              az container stop --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name"
-              for attempt in {1..30}; do
-                worker_state="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --query "instanceView.state" --output tsv)"
-                [[ "$worker_state" == "Stopped" ]] && break
-                [[ "$attempt" == "30" ]] && { echo "$worker_name did not stop gracefully." >&2; exit 1; }
-                sleep 5
-              done
-              read_quiescence
-              action="$(pwsh ./scripts/Assert-WorkerReleaseSafety.ps1 -JobSubmissionsEnabled "$submissions_enabled" -ActiveWorkerAttempts "$active_attempts" -NonterminalJobs "$nonterminal_jobs" -UnresolvedProviderSubmissions "$unresolved_provider_submissions" -OutstandingOutboxPublications "$outstanding_outbox_publications" -ActiveQueueMessages "$active_messages" -ScheduledQueueMessages "$scheduled_messages" -QueueSendersVerified "$queue_senders_verified" -WorkerState "$worker_state" -BootstrapContractMatches "$bootstrap_contract_matches")"
-            fi
+            [[ "$action" == "update_in_place" ]] || { echo "$worker_name is not eligible for an in-place update." >&2; exit 1; }
             echo "${worker_kind}_client_id=$client_id" >> "$GITHUB_OUTPUT"
             echo "${worker_kind}_action=$action" >> "$GITHUB_OUTPUT"
           done
@@ -550,6 +548,8 @@ jobs:
         shell: bash
         env:
           REGISTRY_SERVER: ${{ steps.images.outputs.registry_server }}
+          BACKEND_DIGEST: ${{ steps.images.outputs.backend_digest }}
+          FRONTEND_DIGEST: ${{ steps.images.outputs.frontend_digest }}
           GENERATION_CLIENT_ID: ${{ steps.preflight.outputs.generation_client_id }}
           CONVERSION_CLIENT_ID: ${{ steps.preflight.outputs.conversion_client_id }}
           GENERATION_ACTION: ${{ steps.preflight.outputs.generation_action }}
@@ -559,41 +559,18 @@ jobs:
           completed=()
           report_partial_release() {
             echo "### Partial release" >> "$GITHUB_STEP_SUMMARY"
-            echo "Completed: ${completed[*]:-none}. A failed worker replacement may have left its container group missing; verify Azure state before retrying." >> "$GITHUB_STEP_SUMMARY"
+            echo "Completed: ${completed[*]:-none}. Verify the stopped or updated worker state before retrying." >> "$GITHUB_STEP_SUMMARY"
             echo "Use workflow_dispatch with the previous approved 40-character SHA after resolving the failure." >> "$GITHUB_STEP_SUMMARY"
           }
           trap report_partial_release ERR
-          backend_image="$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA"
-          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
+          backend_image="$REGISTRY_SERVER/image-to-lego-backend@$BACKEND_DIGEST"
+          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend@$FRONTEND_DIGEST"
           identity_base="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
 
-          # Azure ACI group deletion is asynchronous. A new PUT with the same
-          # name before the old group disappears can return its stale state and
-          # subsequently fail user-assigned identity attachment with 404.
-          delete_worker_and_wait() {
-            local worker_name="$1" response absent_checks=0
-            az container delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --yes --only-show-errors --output none
-            for attempt in {1..90}; do
-              if response="$(az container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$worker_name" --output json 2>&1)"; then
-                absent_checks=0
-              elif [[ "$response" == *"ResourceNotFound"* ]]; then
-                absent_checks=$((absent_checks + 1))
-                if (( absent_checks >= 3 )); then
-                  # Allow ARM and managed identity services to converge.
-                  sleep 10
-                  return 0
-                fi
-              else
-                echo "Cannot verify ACI deletion for $worker_name: $response" >&2
-                return 1
-              fi
-              sleep 5
-            done
-            echo "$worker_name did not fully disappear after deletion; refusing to recreate." >&2
-            return 1
-          }
-
-          # Confirm Azure did not return the old stopped group for a new image.
+          # Use ARM's PUT update through `az container create`; do not delete a
+          # group first.  This preserves the resource-scoped ACI RBAC assignment
+          # and avoids a replacement window with no authorization at the new
+          # resource identity.
           verify_new_worker_image() {
             local worker_name="$1" current_image
             for attempt in {1..30}; do
@@ -611,16 +588,10 @@ jobs:
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME"
           completed+=("API")
 
-          if [[ "$GENERATION_ACTION" == "recreate" ]]; then
-            delete_worker_and_wait "$AZURE_GENERATION_WORKER_NAME"
-          fi
-          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-generation-dev" --acr-identity "$identity_base/id-image-to-lego-generation-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap generation" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$GENERATION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "DATABASE_URL_SECRET_NAME=database-url" "FAL_KEY_SECRET_NAME=fal-key" --output none
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_GENERATION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-generation-dev" --acr-identity "$identity_base/id-image-to-lego-generation-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap generation" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$GENERATION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "DATABASE_URL_SECRET_NAME=generation-worker-database-url" "FAL_KEY_SECRET_NAME=fal-key" --output none
           verify_new_worker_image "$AZURE_GENERATION_WORKER_NAME"
           completed+=("generation worker")
-          if [[ "$CONVERSION_ACTION" == "recreate" ]]; then
-            delete_worker_and_wait "$AZURE_CONVERSION_WORKER_NAME"
-          fi
-          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-conversion-dev" --acr-identity "$identity_base/id-image-to-lego-conversion-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap conversion" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$CONVERSION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential" "DATABASE_URL_SECRET_NAME=database-url" --output none
+          az container create --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONVERSION_WORKER_NAME" --image "$backend_image" --os-type Linux --cpu 1 --memory 2 --restart-policy Never --location malaysiawest --assign-identity "$identity_base/id-image-to-lego-conversion-dev" --acr-identity "$identity_base/id-image-to-lego-conversion-dev" --registry-login-server "$REGISTRY_SERVER" --command-line "python -m app.workers.aci_bootstrap conversion" --environment-variables "APP_ENV=production" "AZURE_STORAGE_ACCOUNT_URL=https://storageimgtolego.blob.core.windows.net" "AZURE_STORAGE_CONTAINER=artifacts" "AZURE_SERVICE_BUS_NAMESPACE=image-to-lego-bus-dev-01.servicebus.windows.net" "AZURE_SERVICE_BUS_QUEUE=conversion" "AZURE_SERVICE_BUS_GENERATION_QUEUE=generation" "AZURE_CLIENT_ID=$CONVERSION_CLIENT_ID" "AZURE_KEY_VAULT_URL=$AZURE_KEY_VAULT_URL" "AZURE_TOKEN_CREDENTIALS=ManagedIdentityCredential" "DATABASE_URL_SECRET_NAME=conversion-worker-database-url" --output none
           verify_new_worker_image "$AZURE_CONVERSION_WORKER_NAME"
           completed+=("conversion worker")
           az containerapp update --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_NAME" --image "$frontend_image"
@@ -656,8 +627,8 @@ jobs:
             echo "Frontend runtime-config.js is missing a nonempty Supabase URL or publishable key." >&2
             exit 1
           fi
-          backend_image="$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA"
-          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA"
+          backend_image="$REGISTRY_SERVER/image-to-lego-backend@$BACKEND_DIGEST"
+          frontend_image="$REGISTRY_SERVER/image-to-lego-frontend@$FRONTEND_DIGEST"
           if ! az webapp config container show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --output json | grep --fixed-strings --quiet "$backend_image"; then
             echo "API image configuration does not report the requested release image." >&2
             exit 1
@@ -683,16 +654,15 @@ jobs:
               exit 1
             fi
           done
-          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=true --output none
-          if [[ "$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)" != "true" ]]; then
-            echo "Deployment completed but could not re-enable job submissions." >&2
+          if [[ "$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)" != "false" ]]; then
+            echo "Deployment must leave job submissions disabled." >&2
             exit 1
           fi
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ### Development deployment complete
+          ### Development deployment complete with submissions intentionally closed
           - Commit: \`$RELEASE_SHA\`
-          - Backend image: \`$REGISTRY_SERVER/image-to-lego-backend:$RELEASE_SHA\` ($BACKEND_DIGEST)
-          - Frontend image: \`$REGISTRY_SERVER/image-to-lego-frontend:$RELEASE_SHA\` ($FRONTEND_DIGEST)
+          - Backend image: \`$REGISTRY_SERVER/image-to-lego-backend@$BACKEND_DIGEST\`
+          - Frontend image: \`$REGISTRY_SERVER/image-to-lego-frontend@$FRONTEND_DIGEST\`
           - API health: https://$api_hostname/health
           - Frontend: https://$frontend_fqdn/
           - Database migrations: not run by this workflow.

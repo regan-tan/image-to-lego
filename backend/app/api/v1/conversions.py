@@ -46,7 +46,8 @@ class ConversionResponse(BaseModel):
     status: Literal["queued", "running", "succeeded", "failed", "canceled"]
 
 
-def get_conversion_repository(session: DatabaseSession) -> ConversionRepository:
+def get_conversion_repository(request: Request, session: DatabaseSession) -> ConversionRepository:
+    del request
     return SqlAlchemyConversionRepository(session)
 
 
@@ -115,6 +116,10 @@ def _http_error(error: ApplicationError) -> HTTPException:
         "idempotency_conflict",
     }:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.message)
+    if error.code == "insufficient_credits":
+        return HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=error.message)
+    if error.code in {"concurrent_limit", "rolling_limit"}:
+        return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=error.message)
     if error.code == "release_draining":
         return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.message)
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=error.message)

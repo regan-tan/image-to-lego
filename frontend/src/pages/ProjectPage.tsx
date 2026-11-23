@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
-import { useCallback, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getLegoModel } from "../api/client";
 import { useAppLayout } from "../components/appLayoutContext";
@@ -14,6 +14,7 @@ import { ProjectStatusPanel } from "../components/ProjectStatusPanel";
 import { PartsListWorkspace } from "../components/PartsListWorkspace";
 import { StatusBadge } from "../components/StatusBadge";
 import { isNotFound, useProject } from "../hooks/useProjects";
+import { creditsQueryKey } from "../hooks/useCredits";
 import {
   DEFAULT_BUILD_COMPLEXITY,
   buildComplexityForTargetParts,
@@ -35,6 +36,8 @@ export function ProjectPage() {
 function ProjectPageContent({ projectId }: { projectId: string }) {
   const { session } = useAppLayout();
   const project = useProject(session.access_token, session.user.id, projectId);
+  const queryClient = useQueryClient();
+  const refundedReconstruction = useRef<string | null>(null);
   const [conversionStatus, setConversionStatus] = useState<ConversionStatus | null>(null);
   const [legoModel, setLegoModel] = useState<LegoModel | null>(null);
   const [previewView, setPreviewView] = useState<PreviewView | null>(null);
@@ -43,6 +46,14 @@ function ProjectPageContent({ projectId }: { projectId: string }) {
   const [selectedBuildComplexity, setSelectedBuildComplexity] = useState<BuildComplexity | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const persistedLegoArtifactId = project.data?.latestLegoModel?.artifactId ?? null;
+  useEffect(() => {
+    const reconstruction = project.data?.latestReconstruction;
+    if (!reconstruction || !["failed", "canceled"].includes(reconstruction.status)) return;
+    const key = `${reconstruction.jobId}:${reconstruction.status}`;
+    if (refundedReconstruction.current === key) return;
+    refundedReconstruction.current = key;
+    void queryClient.invalidateQueries({ queryKey: creditsQueryKey(session.user.id) });
+  }, [project.data?.latestReconstruction, queryClient, session.user.id]);
   const persistedLegoModel = useQuery({
     queryKey: ["lego-model", session.user.id, persistedLegoArtifactId],
     queryFn: ({ signal }) => getLegoModel(session.access_token, persistedLegoArtifactId ?? "", signal),

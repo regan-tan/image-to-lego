@@ -12,6 +12,11 @@ on:
         required: true
         default: false
         type: boolean
+      expected_backend_digest:
+        description: Required when reusing an existing SHA tag; exact sha256 digest recorded at preparation time.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ jobs:
     env:
       RELEASE_SHA: ${{ inputs.release_sha }}
       ROLLBACK: ${{ inputs.rollback }}
+      EXPECTED_BACKEND_DIGEST: ${{ inputs.expected_backend_digest }}
       AZURE_RESOURCE_GROUP: rg-image-to-lego-dev
       AZURE_ACR_NAME: itl2b70703f
       AZURE_API_NAME: app-image-to-lego-api-dev-2b70703f
@@ -124,7 +130,10 @@ jobs:
           fi
           jq -e 'type == "array"' "$tag_list_file" >/dev/null || { echo "ACR returned an invalid tag list." >&2; exit 1; }
           if jq -e --arg release_sha "$RELEASE_SHA" 'any(.[]; . == $release_sha)' "$tag_list_file" >/dev/null; then
-            echo "Reusing immutable backend SHA tag; it will not be overwritten."
+            [[ "$EXPECTED_BACKEND_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "expected_backend_digest is required when reusing an existing SHA tag." >&2; exit 1; }
+            existing_digest="$(az acr repository show --name "$AZURE_ACR_NAME" --image "image-to-lego-backend:$RELEASE_SHA" --query digest --output tsv)"
+            [[ "$existing_digest" == "$EXPECTED_BACKEND_DIGEST" ]] || { echo "Existing SHA tag does not match the approved backend digest." >&2; exit 1; }
+            echo "Reusing the explicitly approved backend manifest digest."
             if [[ "$ROLLBACK" == "true" ]]; then
               echo "Using the requested known-good rollback image."
             fi
@@ -185,7 +194,7 @@ jobs:
           az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings "OUTBOX_AUTO_DISPATCH_ENABLED=$desired" --output none
           enabled="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='OUTBOX_AUTO_DISPATCH_ENABLED'].value | [0]" --output tsv)"
           [[ "$enabled" == "$desired" ]] || { echo "Could not set OUTBOX_AUTO_DISPATCH_ENABLED=$desired." >&2; exit 1; }
-      - name: Verify configured API before reopening submissions
+      - name: Verify configured API with submissions still paused
         shell: bash
         run: |
           set -euo pipefail
@@ -195,21 +204,20 @@ jobs:
             [[ "$attempt" == "30" ]] && { echo "Configured API health check did not succeed." >&2; exit 1; }
             sleep 10
           done
-      - name: Reopen job submissions
+      - name: Verify job submissions remain closed
         shell: bash
         run: |
           set -euo pipefail
-          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --settings JOB_SUBMISSIONS_ENABLED=true --output none
           submissions="$(az webapp config appsettings list --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_API_NAME" --query "[?name=='JOB_SUBMISSIONS_ENABLED'].value | [0]" --output tsv)"
-          [[ "$submissions" == "true" ]] || { echo "Could not reopen job submissions." >&2; exit 1; }
+          [[ "$submissions" == "false" ]] || { echo "API deployment must leave job submissions disabled." >&2; exit 1; }
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ### API-only dispatcher release complete
+          ### API-only dispatcher release complete with submissions closed
           - Commit: \`$RELEASE_SHA\`
           - Backend image: \`${{ steps.image.outputs.backend_image }}\`
           - Previous API image: \`${{ steps.preflight.outputs.previous_image }}\`
           - Rollback requested: \`$ROLLBACK\`
           - Workers, frontend, queues, Terraform, and database migrations: unchanged
-          - Fallback: Dispatch submission outbox workflow remains available.
+          - Job submissions remain disabled; the dispatcher remains on its existing secret and configuration.
           EOF
       - name: Report paused-submission recovery procedure
         if: failure()
@@ -222,7 +230,7 @@ jobs:
           ### Recovery required
           - \`JOB_SUBMISSIONS_ENABLED\` was set to \`false\` and has intentionally not been reopened.
           - Inspect the failed step and App Service logs. Rerun this workflow with the approved SHA after fixing the prerequisite, or set \`rollback=true\` and use a previously recorded known-good SHA.
-          - Reopen submissions only after the selected API image and its \`/health\` endpoint have been verified. The workflow performs that final admission change automatically on a successful run.
+          - This workflow never reopens submissions. Keep the gate closed while investigating or rolling back.
           EOF
           else
             echo "### Deployment stopped before submission admission was confirmed paused" >> "$GITHUB_STEP_SUMMARY"

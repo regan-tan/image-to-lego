@@ -1,5 +1,6 @@
 import { artifactReadUrlSchema, type ArtifactReadUrl } from "../schemas/artifacts";
 import { profileResponseSchema, type ProfileResponse } from "../schemas/profile";
+import { creditsSchema, type Credits } from "../schemas/credits";
 import {
   projectDetailSchema,
   projectSchema,
@@ -49,6 +50,11 @@ export async function getProfile(accessToken: string, signal?: AbortSignal): Pro
   }
 
   return profileResponseSchema.parse(await response.json());
+}
+
+export async function getCredits(accessToken: string, signal?: AbortSignal): Promise<Credits> {
+  const response = await authenticatedRequest("/api/v1/credits", accessToken, { signal });
+  return creditsSchema.parse(await response.json());
 }
 
 export async function getProjects(accessToken: string, signal?: AbortSignal): Promise<Project[]> {

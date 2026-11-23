@@ -28,9 +28,25 @@ variable "supabase_publishable_key" {
   default  = null
   nullable = true
 }
-variable "database_url_secret_name" {
-  type    = string
-  default = "database-url"
+variable "api_database_url_secret_name" {
+  description = "Key Vault secret containing only the API database login URL."
+  type        = string
+  default     = "api-database-url"
+}
+variable "generation_worker_database_url_secret_name" {
+  description = "Key Vault secret containing only the generation worker database login URL."
+  type        = string
+  default     = "generation-worker-database-url"
+}
+variable "conversion_worker_database_url_secret_name" {
+  description = "Key Vault secret containing only the conversion worker database login URL."
+  type        = string
+  default     = "conversion-worker-database-url"
+}
+variable "outbox_dispatcher_database_url_secret_name" {
+  description = "Key Vault secret containing only the outbox dispatcher database login URL."
+  type        = string
+  default     = "dispatcher-database-url"
 }
 variable "fal_key_secret_name" {
   type    = string
