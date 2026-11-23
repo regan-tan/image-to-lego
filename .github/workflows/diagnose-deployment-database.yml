@@ -1,0 +1,154 @@
+name: Diagnose deployment database access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DEPLOYMENT_DATABASE_URL: ${{ secrets.DEPLOYMENT_DATABASE_URL }}
+    steps:
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Inspect effective database permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOYMENT_DATABASE_URL" ]]; then
+            echo "DEPLOYMENT_DATABASE_URL is required." >&2
+            exit 1
+          fi
+
+          case "$DEPLOYMENT_DATABASE_URL" in
+            postgresql+asyncpg://*) diagnostic_database_url="postgresql://${DEPLOYMENT_DATABASE_URL#postgresql+asyncpg://}" ;;
+            postgresql://*) diagnostic_database_url="$DEPLOYMENT_DATABASE_URL" ;;
+            *)
+              echo "DEPLOYMENT_DATABASE_URL must use the postgresql or postgresql+asyncpg scheme." >&2
+              exit 1
+              ;;
+          esac
+
+          psql "$diagnostic_database_url" -X --set=ON_ERROR_STOP=1 --pset=pager=off <<'SQL'
+          begin read only;
+
+          select session_user, current_user, rolsuper, rolbypassrls
+          from pg_roles
+          where rolname = session_user;
+
+          with audited_functions(signature, intended_role) as (
+            values
+              ('public.worker_release_active_attempt_count()', 'github_release_gate'),
+              ('public.worker_release_try_acquire_attempt(uuid,uuid,text,uuid,integer)', 'image_to_lego_worker'),
+              ('public.worker_release_begin(uuid,uuid,integer)', 'github_release_coordinator'),
+              ('public.worker_release_transition(uuid,uuid,bigint,text,text)', 'github_release_coordinator'),
+              ('public.worker_release_recover(uuid,integer,text)', 'github_release_coordinator'),
+              ('public.worker_release_heartbeat(uuid,uuid,bigint,integer)', 'github_release_coordinator'),
+              ('public.worker_release_is_draining()', 'image_to_lego_worker'),
+              ('public.worker_release_admit_submission()', 'image_to_lego_submission'),
+              ('public.submission_outbox_create(uuid,uuid,integer)', 'image_to_lego_submission'),
+              ('public.submission_outbox_claim(uuid,integer)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_begin_send(uuid,uuid,bigint)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_record_delivered(uuid,uuid,bigint)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_record_known_failure(uuid,uuid,bigint,text,text,timestamptz)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_record_uncertain(uuid,uuid,bigint,text)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_release_unstarted_claim(uuid,uuid,bigint)', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_mark_expired_sends_attention()', 'image_to_lego_outbox_dispatcher'),
+              ('public.submission_outbox_publication_counts()', 'image_to_lego_outbox_dispatcher')
+          ), function_metadata as (
+            select
+              audited_functions.signature,
+              audited_functions.intended_role,
+              procedures.oid,
+              procedures.proowner,
+              procedures.proacl
+            from audited_functions
+            join pg_proc as procedures
+              on procedures.oid = audited_functions.signature::regprocedure
+          ), connection_identity as (
+            select rolsuper
+            from pg_roles
+            where rolname = session_user
+          )
+          select
+            function_metadata.signature,
+            function_metadata.intended_role,
+            pg_get_userbyid(function_metadata.proowner) as function_owner,
+            pg_has_role(session_user, function_metadata.intended_role, 'USAGE')
+              as inherits_intended_role,
+            pg_has_role(session_user, function_metadata.intended_role, 'SET')
+              as can_set_intended_role,
+            pg_has_role(session_user, 'github_release_gate', 'USAGE')
+              as inherits_release_gate,
+            pg_has_role(session_user, 'github_release_gate', 'SET')
+              as can_set_release_gate,
+            session_user = pg_get_userbyid(function_metadata.proowner) as owns_function,
+            has_function_privilege(
+              session_user,
+              function_metadata.oid,
+              'EXECUTE'
+            ) as executes_before_revokes,
+            exists (
+              select 1
+              from aclexplode(
+                coalesce(
+                  function_metadata.proacl,
+                  acldefault('f', function_metadata.proowner)
+                )
+              ) as acl_entry
+              join pg_roles as grantee on grantee.oid = acl_entry.grantee
+              where acl_entry.privilege_type = 'EXECUTE'
+                and grantee.rolname not in ('anon', 'authenticated', 'service_role')
+                and pg_has_role(session_user, grantee.oid, 'USAGE')
+            ) as has_nonrevoked_execute_source,
+            connection_identity.rolsuper
+              or session_user = pg_get_userbyid(function_metadata.proowner)
+              or pg_has_role(session_user, function_metadata.intended_role, 'USAGE')
+              or exists (
+                select 1
+                from aclexplode(
+                  coalesce(
+                    function_metadata.proacl,
+                    acldefault('f', function_metadata.proowner)
+                  )
+                ) as acl_entry
+                join pg_roles as grantee on grantee.oid = acl_entry.grantee
+                where acl_entry.privilege_type = 'EXECUTE'
+                  and grantee.rolname not in ('anon', 'authenticated', 'service_role')
+                  and pg_has_role(session_user, grantee.oid, 'USAGE')
+              ) as executes_after_security_migration
+          from function_metadata
+          cross join connection_identity
+          order by function_metadata.signature;
+
+          set local role image_to_lego_outbox_dispatcher;
+
+          select current_user as dispatcher_role;
+          select
+            function_signature,
+            has_function_privilege(current_user, function_signature::regprocedure, 'EXECUTE')
+              as dispatcher_can_execute
+          from (
+            values
+              ('public.submission_outbox_claim(uuid,integer)'),
+              ('public.submission_outbox_begin_send(uuid,uuid,bigint)'),
+              ('public.submission_outbox_record_delivered(uuid,uuid,bigint)'),
+              ('public.submission_outbox_record_known_failure(uuid,uuid,bigint,text,text,timestamptz)'),
+              ('public.submission_outbox_record_uncertain(uuid,uuid,bigint,text)'),
+              ('public.submission_outbox_release_unstarted_claim(uuid,uuid,bigint)'),
+              ('public.submission_outbox_mark_expired_sends_attention()'),
+              ('public.submission_outbox_publication_counts()')
+          ) as dispatcher_functions(function_signature)
+          order by function_signature;
+
+          rollback;
+          SQL
