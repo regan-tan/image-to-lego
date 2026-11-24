@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from random import Random
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,7 @@ from app.conversion.mechanical_connectors import (
     transform_connector_to_world,
 )
 from app.conversion.part_catalogue import PART_BY_ID
-from app.conversion.physical_geometry import colliding_placement_pairs
+from app.conversion.physical_geometry import colliding_placement_pairs, placements_overlap
 from app.conversion.surface_grid_v4 import (
     SolverStage,
     V4SolveFailure,
@@ -54,6 +55,41 @@ def _two_by_one_plate() -> core.BrickType:
 
 def _slope_4286(*, x: int = 0, y: int = 0, z: int = 1, orientation: int = 0) -> core.BrickPlacement:
     return core.BrickPlacement(PART_BY_ID["4286"], core.GridPosition(x, y, z), orientation)
+
+
+def _collision_candidate(
+    part_id: str, x: int, y: int, z: int, orientation: int = 0
+) -> surface_grid_v4._Candidate:
+    placement = core.BrickPlacement(PART_BY_ID[part_id], core.GridPosition(x, y, z), orientation)
+    return surface_grid_v4._Candidate(placement, frozenset())
+
+
+def _reference_exclude_locked_body_collisions(
+    candidates: tuple[surface_grid_v4._Candidate, ...],
+    locked_placements: tuple[core.BrickPlacement, ...],
+) -> tuple[surface_grid_v4._Candidate, ...]:
+    """Reproduce the pre-M14A pairwise physical-collision filter."""
+    return tuple(
+        candidate
+        for candidate in candidates
+        if all(
+            not placements_overlap(candidate.placement, locked_placement)
+            for locked_placement in locked_placements
+        )
+    )
+
+
+def _assert_collision_filters_are_identical(
+    candidates: tuple[surface_grid_v4._Candidate, ...],
+    locked_placements: tuple[core.BrickPlacement, ...],
+) -> tuple[surface_grid_v4._Candidate, ...]:
+    reference = _reference_exclude_locked_body_collisions(candidates, locked_placements)
+    optimized = surface_grid_v4._exclude_locked_body_collisions(candidates, locked_placements)
+
+    assert optimized == reference
+    assert len(optimized) == len(reference)
+    assert all(actual is expected for actual, expected in zip(optimized, reference, strict=True))
+    return optimized
 
 
 def _required(cells: set[core.GridPosition]) -> set[tuple[str, int, int]]:
@@ -1228,6 +1264,101 @@ def test_locked_slope_only_conversion_skips_rectangular_solving(
     serialized = serialize_lego_model(model)
     assert b'"partId":"4286"' in serialized
     assert b'"fidelity"' in serialized
+
+
+def test_locked_body_collision_filter_matches_pairwise_for_known_geometries() -> None:
+    locked = (
+        core.BrickPlacement(PART_BY_ID["3020"], core.GridPosition(0, 0, 0), 0),
+        _slope_4286(y=5, z=4, orientation=180),
+        core.BrickPlacement(PART_BY_ID["41769"], core.GridPosition(20, 0, 0), 270),
+        core.BrickPlacement(PART_BY_ID["15068"], core.GridPosition(30, 0, 0), 90),
+    )
+    candidates = (
+        _collision_candidate("3020", 4, 0, 0),  # face contact only
+        _collision_candidate("3020", 3, 0, 0),
+        _collision_candidate("3710", 0, 2, 5, 90),  # 4286 body collision
+        _collision_candidate("3022", 20, 0, 0),  # wedge body collision
+        _collision_candidate("3022", 30, 0, 0),  # curved-slope body collision
+        _collision_candidate("3022", 25, 5, 2, 270),
+    )
+
+    retained = _assert_collision_filters_are_identical(candidates, locked)
+
+    assert retained == (candidates[0], candidates[5])
+    expected = (candidates[0], candidates[5])
+    assert all(actual is expected for actual, expected in zip(retained, expected, strict=True))
+
+
+def test_locked_body_collision_filter_keeps_empty_locked_fast_path() -> None:
+    candidates = (
+        _collision_candidate("3022", 0, 0, 0),
+        _collision_candidate("3023", 2, 0, 0, 90),
+    )
+
+    retained = surface_grid_v4._exclude_locked_body_collisions(candidates, ())
+
+    assert retained is candidates
+
+
+def test_locked_body_collision_filter_computes_each_world_geometry_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.conversion import physical_geometry
+
+    candidates = (
+        _collision_candidate("3022", 0, 0, 0),
+        _collision_candidate("3023", 5, 0, 0, 90),
+        _collision_candidate("3020", 10, 0, 0),
+    )
+    locked = (
+        _slope_4286(x=30, orientation=90),
+        core.BrickPlacement(PART_BY_ID["41770"], core.GridPosition(40, 0, 0), 180),
+    )
+    calls: dict[int, int] = {}
+    original = physical_geometry.physical_microcells
+
+    def count_world_microcells(placement: core.BrickPlacement) -> frozenset[tuple[int, int, int]]:
+        calls[id(placement)] = calls.get(id(placement), 0) + 1
+        return original(placement)
+
+    monkeypatch.setattr(physical_geometry, "physical_microcells", count_world_microcells)
+
+    surface_grid_v4._exclude_locked_body_collisions(candidates, locked)
+
+    placements = tuple(candidate.placement for candidate in candidates) + locked
+    assert set(calls) == {id(placement) for placement in placements}
+    assert all(calls[id(placement)] == 1 for placement in placements)
+
+
+def test_locked_body_collision_filter_matches_pairwise_for_seeded_random_placements() -> None:
+    random = Random(14_014)
+    rectangular_part_ids = ("3022", "3023", "3710", "3020")
+    locked_part_ids = ("3020", "4286", "41769", "41770", "15068")
+    orientations = (0, 90, 180, 270)
+
+    for _ in range(12):
+        candidates = tuple(
+            _collision_candidate(
+                random.choice(rectangular_part_ids),
+                random.randint(-8, 8),
+                random.randint(-8, 8),
+                random.randint(0, 8),
+                random.choice(orientations),
+            )
+            for _ in range(35)
+        )
+        locked = tuple(
+            core.BrickPlacement(
+                PART_BY_ID[random.choice(locked_part_ids)],
+                core.GridPosition(
+                    random.randint(-8, 8), random.randint(-8, 8), random.randint(0, 8)
+                ),
+                random.choice(orientations),
+            )
+            for _ in range(9)
+        )
+
+        _assert_collision_filters_are_identical(candidates, locked)
 
 
 def test_v4_real_path_serializes_the_canonical_output() -> None:

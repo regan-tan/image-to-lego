@@ -352,18 +352,25 @@ def _exclude_locked_body_collisions(
     select such a rectangle.  Keeping this opt-in preserves the frozen V4
     baseline while making the V5/V6 path safe.
     """
-    from app.conversion.physical_geometry import placements_overlap
+    from app.conversion.physical_geometry import MicroCell, physical_microcells
 
     locked = tuple(locked_placements)
     if not locked:
         return candidates
+
+    # For a candidate C and locked placements L, the original pairwise gate
+    # retains C exactly when C's body cells are disjoint from every member of
+    # L. That is equivalent to testing disjointness from their union. Keep the
+    # world-space union local to this call: placement geometry depends on its
+    # position and must not be cached across conversion jobs.
+    locked_microcells: set[MicroCell] = set()
+    for locked_placement in locked:
+        locked_microcells.update(physical_microcells(locked_placement))
+
     return tuple(
         candidate
         for candidate in candidates
-        if all(
-            not placements_overlap(candidate.placement, locked_placement)
-            for locked_placement in locked
-        )
+        if physical_microcells(candidate.placement).isdisjoint(locked_microcells)
     )
 
 
